@@ -18,7 +18,13 @@ dist/
 # 原始资料收集(不提交)
 需求文档资料收集/
 
+# 需求文档(不提交)
+需求文档.md
+
 # 项目过程文档(本地参考用)
 AI_KNOWLEDGE.md
 CHANGELOG.md
 PROJECT_RULES.md
+
+# Skill技能库(本地开发用)
+.skills/
