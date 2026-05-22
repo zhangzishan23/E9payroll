@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: linear-gradient(135deg, #e8f4fd 0%, #f0f7ff 50%, #e0ecf8 100%);
+  min-height: 100vh;
+}
+
+.apple-card {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(12px);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 4px 24px rgba(0, 100, 200, 0.08);
+}
+
+.apple-header {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(147, 197, 253, 0.08) 100%);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.15);
+}
+
+.el-button--primary {
+  background: rgba(59, 130, 246, 0.12) !important;
+  border: 1px solid rgba(59, 130, 246, 0.25) !important;
+  color: #2563eb !important;
+  backdrop-filter: blur(8px);
+}
+.el-button--primary:hover {
+  background: rgba(59, 130, 246, 0.22) !important;
+  border-color: rgba(59, 130, 246, 0.4) !important;
+}
+
+.el-button--danger {
+  background: rgba(239, 68, 68, 0.12) !important;
+  border: 1px solid rgba(239, 68, 68, 0.25) !important;
+  color: #dc2626 !important;
+  backdrop-filter: blur(8px);
+}
+.el-button--danger:hover {
+  background: rgba(239, 68, 68, 0.22) !important;
+  border-color: rgba(239, 68, 68, 0.4) !important;
+}
+
+.el-button--success {
+  background: rgba(34, 197, 94, 0.12) !important;
+  border: 1px solid rgba(34, 197, 94, 0.25) !important;
+  color: #16a34a !important;
+  backdrop-filter: blur(8px);
+}
+.el-button--success:hover {
+  background: rgba(34, 197, 94, 0.22) !important;
+  border-color: rgba(34, 197, 94, 0.4) !important;
+}
+
+.el-button--warning {
+  background: rgba(245, 158, 11, 0.12) !important;
+  border: 1px solid rgba(245, 158, 11, 0.25) !important;
+  color: #d97706 !important;
+  backdrop-filter: blur(8px);
+}
+.el-button--warning:hover {
+  background: rgba(245, 158, 11, 0.22) !important;
+  border-color: rgba(245, 158, 11, 0.4) !important;
+}
+
+.el-button--info {
+  background: rgba(107, 114, 128, 0.12) !important;
+  border: 1px solid rgba(107, 114, 128, 0.25) !important;
+  color: #4b5563 !important;
+  backdrop-filter: blur(8px);
+}
+.el-button--info:hover {
+  background: rgba(107, 114, 128, 0.22) !important;
+  border-color: rgba(107, 114, 128, 0.4) !important;
+}
