@@ -1,9 +1,9 @@
 <template>
   <div class="apple-card p-6">
-    <div class="flex items-center gap-4 mb-4">
-      <h3 class="text-lg font-semibold text-gray-700">审批流程</h3>
-      <el-date-picker v-model="period" type="month" placeholder="选择月份" class="w-36" value-format="YYYYMM" @change="fetchData" />
-      <el-button type="primary" @click="fetchData">查询</el-button>
+    <div class="flex items-center gap-2 mb-4">
+      <h3 class="text-lg font-semibold text-gray-700 shrink-0">审批流程</h3>
+      <el-date-picker v-model="period" type="month" placeholder="选择月份" size="small" class="!w-40" value-format="YYYYMM" @change="fetchData" />
+      <el-button type="primary" size="small" @click="fetchData">查询</el-button>
     </div>
 
     <div v-if="status" class="mb-6">

@@ -1,34 +1,32 @@
 <template>
   <div class="apple-card p-6">
-    <div class="flex justify-between items-center mb-4">
-      <h3 class="text-lg font-semibold text-gray-700">考勤管理</h3>
-      <div class="flex gap-3">
-        <el-date-picker v-model="periodDate" type="month" placeholder="选择月份" class="w-36" value-format="YYYYMM" @change="onPeriodChange" />
-        <el-select v-model="filterField" placeholder="筛选字段" class="w-28">
-          <el-option label="员工编号" value="employee_no" />
-          <el-option label="员工姓名" value="employee_name" />
-        </el-select>
-        <el-input v-model="filterValue" placeholder="输入筛选值" clearable class="w-40" @input="fetchData" />
-        <el-button type="primary" :icon="Plus" @click="showDialog(null)">录入考勤</el-button>
-        <el-button :icon="Upload" @click="showImport">批量导入</el-button>
-        <el-button type="success" :icon="Download" @click="handleExport">导出</el-button>
-        <el-button type="danger" :icon="Delete" :disabled="!selectedRows.length" @click="handleBatchDelete">
-          批量删除 {{ selectedRows.length ? `(${selectedRows.length})` : '' }}
+    <div class="flex items-center gap-1.5 mb-4 flex-wrap">
+      <h3 class="text-lg font-semibold text-gray-700 shrink-0 mr-1">考勤管理</h3>
+      <el-date-picker v-model="periodDate" type="month" placeholder="选择月份" size="small" class="!w-40" value-format="YYYYMM" @change="onPeriodChange" />
+      <el-select v-model="filterField" placeholder="筛选字段" size="small" class="!w-24">
+        <el-option label="员工编号" value="employee_no" />
+        <el-option label="员工姓名" value="employee_name" />
+      </el-select>
+      <el-input v-model="filterValue" placeholder="筛选值" size="small" clearable class="!w-36" @input="fetchData" />
+      <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)">录入</el-button>
+      <el-button :icon="Upload" size="small" @click="showImport">导入</el-button>
+      <el-button type="success" :icon="Download" size="small" @click="handleExport">导出</el-button>
+      <el-button type="warning" size="small" :loading="syncingAttendance" @click="syncAttendance">
+        <el-icon class="mr-1"><Refresh /></el-icon>同步钉钉
+      </el-button>
+      <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">
+        删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
+      </el-button>
+      <el-divider direction="vertical" />
+      <el-button size="small" :type="editMode ? 'warning' : 'default'" @click="toggleEditMode">
+        {{ editMode ? '退出编辑' : '编辑' }}
+      </el-button>
+      <template v-if="editMode">
+        <el-button type="primary" size="small" :loading="savingEdits" :disabled="changedSet.size === 0" @click="confirmEdits">
+          保存{{ changedSet.size ? `(${changedSet.size})` : '' }}
         </el-button>
-        <el-divider direction="vertical" />
-        <el-button
-          :type="editMode ? 'warning' : 'default'"
-          @click="toggleEditMode"
-        >
-          {{ editMode ? '退出编辑模式' : '开启编辑模式' }}
-        </el-button>
-        <template v-if="editMode">
-          <el-button type="primary" :loading="savingEdits" :disabled="changedSet.size === 0" @click="confirmEdits">
-            保存修改 {{ changedSet.size ? `(${changedSet.size})` : '' }}
-          </el-button>
-          <el-button :disabled="changedSet.size === 0" @click="cancelEdits">取消修改</el-button>
-        </template>
-      </div>
+        <el-button size="small" :disabled="changedSet.size === 0" @click="cancelEdits">取消</el-button>
+      </template>
     </div>
 
     <el-table :data="records" border stripe v-loading="loading" max-height="600" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
@@ -37,16 +35,16 @@
       <el-table-column prop="employee_name" label="员工姓名" width="80" fixed />
       <el-table-column prop="total_work_days" label="总计薪天数" width="100">
         <template #default="{ row }">
-          <template v-if="editMode && row.id">
-            <el-input-number v-model="editCache[row.id].total_work_days" :min="0" :max="31" :precision="1" size="small" :controls="false" class="cell-input" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[row.id]">
+            <el-input-number v-model="editCache[row.id].total_work_days" :min="0" :max="31" :precision="1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>{{ row.total_work_days != null ? row.total_work_days : '' }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="actual_work_days" label="实际计薪天数" width="110">
         <template #default="{ row }">
-          <template v-if="editMode && row.id">
-            <el-input-number v-model="editCache[row.id].actual_work_days" :min="0" :max="31" :precision="1" size="small" :controls="false" class="cell-input" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[row.id]">
+            <el-input-number v-model="editCache[row.id].actual_work_days" :min="0" :max="31" :precision="1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>{{ row.actual_work_days != null ? row.actual_work_days : '' }}</template>
         </template>
@@ -56,63 +54,63 @@
       </el-table-column>
       <el-table-column prop="late_count" label="迟到次数" width="80">
         <template #default="{ row }">
-          <template v-if="editMode && row.id">
-            <el-input-number v-model="editCache[row.id].late_count" :min="0" size="small" :controls="false" class="cell-input" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[row.id]">
+            <el-input-number v-model="editCache[row.id].late_count" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>{{ row.late_count != null ? row.late_count : '' }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="early_count" label="早退次数" width="80">
         <template #default="{ row }">
-          <template v-if="editMode && row.id">
-            <el-input-number v-model="editCache[row.id].early_count" :min="0" size="small" :controls="false" class="cell-input" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[row.id]">
+            <el-input-number v-model="editCache[row.id].early_count" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>{{ row.early_count != null ? row.early_count : '' }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="missed_punch_count" label="缺卡次数" width="80">
         <template #default="{ row }">
-          <template v-if="editMode && row.id">
-            <el-input-number v-model="editCache[row.id].missed_punch_count" :min="0" size="small" :controls="false" class="cell-input" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[row.id]">
+            <el-input-number v-model="editCache[row.id].missed_punch_count" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>{{ row.missed_punch_count != null ? row.missed_punch_count : '' }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="sick_leave_days" label="病假天数" width="80">
         <template #default="{ row }">
-          <template v-if="editMode && row.id">
-            <el-input-number v-model="editCache[row.id].sick_leave_days" :min="0" :precision="1" size="small" :controls="false" class="cell-input" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[row.id]">
+            <el-input-number v-model="editCache[row.id].sick_leave_days" :min="0" :precision="1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>{{ row.sick_leave_days != null ? row.sick_leave_days : '' }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="personal_leave_days" label="事假天数" width="80">
         <template #default="{ row }">
-          <template v-if="editMode && row.id">
-            <el-input-number v-model="editCache[row.id].personal_leave_days" :min="0" :precision="1" size="small" :controls="false" class="cell-input" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[row.id]">
+            <el-input-number v-model="editCache[row.id].personal_leave_days" :min="0" :precision="1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>{{ row.personal_leave_days != null ? row.personal_leave_days : '' }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="annual_leave_days" label="年假天数" width="80">
         <template #default="{ row }">
-          <template v-if="editMode && row.id">
-            <el-input-number v-model="editCache[row.id].annual_leave_days" :min="0" :precision="1" size="small" :controls="false" class="cell-input" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[row.id]">
+            <el-input-number v-model="editCache[row.id].annual_leave_days" :min="0" :precision="1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>{{ row.annual_leave_days != null ? row.annual_leave_days : '' }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="other_leave_days" label="其他假天数" width="90">
         <template #default="{ row }">
-          <template v-if="editMode && row.id">
-            <el-input-number v-model="editCache[row.id].other_leave_days" :min="0" :precision="1" size="small" :controls="false" class="cell-input" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[row.id]">
+            <el-input-number v-model="editCache[row.id].other_leave_days" :min="0" :precision="1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>{{ row.other_leave_days != null ? row.other_leave_days : '' }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="verify_status" label="核实状态" width="100">
         <template #default="{ row }">
-          <template v-if="editMode && row.id">
+          <template v-if="editMode && editCache[row.id]">
             <el-select v-model="editCache[row.id].verify_status" size="small" class="cell-select" @change="markChanged(row.id)">
               <el-option label="待核实" value="待核实" />
               <el-option label="已核实" value="已核实" />
@@ -123,11 +121,13 @@
         </template>
       </el-table-column>
       <el-table-column label="操作" width="120" fixed="right">
-        <template #default="{ row }">
+      <template #default="{ row }">
+        <div class="action-cell">
           <el-button v-if="row.id && !editMode" type="primary" link size="small" @click="showDialog(row)">编辑</el-button>
           <el-button v-else-if="!row.id && !editMode" type="success" link size="small" @click="showDialogForEmployee(row)">录入</el-button>
-        </template>
-      </el-table-column>
+        </div>
+      </template>
+    </el-table-column>
     </el-table>
 
     <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑考勤' : '录入考勤'" width="600px" append-to-body>
@@ -243,13 +243,14 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Download, Upload, Delete } from '@element-plus/icons-vue'
+import { Plus, Download, Upload, Delete, Refresh } from '@element-plus/icons-vue'
 import api from '../../api'
 
 const loading = ref(false)
 const saving = ref(false)
 const savingEdits = ref(false)
 const importing = ref(false)
+const syncingAttendance = ref(false)
 const dialogVisible = ref(false)
 const importVisible = ref(false)
 const isEdit = ref(false)
@@ -311,13 +312,20 @@ function tableRowClassName({ row }) {
 }
 
 function initEditCache() {
-  Object.keys(editCache).forEach(k => delete editCache[k])
-  changedSet.value = new Set()
   records.value.forEach(row => {
-    if (!row.id) return
-    editCache[row.id] = {}
-    editFields.forEach(f => {
-      editCache[row.id][f] = row[f] ?? ''
+    if (!row || !row.id) return
+    editCache[row.id] = reactive({
+      total_work_days: row.total_work_days ?? '',
+      actual_work_days: row.actual_work_days ?? '',
+      late_count: row.late_count ?? '',
+      early_count: row.early_count ?? '',
+      missed_punch_count: row.missed_punch_count ?? '',
+      sick_leave_days: row.sick_leave_days ?? '',
+      personal_leave_days: row.personal_leave_days ?? '',
+      annual_leave_days: row.annual_leave_days ?? '',
+      other_leave_days: row.other_leave_days ?? '',
+      verify_status: row.verify_status ?? '',
+      remark: row.remark ?? ''
     })
   })
 }
@@ -328,20 +336,30 @@ function markChanged(rowId) {
 }
 
 function toggleEditMode() {
-  if (editMode.value) {
-    editMode.value = false
-    Object.keys(editCache).forEach(k => delete editCache[k])
+  try {
+    if (editMode.value) {
+      editMode.value = false
+      changedSet.value = new Set()
+      for (const key of Object.keys(editCache)) {
+        delete editCache[key]
+      }
+      return
+    }
+    initEditCache()
+    editMode.value = true
     changedSet.value = new Set()
-    return
+  } catch (e) {
+    console.error('切换编辑模式失败：', e)
+    ElMessage.error('切换编辑模式失败，请刷新页面后重试')
   }
-  initEditCache()
-  editMode.value = true
 }
 
 function cancelEdits() {
   editMode.value = false
-  Object.keys(editCache).forEach(k => delete editCache[k])
   changedSet.value = new Set()
+  for (const key of Object.keys(editCache)) {
+    delete editCache[key]
+  }
 }
 
 function confirmEdits() {
@@ -410,8 +428,10 @@ async function saveAllEdits() {
 
     editConfirmVisible.value = false
     editMode.value = false
-    Object.keys(editCache).forEach(k => delete editCache[k])
     changedSet.value = new Set()
+    for (const key of Object.keys(editCache)) {
+      delete editCache[key]
+    }
     await fetchData()
   } catch (e) {
     ElMessage.error('保存失败：' + (e.response?.data?.detail || e.message))
@@ -514,6 +534,25 @@ async function handleExport() {
   }
 }
 
+async function syncAttendance() {
+  syncingAttendance.value = true
+  try {
+    const period = periodDate.value
+    const res = await api.post('/dingtalk/sync/attendance', null, { params: { period } })
+    const data = res.data
+    if (data.errors && data.errors.length) {
+      ElMessage.warning(`同步完成：${data.message}，但有${data.errors.length}个错误`)
+    } else {
+      ElMessage.success(`钉钉考勤同步完成：${data.message}`)
+    }
+    await fetchData()
+  } catch (e) {
+    ElMessage.error('同步失败：' + (e.response?.data?.detail || e.message))
+  } finally {
+    syncingAttendance.value = false
+  }
+}
+
 async function handleBatchDelete() {
   if (!selectedRows.value.length) {
     ElMessage.warning('请先选择要删除的考勤记录')
@@ -583,10 +622,13 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.cell-input {
+.action-cell {
+  white-space: nowrap;
+}
+.cell-number {
   width: 100%;
 }
-.cell-input :deep(.el-input__wrapper) {
+.cell-number :deep(.el-input__wrapper) {
   padding: 0 4px;
 }
 .cell-select {

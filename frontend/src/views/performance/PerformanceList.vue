@@ -1,34 +1,29 @@
 <template>
   <div class="apple-card p-6">
-    <div class="flex justify-between items-center mb-4">
-      <h3 class="text-lg font-semibold text-gray-700">绩效数据管理</h3>
-      <div class="flex gap-3">
-        <el-date-picker v-model="periodDate" type="month" placeholder="选择月份" class="w-36" value-format="YYYYMM" @change="onPeriodChange" />
-        <el-select v-model="filterField" placeholder="筛选字段" class="w-28">
-          <el-option label="员工编号" value="employee_no" />
-          <el-option label="员工姓名" value="employee_name" />
-        </el-select>
-        <el-input v-model="filterValue" placeholder="输入筛选值" clearable class="w-40" @input="applyFilter" />
-        <el-button type="primary" :icon="Plus" @click="showDialog(null)">录入绩效</el-button>
-        <el-button :icon="Upload" @click="showImport">批量导入</el-button>
-        <el-button type="success" :icon="Download" @click="handleExport">导出</el-button>
-        <el-button type="danger" :icon="Delete" :disabled="!selectedRows.length" @click="handleBatchDelete">
-          批量删除 {{ selectedRows.length ? `(${selectedRows.length})` : '' }}
+    <div class="flex items-center gap-1.5 mb-4 flex-wrap">
+      <h3 class="text-lg font-semibold text-gray-700 shrink-0 mr-1">绩效数据管理</h3>
+      <el-date-picker v-model="periodDate" type="month" placeholder="选择月份" size="small" class="!w-40" value-format="YYYYMM" @change="onPeriodChange" />
+      <el-select v-model="filterField" placeholder="筛选字段" size="small" class="!w-24">
+        <el-option label="员工编号" value="employee_no" />
+        <el-option label="员工姓名" value="employee_name" />
+      </el-select>
+      <el-input v-model="filterValue" placeholder="筛选值" size="small" clearable class="!w-36" @input="applyFilter" />
+      <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)">录入</el-button>
+      <el-button :icon="Upload" size="small" @click="showImport">导入</el-button>
+      <el-button type="success" :icon="Download" size="small" @click="handleExport">导出</el-button>
+      <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">
+        删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
+      </el-button>
+      <el-divider direction="vertical" />
+      <el-button size="small" :type="editMode ? 'warning' : 'default'" @click="toggleEditMode">
+        {{ editMode ? '退出编辑' : '编辑' }}
+      </el-button>
+      <template v-if="editMode">
+        <el-button type="primary" size="small" :loading="savingEdits" :disabled="changedSet.size === 0" @click="confirmEdits">
+          保存{{ changedSet.size ? `(${changedSet.size})` : '' }}
         </el-button>
-        <el-divider direction="vertical" />
-        <el-button
-          :type="editMode ? 'warning' : 'default'"
-          @click="toggleEditMode"
-        >
-          {{ editMode ? '退出编辑模式' : '开启编辑模式' }}
-        </el-button>
-        <template v-if="editMode">
-          <el-button type="primary" :loading="savingEdits" :disabled="changedSet.size === 0" @click="confirmEdits">
-            保存修改 {{ changedSet.size ? `(${changedSet.size})` : '' }}
-          </el-button>
-          <el-button :disabled="changedSet.size === 0" @click="cancelEdits">取消修改</el-button>
-        </template>
-      </div>
+        <el-button size="small" :disabled="changedSet.size === 0" @click="cancelEdits">取消</el-button>
+      </template>
     </div>
 
     <el-table :data="filteredRecords" border stripe v-loading="loading" max-height="600" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
@@ -37,24 +32,24 @@
       <el-table-column prop="employee_name" label="员工姓名" width="80" fixed />
       <el-table-column prop="initial_score" label="初评分数" width="100">
         <template #default="{ row }">
-          <template v-if="editMode && row.id">
-            <el-input-number v-model="editCache[row.id].initial_score" :min="0" :max="100" :precision="1" size="small" :controls="false" class="cell-input" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[row.employee_id]">
+            <el-input-number v-model="editCache[row.employee_id].initial_score" :min="0" :max="100" :precision="1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.employee_id)" />
           </template>
           <template v-else>{{ row.initial_score != null ? row.initial_score : '' }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="final_score" label="复评分数" width="100">
         <template #default="{ row }">
-          <template v-if="editMode && row.id">
-            <el-input-number v-model="editCache[row.id].final_score" :min="0" :max="100" :precision="1" size="small" :controls="false" class="cell-input" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[row.employee_id]">
+            <el-input-number v-model="editCache[row.employee_id].final_score" :min="0" :max="100" :precision="1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.employee_id)" />
           </template>
           <template v-else>{{ row.final_score != null ? row.final_score : '' }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="coefficient" label="绩效系数" width="100">
         <template #default="{ row }">
-          <template v-if="editMode && row.id">
-            <el-input-number v-model="editCache[row.id].coefficient" :min="0" :max="3" :precision="2" :step="0.1" size="small" :controls="false" class="cell-input" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[row.employee_id]">
+            <el-input-number v-model="editCache[row.employee_id].coefficient" :min="0" :max="3" :precision="2" :step="0.1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.employee_id)" />
           </template>
           <template v-else>
             <span :class="row.coefficient >= 1 ? 'text-green-600' : 'text-red-600'" class="font-semibold">
@@ -63,11 +58,13 @@
           </template>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="120" fixed="right">
+      <el-table-column label="操作" width="130" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="row.id && !editMode" type="primary" link size="small" @click="showDialog(row)">编辑</el-button>
-          <el-button v-else-if="!row.id && !editMode" type="success" link size="small" @click="showDialogForEmployee(row)">录入</el-button>
-          <el-button v-if="row.id && !editMode" type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+          <div class="action-cell">
+            <el-button v-if="row.id && !editMode" type="primary" link size="small" @click="showDialog(row)">编辑</el-button>
+            <el-button v-else-if="!row.id && !editMode" type="success" link size="small" @click="showDialogForEmployee(row)">录入</el-button>
+            <el-button v-if="row.id && !editMode" type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -217,20 +214,18 @@ function applyFilter() {
 }
 
 function tableRowClassName({ row }) {
-  if (editMode.value && row.id && changedSet.value.has(row.id)) return 'row-changed'
+  if (editMode.value && row.employee_id && changedSet.value.has(row.employee_id)) return 'row-changed'
   return ''
 }
 
 function initEditCache() {
-  Object.keys(editCache).forEach(k => delete editCache[k])
-  changedSet.value = new Set()
   records.value.forEach(row => {
-    if (!row.id) return
-    editCache[row.id] = {
+    if (!row || !row.employee_id) return
+    editCache[row.employee_id] = reactive({
       initial_score: row.initial_score ?? null,
       final_score: row.final_score ?? null,
       coefficient: row.coefficient ?? 0
-    }
+    })
   })
 }
 
@@ -240,20 +235,30 @@ function markChanged(rowId) {
 }
 
 function toggleEditMode() {
-  if (editMode.value) {
-    editMode.value = false
-    Object.keys(editCache).forEach(k => delete editCache[k])
+  try {
+    if (editMode.value) {
+      editMode.value = false
+      changedSet.value = new Set()
+      for (const key of Object.keys(editCache)) {
+        delete editCache[key]
+      }
+      return
+    }
+    initEditCache()
+    editMode.value = true
     changedSet.value = new Set()
-    return
+  } catch (e) {
+    console.error('切换编辑模式失败：', e)
+    ElMessage.error('切换编辑模式失败，请刷新页面后重试')
   }
-  initEditCache()
-  editMode.value = true
 }
 
 function cancelEdits() {
   editMode.value = false
-  Object.keys(editCache).forEach(k => delete editCache[k])
   changedSet.value = new Set()
+  for (const key of Object.keys(editCache)) {
+    delete editCache[key]
+  }
 }
 
 function confirmEdits() {
@@ -263,13 +268,13 @@ function confirmEdits() {
   }
 
   const rows = []
-  changedSet.value.forEach(id => {
-    const row = records.value.find(r => r.id === id)
+  changedSet.value.forEach(empId => {
+    const row = records.value.find(r => r.employee_id === empId)
     if (!row) return
     const changes = []
     Object.keys(fieldLabels).forEach(field => {
       const oldVal = row[field]
-      const newVal = editCache[id]?.[field]
+      const newVal = editCache[empId]?.[field]
       if (oldVal !== newVal) {
         changes.push({
           field,
@@ -281,7 +286,8 @@ function confirmEdits() {
     })
     if (changes.length) {
       rows.push({
-        id,
+        id: row.id,
+        employee_id: empId,
         employee_name: row.employee_name,
         employee_no: row.employee_no,
         changes
@@ -300,14 +306,22 @@ async function saveAllEdits() {
 
   try {
     for (const row of confirmList.value) {
-      const cache = editCache[row.id]
+      const cache = editCache[row.employee_id]
       if (!cache) continue
       const payload = {}
       Object.keys(fieldLabels).forEach(field => {
         if (cache[field] != null) payload[field] = cache[field]
       })
       try {
-        await api.put(`/performance/${row.id}`, payload)
+        if (row.id) {
+          await api.put(`/performance/${row.id}`, payload)
+        } else {
+          await api.post('/performance/', {
+            period: periodDate.value,
+            employee_id: row.employee_id,
+            ...payload
+          })
+        }
         successCount++
       } catch {
         failCount++
@@ -322,8 +336,10 @@ async function saveAllEdits() {
 
     editConfirmVisible.value = false
     editMode.value = false
-    Object.keys(editCache).forEach(k => delete editCache[k])
     changedSet.value = new Set()
+    for (const key of Object.keys(editCache)) {
+      delete editCache[key]
+    }
     await fetchData()
   } catch (e) {
     ElMessage.error('保存失败：' + (e.response?.data?.detail || e.message))
@@ -506,10 +522,13 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.cell-input {
+.action-cell {
+  white-space: nowrap;
+}
+.cell-number {
   width: 100%;
 }
-.cell-input :deep(.el-input__wrapper) {
+.cell-number :deep(.el-input__wrapper) {
   padding: 0 4px;
 }
 :deep(.row-changed) {

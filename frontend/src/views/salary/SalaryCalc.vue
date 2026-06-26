@@ -1,40 +1,37 @@
 <template>
   <div class="space-y-4">
     <div class="apple-card p-6">
-      <div class="flex items-center gap-4 mb-4 flex-wrap">
-        <h3 class="text-lg font-semibold text-gray-700">薪资核算</h3>
-        <el-date-picker v-model="periodDate" type="month" placeholder="选择月份" class="w-36" value-format="YYYYMM" @change="onPeriodChange" />
-        <el-select v-model="filterField" placeholder="筛选字段" class="w-28">
-          <el-option label="员工编号" value="employee_no" />
-          <el-option label="员工姓名" value="employee_name" />
-        </el-select>
-        <el-input v-model="filterValue" placeholder="输入筛选值" clearable class="w-40" @input="fetchResults" />
-        <el-button type="primary" :loading="checking" @click="checkCompleteness">数据完整性检查</el-button>
-        <el-button type="success" :loading="calculating" :disabled="!canCalculate" @click="startCalculate">
-          一键核算
-        </el-button>
-        <el-button type="warning" :disabled="!hasResults" @click="calculateNet">
-          计算实发工资
-        </el-button>
-        <el-button
-          :type="editMode ? 'danger' : 'primary'"
-          :disabled="!hasResults"
-          @click="toggleEditMode"
-        >
-          {{ editMode ? '退出编辑' : '开启编辑模式' }}
-        </el-button>
-        <template v-if="editMode">
-          <el-button type="success" :loading="savingEdits" @click="confirmEdits">确认修改</el-button>
-          <el-button @click="cancelEdits">取消编辑</el-button>
-        </template>
-        <el-button type="danger" :disabled="!hasResults || isSubmitting" @click="batchSubmitApproval">
-          批量提交审核
-        </el-button>
-        <el-button type="info" :icon="Download" :disabled="!hasResults" @click="handleExport">导出</el-button>
-        <el-button type="danger" :icon="Delete" :disabled="!selectedRows.length" @click="handleBatchDelete">
-          批量删除 {{ selectedRows.length ? `(${selectedRows.length})` : '' }}
-        </el-button>
-        <el-button type="warning" :disabled="!hasResults" @click="showTaxImport">报税导入</el-button>
+      <div class="flex items-center justify-between mb-4 salary-toolbar">
+        <div class="flex items-center gap-2">
+          <h3 class="text-base font-semibold text-gray-700 shrink-0">薪资核算</h3>
+          <el-date-picker v-model="periodDate" type="month" placeholder="选择月份" class="!w-28 shrink-0" size="small" value-format="YYYYMM" @change="onPeriodChange" />
+          <el-select v-model="filterField" placeholder="字段" class="!w-20 shrink-0" size="small">
+            <el-option label="工号" value="employee_no" />
+            <el-option label="姓名" value="employee_name" />
+          </el-select>
+          <el-input v-model="filterValue" placeholder="筛选" clearable class="!w-24 shrink-0" size="small" @input="fetchResults" />
+        </div>
+        <div class="flex items-center gap-1">
+          <el-button type="primary" size="small" :loading="checking" @click="checkCompleteness">检查</el-button>
+          <el-button type="success" size="small" :loading="calculating" :disabled="!canCalculate" @click="startCalculate">核算</el-button>
+          <el-button type="warning" size="small" :disabled="!hasResults" @click="calculateNet">实发</el-button>
+          <el-button
+            size="small"
+            :type="editMode ? 'danger' : 'primary'"
+            :disabled="!hasResults"
+            @click="toggleEditMode"
+          >
+            {{ editMode ? '退出' : '编辑' }}
+          </el-button>
+          <template v-if="editMode">
+            <el-button type="success" size="small" :loading="savingEdits" @click="confirmEdits">确认</el-button>
+            <el-button size="small" @click="cancelEdits">取消</el-button>
+          </template>
+          <el-button type="danger" size="small" :disabled="!hasResults || isSubmitting" @click="batchSubmitApproval">审核</el-button>
+          <el-button type="info" size="small" :disabled="!hasResults" @click="handleExport">导出</el-button>
+          <el-button type="danger" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">删除</el-button>
+          <el-button type="warning" size="small" :disabled="!hasResults" @click="showTaxImport">报税</el-button>
+        </div>
       </div>
 
       <div v-if="summary" class="grid grid-cols-4 gap-4 mb-4">
@@ -77,6 +74,8 @@
         <h4 class="font-semibold text-gray-700 mb-2">计算公式说明</h4>
         <div class="grid grid-cols-2 gap-2 text-gray-600">
           <div>月薪标准 = 基本工资 + 绩效奖金标准 + 补贴合计</div>
+          <div>（如有月中调薪，基本工资和绩效奖金标准使用折算后值）</div>
+          <div>折算后基本工资 = ROUND(调前天数×调前基本工资/总计薪天数 + 调后基本工资×调后天数/总计薪天数, 2)</div>
           <div>实发绩效奖金标准 = 绩效奖金标准 × 实发绩效奖金系数</div>
           <div>实发绩效奖金 = 实发绩效奖金标准 × 出勤率</div>
           <div>总应发工资 = (基本工资 + 补贴合计 + 提成/项目奖金/补发) × 出勤率 + 实发绩效奖金</div>
@@ -179,6 +178,17 @@
           </template>
           <template #default="{ row }">{{ row.base_salary != null ? row.base_salary : '' }}</template>
         </el-table-column>
+        <el-table-column prop="base_salary_prorated" width="100">
+          <template #header>
+            <el-tooltip content="月中调薪折算后的基本工资，如有调薪则使用折算值，否则等于基本工资" placement="top" :show-after="400">
+              <span>折算后基本工资</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">
+            <span v-if="row.base_salary_prorated != null && row.base_salary_prorated !== row.base_salary" class="font-semibold text-orange-600">{{ row.base_salary_prorated.toFixed(2) }}</span>
+            <span v-else>{{ row.base_salary_prorated != null ? row.base_salary_prorated : '' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="commission_bonus" width="95">
           <template #header>
             <el-tooltip content="当月提成/项目奖金/补发，手动录入或Excel导入" placement="top" :show-after="400">
@@ -186,8 +196,8 @@
             </el-tooltip>
           </template>
           <template #default="{ row }">
-            <template v-if="editMode && row.id">
-              <el-input-number v-model="editCache[row.id].commission_bonus" :min="0" :precision="2" size="small" :controls="false" class="cell-input" @change="markChanged(row.id, 'commission_bonus')" />
+            <template v-if="editMode && editCache[row.id]">
+              <el-input-number v-model="editCache[row.id].commission_bonus" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'commission_bonus')" />
             </template>
             <template v-else>{{ row.commission_bonus != null ? row.commission_bonus : '' }}</template>
           </template>
@@ -337,8 +347,8 @@
             </el-tooltip>
           </template>
           <template #default="{ row }">
-            <template v-if="editMode && row.id">
-              <el-input-number v-model="editCache[row.id].tax_deduction" :min="0" :precision="2" size="small" :controls="false" class="cell-input" @change="markChanged(row.id, 'tax_deduction')" />
+            <template v-if="editMode && editCache[row.id]">
+              <el-input-number v-model="editCache[row.id].tax_deduction" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'tax_deduction')" />
             </template>
             <template v-else>{{ row.tax_deduction != null ? row.tax_deduction : '' }}</template>
           </template>
@@ -350,8 +360,8 @@
             </el-tooltip>
           </template>
           <template #default="{ row }">
-            <template v-if="editMode && row.id">
-              <el-input-number v-model="editCache[row.id].posttax_adjustment" :precision="2" size="small" :controls="false" class="cell-input" @change="markChanged(row.id, 'posttax_adjustment')" />
+            <template v-if="editMode && editCache[row.id]">
+              <el-input-number v-model="editCache[row.id].posttax_adjustment" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'posttax_adjustment')" />
             </template>
             <template v-else>{{ row.posttax_adjustment != null ? row.posttax_adjustment : '' }}</template>
           </template>
@@ -363,8 +373,8 @@
             </el-tooltip>
           </template>
           <template #default="{ row }">
-            <template v-if="editMode && row.id">
-              <el-input v-model="editCache[row.id].posttax_adjustment_reason" size="small" class="cell-input" @change="markChanged(row.id, 'posttax_adjustment_reason')" />
+            <template v-if="editMode && editCache[row.id]">
+              <el-input v-model="editCache[row.id].posttax_adjustment_reason" size="small" class="cell-text" @change="markChanged(row.id, 'posttax_adjustment_reason')" />
             </template>
             <template v-else>{{ row.posttax_adjustment_reason || '' }}</template>
           </template>
@@ -376,8 +386,8 @@
             </el-tooltip>
           </template>
           <template #default="{ row }">
-            <template v-if="editMode && row.id">
-              <el-input-number v-model="editCache[row.id].travel_untaxed" :min="0" :precision="2" size="small" :controls="false" class="cell-input" @change="markChanged(row.id, 'travel_untaxed')" />
+            <template v-if="editMode && editCache[row.id]">
+              <el-input-number v-model="editCache[row.id].travel_untaxed" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'travel_untaxed')" />
             </template>
             <template v-else>{{ row.travel_untaxed != null ? row.travel_untaxed : '' }}</template>
           </template>
@@ -477,13 +487,18 @@ function tableRowClassName({ row }) {
 }
 
 function initEditCache() {
-  Object.keys(editCache).forEach(k => delete editCache[k])
   Object.keys(changedSet).forEach(k => delete changedSet[k])
   results.value.forEach(row => {
-    if (!row.id) return
-    editCache[row.id] = {}
-    editableFields.forEach(f => {
-      editCache[row.id][f] = row[f] ?? 0
+    if (!row || !row.id) return
+    editCache[row.id] = reactive({
+      commission_bonus: row.commission_bonus ?? 0,
+      posttax_adjustment: row.posttax_adjustment ?? 0,
+      posttax_adjustment_reason: row.posttax_adjustment_reason ?? '',
+      last_month_untaxed: row.last_month_untaxed ?? 0,
+      travel_untaxed: row.travel_untaxed ?? 0,
+      compensation_tax: row.compensation_tax ?? 0,
+      special_deduction: row.special_deduction ?? 0,
+      tax_deduction: row.tax_deduction ?? 0
     })
   })
 }
@@ -508,20 +523,33 @@ function markChanged(rowId, field) {
 }
 
 function toggleEditMode() {
-  if (editMode.value) {
-    editMode.value = false
-    Object.keys(editCache).forEach(k => delete editCache[k])
-    Object.keys(changedSet).forEach(k => delete changedSet[k])
-    return
+  try {
+    if (editMode.value) {
+      editMode.value = false
+      for (const key of Object.keys(editCache)) {
+        delete editCache[key]
+      }
+      for (const key of Object.keys(changedSet)) {
+        delete changedSet[key]
+      }
+      return
+    }
+    initEditCache()
+    editMode.value = true
+  } catch (e) {
+    console.error('切换编辑模式失败：', e)
+    ElMessage.error('切换编辑模式失败，请刷新页面后重试')
   }
-  initEditCache()
-  editMode.value = true
 }
 
 function cancelEdits() {
   editMode.value = false
-  Object.keys(editCache).forEach(k => delete editCache[k])
-  Object.keys(changedSet).forEach(k => delete changedSet[k])
+  for (const key of Object.keys(editCache)) {
+    delete editCache[key]
+  }
+  for (const key of Object.keys(changedSet)) {
+    delete changedSet[key]
+  }
 }
 
 async function confirmEdits() {
@@ -590,8 +618,12 @@ async function saveAllEdits() {
 
     editConfirmVisible.value = false
     editMode.value = false
-    Object.keys(editCache).forEach(k => delete editCache[k])
-    Object.keys(changedSet).forEach(k => delete changedSet[k])
+    for (const key of Object.keys(editCache)) {
+      delete editCache[key]
+    }
+    for (const key of Object.keys(changedSet)) {
+      delete changedSet[key]
+    }
     await fetchResults()
   } catch (e) {
     ElMessage.error('保存失败：' + (e.response?.data?.detail || e.message))
@@ -806,19 +838,31 @@ async function doTaxImport() {
 </script>
 
 <style scoped>
-.cell-input {
+.salary-toolbar {
   width: 100%;
 }
-.cell-input :deep(.el-input__wrapper) {
-  padding: 0 4px;
-  box-shadow: none;
-  background: transparent;
+.salary-toolbar :deep(.el-button) {
+  flex-shrink: 0;
+  padding-left: 12px;
+  padding-right: 12px;
 }
-.cell-input :deep(.el-input__inner) {
-  text-align: center;
-  font-size: 13px;
-  height: 28px;
-  line-height: 28px;
+.salary-toolbar :deep(.el-button span) {
+  white-space: nowrap;
+}
+.cell-number {
+  width: 100%;
+}
+.cell-number :deep(.el-input__wrapper) {
+  padding: 0 4px;
+}
+.cell-number :deep(.el-input__inner) {
+  text-align: right;
+}
+.cell-text {
+  width: 100%;
+}
+.cell-text :deep(.el-input__wrapper) {
+  padding: 0 4px;
 }
 :deep(.row-changed) {
   background-color: #fef3c7 !important;
