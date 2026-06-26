@@ -37,3 +37,8 @@ backend/verify_sync.py
 
 # 参考资料
 参考文档/
+
+# 已废弃的文件
+backend/seed.py
+backend/app/api/ai_assistant.py
+frontend/src/views/AIAssistant.vue
