@@ -402,17 +402,3 @@ async def import_attendance(
     }
 
 
-@router.put("/{attendance_id}", response_model=AttendanceOut)
-def update_attendance(attendance_id: int, att: AttendanceUpdate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    db_att = db.query(AttendanceRecord).filter(AttendanceRecord.id == attendance_id).first()
-    if not db_att:
-        raise HTTPException(status_code=404, detail="考勤记录不存在")
-    update_data = att.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(db_att, key, value)
-    if db_att.total_work_days > 0:
-        db_att.attendance_rate = db_att.actual_work_days / db_att.total_work_days
-    db.commit()
-    db.refresh(db_att)
-    write_log(db, "data_change", current_user.id, current_user.username, "attendance", "edit", f"编辑考勤记录 (id={attendance_id})")
-    return db_att

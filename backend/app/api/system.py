@@ -134,7 +134,6 @@ class LogOut(BaseModel):
 def get_dict(category: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     items = db.query(SysDictBase).filter(
         SysDictBase.category == category,
-        SysDictBase.is_enabled == True
     ).order_by(SysDictBase.sort_order).all()
     return items
 
@@ -161,6 +160,22 @@ def create_dict(item: DictItemCreate, db: Session = Depends(get_db), current_use
     db.refresh(db_item)
     write_log(db, "data_change", current_user.id, current_user.username, "system", "create", f"新增字典项 {item.category}/{item.code}")
     return db_item
+
+
+@router.put("/dict/{dict_id}/toggle")
+def toggle_dict(dict_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    """切换字典项的启用/禁用状态"""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="仅管理员可操作数据字典")
+    db_item = db.query(SysDictBase).filter(SysDictBase.id == dict_id).first()
+    if not db_item:
+        raise HTTPException(status_code=404, detail="字典项不存在")
+    db_item.is_enabled = not db_item.is_enabled
+    db.commit()
+    db.refresh(db_item)
+    write_log(db, "data_change", current_user.id, current_user.username, "system", "toggle",
+              f"{'启用' if db_item.is_enabled else '禁用'}字典项 {db_item.name} (id={dict_id})")
+    return {"id": db_item.id, "is_enabled": db_item.is_enabled}
 
 
 @router.put("/dict/{dict_id}", response_model=DictItemOut)

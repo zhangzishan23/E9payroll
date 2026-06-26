@@ -10,7 +10,7 @@ import uuid
 from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.models.models import (
-    Employee, EmployeeSalary, AttendanceRecord, PerformanceScore,
+    Employee, EmployeeSalary, EmployeeSalaryAdjustment, AttendanceRecord, PerformanceScore,
     SocialInsurance, LegacyAdjustment, TravelReimbursement, LaborCompensation,
     SalaryCalculation, CalculationLog, SysDictBase
 )
@@ -59,6 +59,9 @@ class SalaryCalcOut(BaseModel):
     status: str = ""
     entry_date: Optional[str] = None
     base_salary: Optional[float] = None
+    base_salary_prorated: Optional[float] = None
+    performance_standard_prorated: Optional[float] = None
+    adjustment_id: Optional[int] = None
     monthly_standard: Optional[float] = None
     performance_standard: Optional[float] = None
     performance_coefficient: Optional[float] = None
@@ -291,6 +294,11 @@ def calculate_salary(period: str, db: Session = Depends(get_db), current_user: U
         else:
             legacy_adjs[la.employee_id]["posttax"] += float(la.amount)
 
+    # 加载月中调薪记录
+    adjustments = {a.employee_id: a for a in db.query(EmployeeSalaryAdjustment).filter(
+        EmployeeSalaryAdjustment.period == period
+    ).all()}
+
     success_count = 0
     failed_count = 0
     total_gross = 0
@@ -312,21 +320,38 @@ def calculate_salary(period: str, db: Session = Depends(get_db), current_user: U
 
             base_salary = float(sal.base_salary)
             perf_std = float(sal.performance_standard)
+            base_salary_ratio = float(sal.base_salary_ratio) if sal.base_salary_ratio else 1.00
             meal = float(sal.meal_allowance or 0)
             transport = float(sal.transport_allowance or 0)
             comm = float(sal.communication_allowance or 0)
             computer = float(sal.computer_allowance or 0)
             housing = float(sal.housing_allowance or 0)
             allowance_total = meal + transport + comm + computer + housing
-            monthly_standard = round(base_salary + perf_std + allowance_total, 2)
-
-            perf_coef = float(perf.coefficient) if perf else 1.00
-            actual_perf = perf_std * perf_coef
 
             att_rate = float(att.attendance_rate)
             total_work_days = float(att.total_work_days)
             actual_work_days = float(att.actual_work_days)
 
+            # 月中调薪：使用折算后工资
+            adj = adjustments.get(emp.id)
+            if adj:
+                base_salary_prorated = float(adj.base_salary_prorated or 0)
+                perf_std_prorated = float(adj.performance_standard_prorated or 0)
+                commission_prorated = float(adj.commission_prorated or 0)
+                total_prorated = float(adj.total_prorated or 0)
+                adjustment_id = adj.id
+                # 折算后月薪标准 = 折算后基本工资 + 折算后绩效标准 + 补贴
+                monthly_standard = round(base_salary_prorated + perf_std_prorated + allowance_total, 2)
+            else:
+                base_salary_prorated = base_salary
+                perf_std_prorated = perf_std
+                commission_prorated = 0
+                total_prorated = base_salary + perf_std
+                adjustment_id = None
+                monthly_standard = round(base_salary + perf_std + allowance_total, 2)
+
+            perf_coef = float(perf.coefficient) if perf else 1.00
+            actual_perf = round(perf_std_prorated * perf_coef, 2)
             effective_performance = round(actual_perf * att_rate, 2)
 
             travel_untaxed = travel_reimbs.get(emp.id, 0)
@@ -335,7 +360,8 @@ def calculate_salary(period: str, db: Session = Depends(get_db), current_user: U
             pretax_adj = legacy["pretax"]
             posttax_adj = legacy["posttax"]
 
-            gross_salary = round((base_salary + allowance_total) * att_rate + effective_performance, 2)
+            # 总应发工资 = (折算后基本工资 + 补贴 + 提成/补发) * 出勤率 + 实际绩效 * 出勤率
+            gross_salary = round((base_salary_prorated + allowance_total + commission_prorated) * att_rate + effective_performance, 2)
 
             pension_personal = float(si.pension_personal or 0) if si else 0
             unemployment_personal = float(si.unemployment_personal or 0) if si else 0
@@ -356,6 +382,9 @@ def calculate_salary(period: str, db: Session = Depends(get_db), current_user: U
                 status=name_map.get(emp.status_id, ''),
                 entry_date=emp.entry_date,
                 base_salary=base_salary,
+                base_salary_prorated=base_salary_prorated,
+                performance_standard_prorated=perf_std_prorated,
+                adjustment_id=adjustment_id,
                 monthly_standard=monthly_standard,
                 performance_standard=perf_std,
                 performance_coefficient=perf_coef,
@@ -367,6 +396,7 @@ def calculate_salary(period: str, db: Session = Depends(get_db), current_user: U
                 computer_allowance=computer,
                 housing_allowance=housing,
                 allowance_total=allowance_total,
+                commission_bonus=commission_prorated,
                 pretax_adjustment=pretax_adj,
                 posttax_adjustment=posttax_adj,
                 travel_untaxed=travel_untaxed,
@@ -458,6 +488,9 @@ def get_calculation_results(
                 position=c.position, status=c.status,
                 entry_date=c.entry_date.isoformat() if c.entry_date else None,
                 base_salary=c.base_salary,
+                base_salary_prorated=c.base_salary_prorated,
+                performance_standard_prorated=c.performance_standard_prorated,
+                adjustment_id=c.adjustment_id,
                 monthly_standard=c.monthly_standard,
                 performance_standard=c.performance_standard,
                 performance_coefficient=c.performance_coefficient,
@@ -545,14 +578,15 @@ def update_calculation_result(
     if "performance_coefficient" in update_data:
         calc.actual_performance = float(calc.performance_standard) * float(calc.performance_coefficient)
 
-    base = float(calc.base_salary)
+    # 使用折算后工资（如有月中调薪），否则用原始工资
+    base = float(calc.base_salary_prorated or calc.base_salary)
     allowance = float(calc.allowance_total)
     actual_perf = float(calc.actual_performance)
     commission = float(calc.commission_bonus or 0)
     att_rate = float(calc.attendance_rate)
 
     calc.effective_performance = round(actual_perf * att_rate, 2)
-    calc.monthly_standard = round(base + float(calc.performance_standard) + allowance, 2)
+    calc.monthly_standard = round(base + float(calc.performance_standard or 0) + allowance, 2)
     calc.gross_salary = round((base + allowance + commission) * att_rate + calc.effective_performance, 2)
 
     si_hf = float(calc.pension_personal or 0) + float(calc.unemployment_personal or 0) + float(calc.medical_personal or 0) + float(calc.housing_fund_personal or 0)
@@ -584,6 +618,9 @@ def update_calculation_result(
         position=calc.position, status=calc.status,
         entry_date=calc.entry_date.isoformat() if calc.entry_date else None,
         base_salary=calc.base_salary,
+        base_salary_prorated=calc.base_salary_prorated,
+        performance_standard_prorated=calc.performance_standard_prorated,
+        adjustment_id=calc.adjustment_id,
         monthly_standard=calc.monthly_standard,
         performance_standard=calc.performance_standard,
         performance_coefficient=calc.performance_coefficient,
@@ -633,7 +670,7 @@ def calculate_net_salary(period: str, db: Session = Depends(get_db), current_use
     total_gross = 0
     total_net = 0
     for calc in calcs:
-        base = float(calc.base_salary)
+        base = float(calc.base_salary_prorated or calc.base_salary)
         allowance = float(calc.allowance_total)
         calc.monthly_standard = round(base + float(calc.performance_standard) + allowance, 2)
         calc.effective_performance = round(float(calc.actual_performance or 0) * float(calc.attendance_rate or 1), 2)
@@ -832,3 +869,243 @@ def batch_delete_salary_calculations(ids: List[int], db: Session = Depends(get_d
     db.commit()
     write_log(db, "data_change", current_user.id, current_user.username, "salary", "delete", f"批量删除 {len(calcs)} 条核算记录")
     return {"message": f"成功删除 {len(calcs)} 条核算记录", "deleted_count": len(calcs)}
+
+
+# ============================================================
+# 月中调薪（EmployeeSalaryAdjustment）API
+# ============================================================
+
+class SalaryAdjustmentIn(BaseModel):
+    period: str
+    employee_id: int
+    base_salary_before: float
+    bonus_before: float = 0
+    performance_standard_before: float = 0
+    base_salary_after: float
+    bonus_after: float = 0
+    performance_standard_after: float = 0
+    month_start: date
+    adjustment_date: date
+    month_end: date
+    total_days: float
+    days_before: float = 0
+    days_after: float = 0
+    base_salary_ratio: float = 1.00
+    adjustment_type: str = "转正调薪"
+
+
+class SalaryAdjustmentOut(BaseModel):
+    id: int
+    period: str
+    employee_id: int
+    employee_name: str = ""
+    base_salary_before: float
+    bonus_before: float
+    performance_standard_before: float
+    total_before: float
+    base_salary_after: float
+    bonus_after: float
+    performance_standard_after: float
+    total_after: float
+    base_salary_prorated: float
+    commission_prorated: float
+    performance_standard_prorated: float
+    total_prorated: float
+    month_start: str
+    adjustment_date: str
+    month_end: str
+    days_before: float
+    days_after: float
+    total_days: float
+    base_salary_ratio: float
+    adjustment_type: str
+
+    class Config:
+        from_attributes = True
+
+
+def _calc_prorated(adj: EmployeeSalaryAdjustment):
+    """按 Excel 公式计算折算后工资"""
+    total_days = float(adj.total_days)
+    days_before = float(adj.days_before)
+    days_after = float(adj.days_after)
+
+    if total_days == 0:
+        return
+
+    base_before = float(adj.base_salary_before)
+    base_after = float(adj.base_salary_after)
+    perf_before = float(adj.performance_standard_before)
+    perf_after = float(adj.performance_standard_after)
+
+    # 折算后基本工资 = ROUND(调前天数 * 调前基本工资 / 总计薪天数 + 调后基本工资 * 调后天数 / 总计薪天数, 2)
+    adj.base_salary_prorated = round(days_before * base_before / total_days + base_after * days_after / total_days, 2)
+    # 折算后绩效奖金标准 = ROUND(调前天数 * 调前绩效标准 / 总计薪天数 + 调后绩效标准 * 调后天数 / 总计薪天数, 2)
+    adj.performance_standard_prorated = round(days_before * perf_before / total_days + perf_after * days_after / total_days, 2)
+    # 折算后工资标准合计 = ROUND(折算后基本工资 + 提成 + 折算后绩效标准, 0)
+    adj.total_prorated = round(float(adj.base_salary_prorated) + float(adj.commission_prorated or 0) + float(adj.performance_standard_prorated), 0)
+
+    # 调前/调后合计
+    adj.total_before = round(base_before + float(adj.bonus_before or 0) + perf_before, 2)
+    adj.total_after = round(base_after + float(adj.bonus_after or 0) + perf_after, 2)
+
+
+@router.get("/adjustments/{period}", response_model=List[SalaryAdjustmentOut])
+def get_adjustments(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    """获取指定月份的月中调薪记录"""
+    adjs = db.query(EmployeeSalaryAdjustment).filter(
+        EmployeeSalaryAdjustment.period == period
+    ).order_by(EmployeeSalaryAdjustment.id).all()
+
+    emp_map = {e.id: e.name for e in db.query(Employee).all()}
+    return [
+        SalaryAdjustmentOut(
+            id=a.id, period=a.period, employee_id=a.employee_id,
+            employee_name=emp_map.get(a.employee_id, ""),
+            base_salary_before=float(a.base_salary_before),
+            bonus_before=float(a.bonus_before or 0),
+            performance_standard_before=float(a.performance_standard_before),
+            total_before=float(a.total_before),
+            base_salary_after=float(a.base_salary_after),
+            bonus_after=float(a.bonus_after or 0),
+            performance_standard_after=float(a.performance_standard_after),
+            total_after=float(a.total_after),
+            base_salary_prorated=float(a.base_salary_prorated or 0),
+            commission_prorated=float(a.commission_prorated or 0),
+            performance_standard_prorated=float(a.performance_standard_prorated or 0),
+            total_prorated=float(a.total_prorated or 0),
+            month_start=a.month_start.isoformat(),
+            adjustment_date=a.adjustment_date.isoformat(),
+            month_end=a.month_end.isoformat(),
+            days_before=float(a.days_before),
+            days_after=float(a.days_after),
+            total_days=float(a.total_days),
+            base_salary_ratio=float(a.base_salary_ratio),
+            adjustment_type=a.adjustment_type,
+        ) for a in adjs
+    ]
+
+
+@router.post("/adjustments", response_model=SalaryAdjustmentOut)
+def create_adjustment(data: SalaryAdjustmentIn, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    """创建月中调薪记录（自动计算折算后工资）"""
+    emp = db.query(Employee).filter(Employee.id == data.employee_id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="员工不存在")
+
+    adj = EmployeeSalaryAdjustment(
+        period=data.period,
+        employee_id=data.employee_id,
+        base_salary_before=data.base_salary_before,
+        bonus_before=data.bonus_before,
+        performance_standard_before=data.performance_standard_before,
+        base_salary_after=data.base_salary_after,
+        bonus_after=data.bonus_after,
+        performance_standard_after=data.performance_standard_after,
+        month_start=data.month_start,
+        adjustment_date=data.adjustment_date,
+        month_end=data.month_end,
+        total_days=data.total_days,
+        days_before=data.days_before,
+        days_after=data.days_after,
+        base_salary_ratio=data.base_salary_ratio,
+        adjustment_type=data.adjustment_type,
+    )
+    _calc_prorated(adj)
+    db.add(adj)
+    db.commit()
+    db.refresh(adj)
+    write_log(db, "data_change", current_user.id, current_user.username, "salary", "create", f"创建月中调薪记录 (period={data.period}, employee_id={data.employee_id})")
+
+    return SalaryAdjustmentOut(
+        id=adj.id, period=adj.period, employee_id=adj.employee_id,
+        employee_name=emp.name,
+        base_salary_before=float(adj.base_salary_before),
+        bonus_before=float(adj.bonus_before or 0),
+        performance_standard_before=float(adj.performance_standard_before),
+        total_before=float(adj.total_before),
+        base_salary_after=float(adj.base_salary_after),
+        bonus_after=float(adj.bonus_after or 0),
+        performance_standard_after=float(adj.performance_standard_after),
+        total_after=float(adj.total_after),
+        base_salary_prorated=float(adj.base_salary_prorated or 0),
+        commission_prorated=float(adj.commission_prorated or 0),
+        performance_standard_prorated=float(adj.performance_standard_prorated or 0),
+        total_prorated=float(adj.total_prorated or 0),
+        month_start=adj.month_start.isoformat(),
+        adjustment_date=adj.adjustment_date.isoformat(),
+        month_end=adj.month_end.isoformat(),
+        days_before=float(adj.days_before),
+        days_after=float(adj.days_after),
+        total_days=float(adj.total_days),
+        base_salary_ratio=float(adj.base_salary_ratio),
+        adjustment_type=adj.adjustment_type,
+    )
+
+
+@router.put("/adjustments/{adj_id}", response_model=SalaryAdjustmentOut)
+def update_adjustment(adj_id: int, data: SalaryAdjustmentIn, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    """更新月中调薪记录（重新计算折算后工资）"""
+    adj = db.query(EmployeeSalaryAdjustment).filter(EmployeeSalaryAdjustment.id == adj_id).first()
+    if not adj:
+        raise HTTPException(status_code=404, detail="调薪记录不存在")
+
+    adj.period = data.period
+    adj.employee_id = data.employee_id
+    adj.base_salary_before = data.base_salary_before
+    adj.bonus_before = data.bonus_before
+    adj.performance_standard_before = data.performance_standard_before
+    adj.base_salary_after = data.base_salary_after
+    adj.bonus_after = data.bonus_after
+    adj.performance_standard_after = data.performance_standard_after
+    adj.month_start = data.month_start
+    adj.adjustment_date = data.adjustment_date
+    adj.month_end = data.month_end
+    adj.total_days = data.total_days
+    adj.days_before = data.days_before
+    adj.days_after = data.days_after
+    adj.base_salary_ratio = data.base_salary_ratio
+    adj.adjustment_type = data.adjustment_type
+    _calc_prorated(adj)
+
+    db.commit()
+    db.refresh(adj)
+    write_log(db, "data_change", current_user.id, current_user.username, "salary", "edit", f"更新月中调薪记录 (id={adj_id})")
+
+    emp = db.query(Employee).filter(Employee.id == adj.employee_id).first()
+    return SalaryAdjustmentOut(
+        id=adj.id, period=adj.period, employee_id=adj.employee_id,
+        employee_name=emp.name if emp else "",
+        base_salary_before=float(adj.base_salary_before),
+        bonus_before=float(adj.bonus_before or 0),
+        performance_standard_before=float(adj.performance_standard_before),
+        total_before=float(adj.total_before),
+        base_salary_after=float(adj.base_salary_after),
+        bonus_after=float(adj.bonus_after or 0),
+        performance_standard_after=float(adj.performance_standard_after),
+        total_after=float(adj.total_after),
+        base_salary_prorated=float(adj.base_salary_prorated or 0),
+        commission_prorated=float(adj.commission_prorated or 0),
+        performance_standard_prorated=float(adj.performance_standard_prorated or 0),
+        total_prorated=float(adj.total_prorated or 0),
+        month_start=adj.month_start.isoformat(),
+        adjustment_date=adj.adjustment_date.isoformat(),
+        month_end=adj.month_end.isoformat(),
+        days_before=float(adj.days_before),
+        days_after=float(adj.days_after),
+        total_days=float(adj.total_days),
+        base_salary_ratio=float(adj.base_salary_ratio),
+        adjustment_type=adj.adjustment_type,
+    )
+
+
+@router.delete("/adjustments/{adj_id}")
+def delete_adjustment(adj_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    """删除月中调薪记录"""
+    adj = db.query(EmployeeSalaryAdjustment).filter(EmployeeSalaryAdjustment.id == adj_id).first()
+    if not adj:
+        raise HTTPException(status_code=404, detail="调薪记录不存在")
+    db.delete(adj)
+    db.commit()
+    write_log(db, "data_change", current_user.id, current_user.username, "salary", "delete", f"删除月中调薪记录 (id={adj_id})")
+    return {"message": "调薪记录已删除"}
