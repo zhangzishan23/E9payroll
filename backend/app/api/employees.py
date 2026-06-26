@@ -17,10 +17,13 @@ router = APIRouter()
 class EmployeeOut(BaseModel):
     id: int
     employee_no: str
+    dingtalk_user_id: Optional[str] = None
     name: str
-    gender: str
-    id_card: str
+    gender: Optional[str] = None
+    id_card: Optional[str] = None
     phone: Optional[str] = None
+    email: Optional[str] = None
+    work_place: Optional[str] = None
     contract_company_id: int
     contract_company_name: Optional[str] = None
     department_id: int
@@ -29,13 +32,51 @@ class EmployeeOut(BaseModel):
     position_name: Optional[str] = None
     status_id: int
     status_name: Optional[str] = None
+    position_level: Optional[str] = None
+    employee_type: Optional[str] = None
+    job_level: Optional[str] = None
     cost_owner: Optional[str] = None
+    report_manager: Optional[str] = None
     entry_date: date
     regular_date: Optional[date] = None
     resign_date: Optional[date] = None
+    birth_date: Optional[date] = None
+    nation: Optional[str] = None
+    marital_status: Optional[str] = None
+    children_status: Optional[str] = None
+    political_status: Optional[str] = None
+    native_place: Optional[str] = None
+    residence_type: Optional[str] = None
+    census_address: Optional[str] = None
+    first_work_date: Optional[date] = None
+    education: Optional[str] = None
+    graduate_school: Optional[str] = None
+    graduate_date: Optional[date] = None
+    major: Optional[str] = None
+    cert1: Optional[str] = None
+    cert2: Optional[str] = None
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_relation: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
+    contract_start_date: Optional[date] = None
+    contract_end_date: Optional[date] = None
+    contract_type: Optional[str] = None
+    insurance_start_date: Optional[date] = None
+    insurance_location: Optional[str] = None
+    recruitment_channel: Optional[str] = None
+    hobby: Optional[str] = None
+    commercial_insurance_type: Optional[str] = None
+    remark: Optional[str] = None
     bank_card: Optional[str] = None
     bank_branch: Optional[str] = None
+    bank_branch_detail: Optional[str] = None
     home_address: Optional[str] = None
+    dept_path: Optional[str] = None
+    dept_level1: Optional[str] = None
+    dept_level2: Optional[str] = None
+    dept_level3: Optional[str] = None
+    dept_level4: Optional[str] = None
+    dept_level5: Optional[str] = None
     base_salary: Optional[float] = None
     performance_standard: Optional[float] = None
     meal_allowance: Optional[float] = None
@@ -51,18 +92,52 @@ class EmployeeOut(BaseModel):
 
 class EmployeeCreate(BaseModel):
     name: str
-    gender: str
-    id_card: str
+    gender: Optional[str] = None
+    id_card: Optional[str] = None
     phone: Optional[str] = None
+    email: Optional[str] = None
+    work_place: Optional[str] = None
     contract_company_id: int
     department_id: int
     position_id: int
     status_id: int
+    position_level: Optional[str] = None
+    employee_type: Optional[str] = None
+    job_level: Optional[str] = None
     cost_owner: Optional[str] = None
+    report_manager: Optional[str] = None
     entry_date: date
     regular_date: Optional[date] = None
+    birth_date: Optional[date] = None
+    nation: Optional[str] = None
+    marital_status: Optional[str] = None
+    children_status: Optional[str] = None
+    political_status: Optional[str] = None
+    native_place: Optional[str] = None
+    residence_type: Optional[str] = None
+    census_address: Optional[str] = None
+    first_work_date: Optional[date] = None
+    education: Optional[str] = None
+    graduate_school: Optional[str] = None
+    graduate_date: Optional[date] = None
+    major: Optional[str] = None
+    cert1: Optional[str] = None
+    cert2: Optional[str] = None
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_relation: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
+    contract_start_date: Optional[date] = None
+    contract_end_date: Optional[date] = None
+    contract_type: Optional[str] = None
+    insurance_start_date: Optional[date] = None
+    insurance_location: Optional[str] = None
+    recruitment_channel: Optional[str] = None
+    hobby: Optional[str] = None
+    commercial_insurance_type: Optional[str] = None
+    remark: Optional[str] = None
     bank_card: Optional[str] = None
     bank_branch: Optional[str] = None
+    bank_branch_detail: Optional[str] = None
     home_address: Optional[str] = None
 
 
@@ -71,16 +146,50 @@ class EmployeeUpdate(BaseModel):
     gender: Optional[str] = None
     id_card: Optional[str] = None
     phone: Optional[str] = None
+    email: Optional[str] = None
+    work_place: Optional[str] = None
     contract_company_id: Optional[int] = None
     department_id: Optional[int] = None
     position_id: Optional[int] = None
     status_id: Optional[int] = None
+    position_level: Optional[str] = None
+    employee_type: Optional[str] = None
+    job_level: Optional[str] = None
     cost_owner: Optional[str] = None
+    report_manager: Optional[str] = None
     entry_date: Optional[date] = None
     regular_date: Optional[date] = None
     resign_date: Optional[date] = None
+    birth_date: Optional[date] = None
+    nation: Optional[str] = None
+    marital_status: Optional[str] = None
+    children_status: Optional[str] = None
+    political_status: Optional[str] = None
+    native_place: Optional[str] = None
+    residence_type: Optional[str] = None
+    census_address: Optional[str] = None
+    first_work_date: Optional[date] = None
+    education: Optional[str] = None
+    graduate_school: Optional[str] = None
+    graduate_date: Optional[date] = None
+    major: Optional[str] = None
+    cert1: Optional[str] = None
+    cert2: Optional[str] = None
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_relation: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
+    contract_start_date: Optional[date] = None
+    contract_end_date: Optional[date] = None
+    contract_type: Optional[str] = None
+    insurance_start_date: Optional[date] = None
+    insurance_location: Optional[str] = None
+    recruitment_channel: Optional[str] = None
+    hobby: Optional[str] = None
+    commercial_insurance_type: Optional[str] = None
+    remark: Optional[str] = None
     bank_card: Optional[str] = None
     bank_branch: Optional[str] = None
+    bank_branch_detail: Optional[str] = None
     home_address: Optional[str] = None
 
 
@@ -122,29 +231,64 @@ class SalaryCreate(BaseModel):
 
 
 def _enrich_employee(emp: Employee, db: Session) -> dict:
-    dict_ids = [emp.contract_company_id, emp.department_id, emp.position_id, emp.status_id]
-    dict_items = db.query(SysDictBase).filter(SysDictBase.id.in_(dict_ids)).all()
-    name_map = {d.id: d.name for d in dict_items}
+    # 按类别分别查询字典项，确保名称正确匹配
+    def _get_name(dict_id, category):
+        if dict_id is None:
+            return None
+        item = db.query(SysDictBase).filter(
+            SysDictBase.id == dict_id,
+            SysDictBase.category == category
+        ).first()
+        return item.name if item else None
 
     latest_salary = db.query(EmployeeSalary).filter(
         EmployeeSalary.employee_id == emp.id
     ).order_by(EmployeeSalary.effective_date.desc()).first()
 
     result = {
-        "id": emp.id, "employee_no": emp.employee_no, "name": emp.name,
+        "id": emp.id, "employee_no": emp.employee_no, "dingtalk_user_id": emp.dingtalk_user_id,
+        "name": emp.name,
         "gender": emp.gender, "id_card": emp.id_card, "phone": emp.phone,
+        "email": emp.email, "work_place": emp.work_place,
         "contract_company_id": emp.contract_company_id,
-        "contract_company_name": name_map.get(emp.contract_company_id),
+        "contract_company_name": _get_name(emp.contract_company_id, "contract_company"),
         "department_id": emp.department_id,
-        "department_name": name_map.get(emp.department_id),
+        "department_name": _get_name(emp.department_id, "department"),
         "position_id": emp.position_id,
-        "position_name": name_map.get(emp.position_id),
+        "position_name": _get_name(emp.position_id, "position"),
         "status_id": emp.status_id,
-        "status_name": name_map.get(emp.status_id),
-        "cost_owner": emp.cost_owner, "entry_date": emp.entry_date,
-        "regular_date": emp.regular_date, "resign_date": emp.resign_date,
+        "status_name": _get_name(emp.status_id, "employee_status"),
+        "position_level": emp.position_level, "employee_type": emp.employee_type,
+        "job_level": emp.job_level, "cost_owner": emp.cost_owner,
+        "report_manager": emp.report_manager,
+        "entry_date": emp.entry_date, "regular_date": emp.regular_date,
+        "resign_date": emp.resign_date, "birth_date": emp.birth_date,
+        "nation": emp.nation, "marital_status": emp.marital_status,
+        "children_status": emp.children_status, "political_status": emp.political_status,
+        "native_place": emp.native_place, "residence_type": emp.residence_type,
+        "census_address": emp.census_address, "first_work_date": emp.first_work_date,
+        "education": emp.education, "graduate_school": emp.graduate_school,
+        "graduate_date": emp.graduate_date, "major": emp.major,
+        "cert1": emp.cert1, "cert2": emp.cert2,
+        "emergency_contact_name": emp.emergency_contact_name,
+        "emergency_contact_relation": emp.emergency_contact_relation,
+        "emergency_contact_phone": emp.emergency_contact_phone,
+        "contract_start_date": emp.contract_start_date,
+        "contract_end_date": emp.contract_end_date,
+        "contract_type": emp.contract_type,
+        "insurance_start_date": emp.insurance_start_date,
+        "insurance_location": emp.insurance_location,
+        "recruitment_channel": emp.recruitment_channel,
+        "hobby": emp.hobby,
+        "commercial_insurance_type": emp.commercial_insurance_type,
+        "remark": emp.remark,
         "bank_card": emp.bank_card, "bank_branch": emp.bank_branch,
+        "bank_branch_detail": emp.bank_branch_detail,
         "home_address": emp.home_address,
+        "dept_path": emp.dept_path,
+        "dept_level1": emp.dept_level1, "dept_level2": emp.dept_level2,
+        "dept_level3": emp.dept_level3, "dept_level4": emp.dept_level4,
+        "dept_level5": emp.dept_level5,
         "base_salary": float(latest_salary.base_salary) if latest_salary else None,
         "performance_standard": float(latest_salary.performance_standard) if latest_salary else None,
         "meal_allowance": float(latest_salary.meal_allowance) if latest_salary else None,
@@ -164,6 +308,7 @@ def get_employees(
     keyword: Optional[str] = Query(None),
     filter_field: Optional[str] = Query(None),
     filter_value: Optional[str] = Query(None),
+    include_disabled_dept: bool = Query(False, description="是否包含已禁用部门的员工"),
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
@@ -202,6 +347,14 @@ def get_employees(
         query = query.filter(
             Employee.name.contains(keyword) | Employee.employee_no.contains(keyword)
         )
+    # 默认隐藏已禁用部门的员工
+    if not include_disabled_dept:
+        disabled_dept_ids = db.query(SysDictBase.id).filter(
+            SysDictBase.category == 'department',
+            SysDictBase.is_enabled == False
+        ).all()
+        if disabled_dept_ids:
+            query = query.filter(Employee.department_id.notin_([d[0] for d in disabled_dept_ids]))
     employees = query.order_by(Employee.employee_no).all()
     return [_enrich_employee(e, db) for e in employees]
 

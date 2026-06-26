@@ -3,16 +3,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.core.config import CORS_ORIGINS
 from app.core.database import engine, Base
+from app.core.scheduler import start_scheduler, stop_scheduler
 from app.models import models
-from app.api import auth, employees, attendance, salary, approval, reports, system, performance, social_insurance, ai_assistant
-from seed import seed_all
+from app.api import auth, employees, attendance, salary, approval, reports, system, performance, social_insurance, dingtalk
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
-    seed_all()
+    start_scheduler()
     yield
+    stop_scheduler()
 
 app = FastAPI(title="E9 Payroll", version="1.0.0", lifespan=lifespan)
 
@@ -32,8 +33,8 @@ app.include_router(approval.router, prefix="/api/approval", tags=["审批流程"
 app.include_router(reports.router, prefix="/api/reports", tags=["报表导出"])
 app.include_router(performance.router, prefix="/api/performance", tags=["绩效管理"])
 app.include_router(social_insurance.router, prefix="/api/social-insurance", tags=["社保公积金"])
+app.include_router(dingtalk.router, prefix="/api/dingtalk", tags=["钉钉同步"])
 app.include_router(system.router, prefix="/api/system", tags=["系统管理"])
-app.include_router(ai_assistant.router, prefix="/api/ai", tags=["AI助手"])
 
 
 @app.get("/api/health")
