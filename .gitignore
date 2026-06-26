@@ -31,3 +31,9 @@ PROJECT_RULES.md
 
 # 项目说明文档(本地参考用)
 README.md
+
+# 调试测试脚本
+backend/verify_sync.py
+
+# 参考资料
+参考文件/
