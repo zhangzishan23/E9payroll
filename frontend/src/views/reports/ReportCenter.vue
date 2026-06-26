@@ -1,9 +1,9 @@
 <template>
   <div class="space-y-6">
     <div class="apple-card p-6">
-      <div class="flex justify-between items-center mb-4">
-        <h3 class="text-lg font-semibold text-gray-700">数据统计中心</h3>
-        <el-date-picker v-model="statsPeriod" type="month" placeholder="选择月份" class="w-36" value-format="YYYYMM" @change="fetchStats" />
+      <div class="flex items-center gap-2 mb-4">
+        <h3 class="text-lg font-semibold text-gray-700 shrink-0">数据统计中心</h3>
+        <el-date-picker v-model="statsPeriod" type="month" placeholder="选择月份" size="small" class="!w-40" value-format="YYYYMM" @change="fetchStats" />
       </div>
 
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -61,8 +61,10 @@
             <el-icon class="text-4xl text-green-500"><Document /></el-icon>
             <span class="font-semibold text-lg">薪资核算表</span>
           </div>
-          <el-date-picker v-model="salaryPeriod" type="month" placeholder="选择月份" class="w-48 mx-auto mb-4" size="default" value-format="YYYYMM" />
-          <el-button type="primary" size="default" @click="exportReport('salary')">导出Excel</el-button>
+          <div class="flex items-center gap-2 justify-center mb-4">
+                <el-date-picker v-model="salaryPeriod" type="month" placeholder="选择月份" size="small" class="!w-40" value-format="YYYYMM" />
+                <el-button type="primary" size="small" @click="exportReport('salary')">导出Excel</el-button>
+              </div>
         </div>
 
         <div class="apple-card p-6 text-center border-2 border-dashed border-orange-200 hover:border-orange-400 hover:shadow-lg transition-shadow">
@@ -70,8 +72,10 @@
             <el-icon class="text-4xl text-orange-500"><Calendar /></el-icon>
             <span class="font-semibold text-lg">考勤统计表</span>
           </div>
-          <el-date-picker v-model="attPeriod" type="month" placeholder="选择月份" class="w-48 mx-auto mb-4" size="default" value-format="YYYYMM" />
-          <el-button type="primary" size="default" @click="exportReport('attendance')">导出Excel</el-button>
+          <div class="flex items-center gap-2 justify-center mb-4">
+            <el-date-picker v-model="attPeriod" type="month" placeholder="选择月份" size="small" class="!w-40" value-format="YYYYMM" />
+            <el-button type="primary" size="small" @click="exportReport('attendance')">导出Excel</el-button>
+          </div>
         </div>
       </div>
     </div>

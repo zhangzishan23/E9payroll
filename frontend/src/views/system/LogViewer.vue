@@ -1,14 +1,14 @@
 <template>
   <div class="apple-card p-6">
-    <div class="flex items-center gap-4 mb-4">
-      <h3 class="text-lg font-semibold text-gray-700">操作日志</h3>
-      <el-select v-model="logType" class="w-32" @change="fetchData">
+    <div class="flex items-center gap-1.5 mb-4 flex-wrap">
+      <h3 class="text-lg font-semibold text-gray-700 shrink-0 mr-1">操作日志</h3>
+      <el-select v-model="logType" placeholder="日志类型" size="small" class="!w-28" @change="fetchData">
         <el-option label="全部" value="" />
         <el-option label="登录日志" value="login" />
         <el-option label="操作日志" value="operation" />
         <el-option label="数据变更" value="data_change" />
       </el-select>
-      <el-button @click="fetchData">刷新</el-button>
+      <el-button size="small" @click="fetchData">刷新</el-button>
     </div>
 
     <el-table :data="logs" border stripe v-loading="loading" max-height="600">

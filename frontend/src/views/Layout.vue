@@ -2,7 +2,8 @@
   <div class="min-h-screen flex">
     <el-menu
       :default-active="activeMenu"
-      class="w-56 min-h-screen apple-header"
+      :default-openeds="['system']"
+      class="w-56 h-screen overflow-y-auto apple-header flex-shrink-0"
       background-color="transparent"
       router
       @select="handleSelect"
@@ -49,19 +50,22 @@
         <el-menu-item index="/system/users">用户管理</el-menu-item>
         <el-menu-item index="/system/roles">角色管理</el-menu-item>
         <el-menu-item index="/system/dict">数据字典</el-menu-item>
+        <el-menu-item index="/system/dict?category=department">部门管理</el-menu-item>
         <el-menu-item index="/system/logs">操作日志</el-menu-item>
       </el-sub-menu>
 
-      <div class="absolute bottom-4 left-0 w-full px-4">
-        <div class="space-y-3">
-          <el-button class="w-full" size="default" @click="router.push('/profile')">
-            <el-icon><User /></el-icon>
-            个人中心
-          </el-button>
-          <el-button class="w-full" size="default" type="danger" @click="handleLogout">
-            <el-icon><SwitchButton /></el-icon>
-            退出登录
-          </el-button>
+      <div class="px-4 pt-6 pb-4 space-y-2">
+        <div 
+          class="w-full px-4 py-2 text-center cursor-pointer border border-gray-200 rounded-md hover:bg-gray-50 transition-colors"
+          @click="router.push('/profile')"
+        >
+          个人中心
+        </div>
+        <div 
+          class="w-full px-4 py-2 text-center cursor-pointer border border-gray-200 rounded-md hover:bg-gray-50 transition-colors"
+          @click="handleLogout"
+        >
+          退出登录
         </div>
       </div>
     </el-menu>
@@ -69,8 +73,6 @@
     <div class="flex-1 p-6 overflow-auto">
       <router-view />
     </div>
-
-    <AIAssistant />
   </div>
 </template>
 
@@ -79,7 +81,6 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { User, Calendar, Money, Checked, Document, Setting, TrendCharts, SwitchButton, CreditCard } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
-import AIAssistant from './AIAssistant.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -100,3 +101,4 @@ function handleLogout() {
   router.push('/login')
 }
 </script>
+

@@ -1,8 +1,8 @@
 <template>
   <div class="apple-card p-6">
-    <div class="flex justify-between items-center mb-4">
-      <h3 class="text-lg font-semibold text-gray-700">用户管理</h3>
-      <el-button type="primary" :icon="Plus" @click="showDialog(null)">新增用户</el-button>
+    <div class="flex items-center gap-1.5 mb-4">
+      <h3 class="text-lg font-semibold text-gray-700 shrink-0 mr-1">用户管理</h3>
+      <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)">新增</el-button>
     </div>
 
     <el-table :data="users" border stripe v-loading="loading" @selection-change="handleSelectionChange">

@@ -1,13 +1,11 @@
 <template>
   <div class="apple-card p-6">
-    <div class="flex justify-between items-center mb-4">
-      <h3 class="text-lg font-semibold text-gray-700">角色管理</h3>
-      <div class="flex gap-3">
-        <el-button type="primary" :icon="Plus" @click="showDialog(null)">新增角色</el-button>
-        <el-button type="danger" :icon="Delete" :disabled="!selectedRows.length" @click="handleBatchDelete">
-          批量删除 {{ selectedRows.length ? `(${selectedRows.length})` : '' }}
-        </el-button>
-      </div>
+    <div class="flex items-center gap-1.5 mb-4 flex-wrap">
+      <h3 class="text-lg font-semibold text-gray-700 shrink-0 mr-1">角色管理</h3>
+      <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)">新增</el-button>
+      <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">
+        删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
+      </el-button>
     </div>
 
     <el-table :data="roles" border stripe v-loading="loading" @selection-change="handleSelectionChange">
@@ -91,8 +89,7 @@ const modules = [
   { key: 'salary', label: '薪资核算' },
   { key: 'approval', label: '审批流程' },
   { key: 'report', label: '报表导出' },
-  { key: 'system', label: '系统管理' },
-  { key: 'ai_assistant', label: 'AI助手' }
+  { key: 'system', label: '系统管理' }
 ]
 const actions = ['view', 'create', 'edit', 'delete', 'export', 'use']
 const actLabels = { view: '查看', create: '新增', edit: '编辑', delete: '删除', export: '导出', use: '使用' }
