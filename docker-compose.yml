@@ -1,0 +1,57 @@
+version: "3.8"
+
+services:
+  db:
+    image: m.daocloud.io/docker.io/library/postgres:16-alpine
+    container_name: e9-salary-db
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "${DB_EXTERNAL_PORT}:5432"
+    volumes:
+      - pgdata_e9:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: e9-salary-backend
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      SECRET_KEY: ${BACKEND_SECRET_KEY}
+      ALGORITHM: ${ALGORITHM}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      DINGTALK_CLIENT_ID: ${DINGTALK_CLIENT_ID}
+      DINGTALK_CLIENT_SECRET: ${DINGTALK_CLIENT_SECRET}
+      DINGTALK_AGENT_ID: ${DINGTALK_AGENT_ID}
+      DINGTALK_ROBOT_CODE: ${DINGTALK_ROBOT_CODE}
+      DINGTALK_SYNC_DEPT_NAMES: ${DINGTALK_SYNC_DEPT_NAMES}
+    ports:
+      - "${BACKEND_PORT}:8010"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: e9-salary-frontend
+    ports:
+      - "${FRONTEND_PORT}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata_e9:
