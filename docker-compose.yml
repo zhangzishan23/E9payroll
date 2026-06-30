@@ -37,7 +37,7 @@ services:
       DINGTALK_SYNC_DEPT_NAMES: ${DINGTALK_SYNC_DEPT_NAMES}
     volumes:
       - ./data:/app/data
-      - ./backups:/app/backups
+      - ./backups:/backups
     ports:
       - "${BACKEND_PORT}:8010"
     depends_on:
