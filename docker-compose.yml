@@ -35,6 +35,9 @@ services:
       DINGTALK_AGENT_ID: ${DINGTALK_AGENT_ID}
       DINGTALK_ROBOT_CODE: ${DINGTALK_ROBOT_CODE}
       DINGTALK_SYNC_DEPT_NAMES: ${DINGTALK_SYNC_DEPT_NAMES}
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
     ports:
       - "${BACKEND_PORT}:8010"
     depends_on:

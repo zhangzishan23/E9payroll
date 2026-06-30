@@ -443,7 +443,33 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download, Delete } from '@element-plus/icons-vue'
 import api from '../../api'
 
-const periodDate = ref('202604')
+function getDefaultPeriod() {
+  const now = new Date()
+  const bjOffset = 8 * 60
+  const localOffset = now.getTimezoneOffset()
+  const bjTime = new Date(now.getTime() + (bjOffset + localOffset) * 60 * 1000)
+  const year = bjTime.getFullYear()
+  const month = bjTime.getMonth() + 1
+  const day = bjTime.getDate()
+  let targetYear, targetMonth
+  if (day < 15) {
+    if (month === 1) {
+      targetYear = year - 1
+      targetMonth = 12
+    } else {
+      targetYear = year
+      targetMonth = month - 1
+    }
+  } else {
+    targetYear = year
+    targetMonth = month
+  }
+  return `${targetYear}${String(targetMonth).padStart(2, '0')}`
+}
+
+const defaultPeriod = getDefaultPeriod()
+
+const periodDate = ref(defaultPeriod)
 const filterField = ref('')
 const filterValue = ref('')
 const checking = ref(false)

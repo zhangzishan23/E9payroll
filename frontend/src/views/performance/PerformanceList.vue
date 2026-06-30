@@ -157,6 +157,32 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Download, Upload, Delete } from '@element-plus/icons-vue'
 import api from '../../api'
 
+function getDefaultPeriod() {
+  const now = new Date()
+  const bjOffset = 8 * 60
+  const localOffset = now.getTimezoneOffset()
+  const bjTime = new Date(now.getTime() + (bjOffset + localOffset) * 60 * 1000)
+  const year = bjTime.getFullYear()
+  const month = bjTime.getMonth() + 1
+  const day = bjTime.getDate()
+  let targetYear, targetMonth
+  if (day < 15) {
+    if (month === 1) {
+      targetYear = year - 1
+      targetMonth = 12
+    } else {
+      targetYear = year
+      targetMonth = month - 1
+    }
+  } else {
+    targetYear = year
+    targetMonth = month
+  }
+  return `${targetYear}${String(targetMonth).padStart(2, '0')}`
+}
+
+const defaultPeriod = getDefaultPeriod()
+
 const loading = ref(false)
 const saving = ref(false)
 const savingEdits = ref(false)
@@ -164,7 +190,7 @@ const importing = ref(false)
 const dialogVisible = ref(false)
 const importVisible = ref(false)
 const isEdit = ref(false)
-const periodDate = ref('202604')
+const periodDate = ref(defaultPeriod)
 const filterField = ref('')
 const filterValue = ref('')
 const records = ref([])
@@ -191,7 +217,7 @@ const fieldLabels = {
 }
 
 const form = reactive({
-  period: '202604', employee_id: null,
+  period: defaultPeriod, employee_id: null,
   initial_score: null, final_score: null, coefficient: 1.00
 })
 
