@@ -5,6 +5,7 @@ from typing import Optional
 import io
 from openpyxl import Workbook
 from app.core.database import get_db
+from app.core.query_utils import filter_active_employees
 from app.models.models import Employee, EmployeeSalary, SalaryCalculation, AttendanceRecord, SysDictBase
 from app.api.auth import get_current_user, UserInfo
 from sqlalchemy import func
@@ -18,10 +19,12 @@ def get_stats(
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
-    total_employees = db.query(func.count(Employee.id)).scalar()
+    query = db.query(Employee)
+    active_employees_query = filter_active_employees(query, db)
+    total_employees = active_employees_query.count()
 
     status_count = {}
-    for emp in db.query(Employee.status_id, func.count(Employee.id)).group_by(Employee.status_id).all():
+    for emp in active_employees_query.with_entities(Employee.status_id, func.count(Employee.id)).group_by(Employee.status_id).all():
         dict_item = db.query(SysDictBase).filter(SysDictBase.id == emp[0]).first()
         status_count[dict_item.name if dict_item else "未知"] = emp[1]
 
@@ -65,7 +68,8 @@ def get_stats(
 
 @router.get("/roster")
 def export_roster(db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    employees = db.query(Employee).all()
+    query = db.query(Employee)
+    employees = filter_active_employees(query, db).all()
 
     wb = Workbook()
     ws = wb.active
@@ -124,7 +128,15 @@ def export_roster(db: Session = Depends(get_db), current_user: UserInfo = Depend
 
 @router.get("/salary/{period}")
 def export_salary(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    calcs = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()
+    # 获取活跃员工ID列表
+    query = db.query(Employee)
+    active_employees = filter_active_employees(query, db).all()
+    active_employee_ids = [emp.id for emp in active_employees]
+
+    calcs = db.query(SalaryCalculation).filter(
+        SalaryCalculation.period == period,
+        SalaryCalculation.employee_id.in_(active_employee_ids)
+    ).all()
 
     wb = Workbook()
     ws = wb.active
@@ -179,7 +191,15 @@ def export_salary(period: str, db: Session = Depends(get_db), current_user: User
 
 @router.get("/attendance/{period}")
 def export_attendance(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    records = db.query(AttendanceRecord).filter(AttendanceRecord.period == period).all()
+    # 先获取活跃员工ID列表
+    query = db.query(Employee)
+    active_employees = filter_active_employees(query, db).all()
+    active_employee_ids = [emp.id for emp in active_employees]
+
+    records = db.query(AttendanceRecord).filter(
+        AttendanceRecord.period == period,
+        AttendanceRecord.employee_id.in_(active_employee_ids)
+    ).all()
 
     wb = Workbook()
     ws = wb.active

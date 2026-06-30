@@ -367,6 +367,8 @@ def export_employees(
     current_user: UserInfo = Depends(get_current_user)
 ):
     query = db.query(Employee)
+    # 排除已禁用部门的员工
+    query = filter_active_employees(query, db)
     if filter_field and filter_value:
         if filter_field == 'name':
             query = query.filter(Employee.name.contains(filter_value))

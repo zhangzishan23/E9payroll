@@ -9,6 +9,7 @@ from openpyxl import Workbook
 import uuid
 from app.core.database import get_db
 from app.core.log_helper import write_log
+from app.core.query_utils import filter_active_employees
 from app.models.models import (
     Employee, EmployeeSalary, EmployeeSalaryAdjustment, AttendanceRecord, PerformanceScore,
     SocialInsurance, LegacyAdjustment, TravelReimbursement, LaborCompensation,
@@ -136,7 +137,8 @@ def get_available_periods(db: Session = Depends(get_db), current_user: UserInfo 
 
 @router.get("/check-completeness/{period}", response_model=DataCompletenessOut)
 def check_data_completeness(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    active_employees = db.query(Employee).order_by(Employee.employee_no).all()
+    query = db.query(Employee)
+    active_employees = filter_active_employees(query, db).order_by(Employee.employee_no).all()
 
     sources = []
     missing_map = {}
@@ -255,7 +257,8 @@ def calculate_salary(period: str, db: Session = Depends(get_db), current_user: U
     batch_no = f"CALC-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
     start_time = datetime.now()
 
-    active_employees = db.query(Employee).order_by(Employee.employee_no).all()
+    query = db.query(Employee)
+    active_employees = filter_active_employees(query, db).order_by(Employee.employee_no).all()
 
     period_end = _get_period_end(period)
     salaries = {}
@@ -463,7 +466,8 @@ def get_calculation_results(
 ):
     calcs = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()
     calc_map = {c.employee_id: c for c in calcs}
-    employees = db.query(Employee).order_by(Employee.employee_no).all()
+    query = db.query(Employee)
+    employees = filter_active_employees(query, db).order_by(Employee.employee_no).all()
 
     period_end = _get_period_end(period)
     salary_map = {}

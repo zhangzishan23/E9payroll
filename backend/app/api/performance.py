@@ -7,6 +7,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from app.core.database import get_db
 from app.core.log_helper import write_log
+from app.core.query_utils import filter_active_employees
 from app.models.models import PerformanceScore, Employee
 from app.api.auth import get_current_user, UserInfo
 
@@ -56,7 +57,8 @@ def get_performances(
     current_user: UserInfo = Depends(get_current_user)
 ):
     if period:
-        employees = db.query(Employee).order_by(Employee.employee_no).all()
+        query = db.query(Employee)
+        employees = filter_active_employees(query, db).order_by(Employee.employee_no).all()
         perf_map = {}
         records = db.query(PerformanceScore).filter(PerformanceScore.period == period).all()
         for r in records:
@@ -238,7 +240,8 @@ def export_performances(
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
-    employees = db.query(Employee).order_by(Employee.employee_no).all()
+    query = db.query(Employee)
+    employees = filter_active_employees(query, db).order_by(Employee.employee_no).all()
     perf_map = {}
     records = db.query(PerformanceScore).filter(PerformanceScore.period == period).all()
     for r in records:

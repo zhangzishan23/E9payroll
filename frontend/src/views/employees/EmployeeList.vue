@@ -3,14 +3,14 @@
     <div class="apple-card p-6">
       <div class="flex items-center gap-1.5 mb-4 flex-wrap">
         <h3 class="text-lg font-semibold text-gray-700 shrink-0 mr-1">员工档案管理</h3>
-        <el-select v-model="filterField" placeholder="筛选字段" size="small" class="!w-24">
+        <el-select v-model="filterField" placeholder="筛选字段" size="small" class="!w-24" @change="onFilterChange">
           <el-option label="姓名" value="name" />
           <el-option label="编号" value="no" />
           <el-option label="部门" value="department" />
           <el-option label="公司" value="company" />
           <el-option label="状态" value="status" />
         </el-select>
-        <el-input v-model="filterValue" placeholder="筛选值" size="small" clearable class="!w-36" @input="fetchData" />
+        <el-input v-model="filterValue" placeholder="筛选值" size="small" clearable class="!w-36" @input="fetchData" @clear="fetchData" />
         <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)">新增</el-button>
         <el-button :icon="Upload" size="small" @click="showImport">导入</el-button>
         <el-button type="success" :icon="Download" size="small" @click="handleExport">导出</el-button>
@@ -697,6 +697,13 @@ async function fetchDicts() {
   departments.value = dicts.filter(d => d.category === 'department')
   positions.value = dicts.filter(d => d.category === 'position')
   statuses.value = dicts.filter(d => d.category === 'employee_status')
+}
+
+function onFilterChange() {
+  // 切换筛选字段时，如果已有筛选值则立即刷新
+  if (filterValue.value) {
+    fetchData()
+  }
 }
 
 async function fetchData() {

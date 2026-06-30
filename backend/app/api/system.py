@@ -1,6 +1,8 @@
 from datetime import datetime
 import shutil
+import subprocess
 from pathlib import Path
+from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -585,14 +587,24 @@ def get_logs(
 
 # ========== 数据备份 ==========
 
-def _get_db_file_path() -> Path:
-    """解析 DATABASE_URL 获取数据库文件路径"""
+def _parse_db_url() -> dict:
+    """解析 DATABASE_URL，返回数据库类型和连接信息"""
     url = DATABASE_URL
     if url.startswith("sqlite:///"):
         rel_path = url.replace("sqlite:///", "")
         db_path = Path(__file__).parent.parent.parent / rel_path
-        return db_path.resolve()
-    return None
+        return {"type": "sqlite", "path": db_path.resolve()}
+    if url.startswith("postgresql://") or url.startswith("postgres://"):
+        parsed = urlparse(url)
+        return {
+            "type": "postgresql",
+            "host": parsed.hostname or "localhost",
+            "port": str(parsed.port or 5432),
+            "user": parsed.username or "",
+            "password": parsed.password or "",
+            "database": parsed.path.lstrip("/") or "",
+        }
+    return {"type": "unknown"}
 
 
 def _get_backup_dir() -> Path:
@@ -607,14 +619,18 @@ def list_backups(current_user: UserInfo = Depends(get_current_user)):
     if not backup_dir.exists():
         return {"backups": []}
     files = []
-    for f in sorted(backup_dir.glob("e9_salary_*.db"), reverse=True):
-        stat = f.stat()
-        files.append({
-            "filename": f.name,
-            "size": stat.st_size,
-            "size_display": f"{stat.st_size / 1024:.1f} KB",
-            "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-        })
+    # 支持 .db (SQLite) 和 .sql (PostgreSQL) 两种备份格式
+    for pattern in ["e9_salary_*.db", "e9_salary_*.sql"]:
+        for f in sorted(backup_dir.glob(pattern), reverse=True):
+            stat = f.stat()
+            files.append({
+                "filename": f.name,
+                "size": stat.st_size,
+                "size_display": f"{stat.st_size / 1024:.1f} KB",
+                "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            })
+    # 按时间倒序排列
+    files.sort(key=lambda x: x["created_at"], reverse=True)
     return {"backups": files}
 
 
@@ -624,18 +640,51 @@ def create_backup(
     current_user: UserInfo = Depends(get_current_user),
 ):
     """手动创建数据库备份"""
-    db_path = _get_db_file_path()
-    if db_path is None:
-        raise HTTPException(status_code=400, detail="当前数据库类型不支持文件备份，请手动导出")
-    if not db_path.exists():
-        raise HTTPException(status_code=404, detail=f"数据库文件不存在: {db_path}")
+    db_info = _parse_db_url()
+    db_type = db_info["type"]
 
     backup_dir = _get_backup_dir()
     backup_dir.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_file = backup_dir / f"e9_salary_{timestamp}.db"
 
-    shutil.copy2(db_path, backup_file)
+    if db_type == "sqlite":
+        db_path = db_info["path"]
+        if not db_path.exists():
+            raise HTTPException(status_code=404, detail=f"数据库文件不存在: {db_path}")
+        backup_file = backup_dir / f"e9_salary_{timestamp}.db"
+        shutil.copy2(db_path, backup_file)
+
+    elif db_type == "postgresql":
+        backup_file = backup_dir / f"e9_salary_{timestamp}.sql"
+        env = {"PGPASSWORD": db_info["password"]}
+        cmd = [
+            "pg_dump",
+            "-h", db_info["host"],
+            "-p", db_info["port"],
+            "-U", db_info["user"],
+            "-d", db_info["database"],
+            "-f", str(backup_file),
+            "--no-owner",
+            "--no-acl",
+        ]
+        try:
+            result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=300)
+            if result.returncode != 0:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"数据库备份失败: {result.stderr.strip()}"
+                )
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=500,
+                detail="pg_dump 命令不可用，请确认后端容器已安装 PostgreSQL 客户端工具"
+            )
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=500, detail="数据库备份超时，请稍后重试")
+
+    else:
+        raise HTTPException(status_code=400, detail="当前数据库类型不支持自动备份，请手动导出")
+
     write_log(db, "data_change", current_user.id, current_user.username, "system", "backup",
               f"数据库备份完成: {backup_file.name}")
 

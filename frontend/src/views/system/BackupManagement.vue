@@ -1,10 +1,13 @@
 <template>
-  <div class="backup-management">
+  <div class="apple-card p-6">
     <div class="flex items-center justify-between mb-4">
       <h3 class="text-lg font-semibold text-gray-700 shrink-0 mr-1">数据备份</h3>
-      <el-button type="primary" size="small" :loading="backingUp" @click="doBackup">
-        立即备份
-      </el-button>
+      <div class="flex items-center gap-2">
+        <el-button type="info" size="small" :icon="Refresh" @click="fetchBackups">刷新</el-button>
+        <el-button type="primary" size="small" :icon="Download" :loading="backingUp" @click="doBackup">
+          立即备份
+        </el-button>
+      </div>
     </div>
 
     <el-alert
@@ -32,6 +35,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Refresh, Download } from '@element-plus/icons-vue'
 import api from '../../api'
 
 const loading = ref(false)
