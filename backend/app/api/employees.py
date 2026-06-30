@@ -438,6 +438,16 @@ def create_employee(emp: EmployeeCreate, db: Session = Depends(get_db), current_
     existing = db.query(Employee).filter(Employee.id_card == emp.id_card).first()
     if existing:
         raise HTTPException(status_code=400, detail="该身份证号已存在")
+
+    # 验证部门是否启用
+    if emp.department_id:
+        dept = db.query(SysDictBase).filter(
+            SysDictBase.id == emp.department_id,
+            SysDictBase.category == 'department'
+        ).first()
+        if dept and dept.is_enabled == False:
+            raise HTTPException(status_code=400, detail=f"部门「{dept.name}」已被禁用，无法将员工分配到该部门")
+
     count = db.query(Employee).count()
     employee_no = f"E{count + 1:04d}"
     db_emp = Employee(employee_no=employee_no, **emp.model_dump())
@@ -453,6 +463,17 @@ def update_employee(employee_id: int, emp: EmployeeUpdate, db: Session = Depends
     db_emp = db.query(Employee).filter(Employee.id == employee_id).first()
     if not db_emp:
         raise HTTPException(status_code=404, detail="员工不存在")
+
+    # 验证部门是否启用
+    dept_id = emp.department_id if emp.department_id is not None else db_emp.department_id
+    if dept_id:
+        dept = db.query(SysDictBase).filter(
+            SysDictBase.id == dept_id,
+            SysDictBase.category == 'department'
+        ).first()
+        if dept and dept.is_enabled == False:
+            raise HTTPException(status_code=400, detail=f"部门「{dept.name}」已被禁用，无法将员工分配到该部门")
+
     update_data = emp.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(db_emp, key, value)

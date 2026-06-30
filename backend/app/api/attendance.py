@@ -7,7 +7,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from app.core.database import get_db
 from app.core.log_helper import write_log
-from app.models.models import AttendanceRecord, Employee
+from app.models.models import AttendanceRecord, Employee, SysDictBase
 from app.api.auth import get_current_user, UserInfo
 
 router = APIRouter()
@@ -76,11 +76,31 @@ class AttendanceUpdate(BaseModel):
 def get_attendance(
     period: Optional[str] = Query(None),
     employee_id: Optional[int] = Query(None),
+    filter_field: Optional[str] = Query(None),
+    filter_value: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
     if period:
-        employees = db.query(Employee).order_by(Employee.employee_no).all()
+        # 排除已禁用部门的员工
+        disabled_dept_ids = db.query(SysDictBase.id).filter(
+            SysDictBase.category == 'department',
+            SysDictBase.is_enabled == False
+        ).all()
+        employee_query = db.query(Employee)
+        if disabled_dept_ids:
+            disabled_ids = [d[0] for d in disabled_dept_ids]
+            employee_query = employee_query.filter(
+                Employee.department_id.notin_(disabled_ids)
+            )
+        # 根据筛选条件过滤员工
+        if filter_field and filter_value:
+            if filter_field == 'employee_no':
+                employee_query = employee_query.filter(Employee.employee_no.ilike(f'%{filter_value}%'))
+            elif filter_field == 'employee_name':
+                employee_query = employee_query.filter(Employee.name.ilike(f'%{filter_value}%'))
+        employees = employee_query.order_by(Employee.employee_no).all()
+
         attendance_map = {}
         records = db.query(AttendanceRecord).filter(AttendanceRecord.period == period).all()
         for r in records:
@@ -142,7 +162,18 @@ def export_attendance(
     current_user: UserInfo = Depends(get_current_user)
 ):
     if period:
-        employees = db.query(Employee).order_by(Employee.employee_no).all()
+        # 排除已禁用部门的员工
+        disabled_dept_ids = db.query(SysDictBase.id).filter(
+            SysDictBase.category == 'department',
+            SysDictBase.is_enabled == False
+        ).all()
+        employee_query = db.query(Employee)
+        if disabled_dept_ids:
+            employee_query = employee_query.filter(
+                Employee.department_id.notin_([d[0] for d in disabled_dept_ids])
+            )
+        employees = employee_query.order_by(Employee.employee_no).all()
+
         attendance_map = {}
         records = db.query(AttendanceRecord).filter(AttendanceRecord.period == period).all()
         for r in records:

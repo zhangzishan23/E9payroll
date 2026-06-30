@@ -83,6 +83,12 @@ const routes = [
         name: 'SystemLogs',
         component: () => import('../views/system/LogViewer.vue'),
         meta: { title: '操作日志' }
+      },
+      {
+        path: 'system/backup',
+        name: 'SystemBackup',
+        component: () => import('../views/system/BackupManagement.vue'),
+        meta: { title: '数据备份' }
       }
     ]
   }

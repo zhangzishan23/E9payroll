@@ -1,4 +1,6 @@
 from datetime import datetime
+import shutil
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -8,6 +10,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from app.core.database import get_db
 from app.core.log_helper import write_log
+from app.core.config import DATABASE_URL
 from app.core.security import get_password_hash
 from app.models.models import SysUser, SysRole, SysUserRole, SysPermission, SysDictBase, SysLog
 from app.api.auth import get_current_user, UserInfo
@@ -41,6 +44,7 @@ class DictItemCreate(BaseModel):
 
 class DictItemUpdate(BaseModel):
     name: Optional[str] = None
+    parent_id: Optional[int] = None
     sort_order: Optional[int] = None
     is_enabled: Optional[bool] = None
     extra: Optional[dict] = None
@@ -130,12 +134,73 @@ class LogOut(BaseModel):
         from_attributes = True
 
 
+class DictTreeNode(BaseModel):
+    id: int
+    category: str
+    code: str
+    name: str
+    parent_id: Optional[int] = None
+    sort_order: int
+    is_enabled: bool
+    extra: Optional[dict] = None
+    children: List["DictTreeNode"] = []
+
+    class Config:
+        from_attributes = True
+
+
+DictTreeNode.model_rebuild()
+
+
 @router.get("/dict/{category}", response_model=List[DictItemOut])
 def get_dict(category: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     items = db.query(SysDictBase).filter(
         SysDictBase.category == category,
     ).order_by(SysDictBase.sort_order).all()
     return items
+
+
+@router.get("/dict/{category}/tree", response_model=List[DictTreeNode])
+def get_dict_tree(category: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    """返回指定分类的树形结构数据，支持层级展示"""
+    items = db.query(SysDictBase).filter(
+        SysDictBase.category == category,
+    ).order_by(SysDictBase.sort_order).all()
+
+    # 构建 id -> node 映射
+    node_map = {}
+    for item in items:
+        node_map[item.id] = {
+            "id": item.id,
+            "category": item.category,
+            "code": item.code,
+            "name": item.name,
+            "parent_id": item.parent_id,
+            "sort_order": item.sort_order,
+            "is_enabled": item.is_enabled,
+            "extra": item.extra,
+            "children": []
+        }
+
+    # 构建树形结构
+    roots = []
+    for item in items:
+        node = node_map[item.id]
+        if item.parent_id and item.parent_id in node_map:
+            node_map[item.parent_id]["children"].append(node)
+        else:
+            roots.append(node)
+
+    # 清理空 children 数组
+    def clean_children(nodes):
+        for node in nodes:
+            if not node["children"]:
+                node["children"] = []
+            else:
+                clean_children(node["children"])
+
+    clean_children(roots)
+    return roots
 
 
 @router.get("/dict", response_model=List[DictItemOut])
@@ -516,3 +581,68 @@ def get_logs(
     if log_type:
         query = query.filter(SysLog.log_type == log_type)
     return query.order_by(SysLog.created_at.desc()).limit(limit).all()
+
+
+# ========== 数据备份 ==========
+
+def _get_db_file_path() -> Path:
+    """解析 DATABASE_URL 获取数据库文件路径"""
+    url = DATABASE_URL
+    if url.startswith("sqlite:///"):
+        rel_path = url.replace("sqlite:///", "")
+        db_path = Path(__file__).parent.parent.parent / rel_path
+        return db_path.resolve()
+    return None
+
+
+def _get_backup_dir() -> Path:
+    """获取备份目录路径"""
+    return Path(__file__).parent.parent.parent.parent / "backups"
+
+
+@router.get("/backups")
+def list_backups(current_user: UserInfo = Depends(get_current_user)):
+    """列出所有备份文件"""
+    backup_dir = _get_backup_dir()
+    if not backup_dir.exists():
+        return {"backups": []}
+    files = []
+    for f in sorted(backup_dir.glob("e9_salary_*.db"), reverse=True):
+        stat = f.stat()
+        files.append({
+            "filename": f.name,
+            "size": stat.st_size,
+            "size_display": f"{stat.st_size / 1024:.1f} KB",
+            "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        })
+    return {"backups": files}
+
+
+@router.post("/backup")
+def create_backup(
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user),
+):
+    """手动创建数据库备份"""
+    db_path = _get_db_file_path()
+    if db_path is None:
+        raise HTTPException(status_code=400, detail="当前数据库类型不支持文件备份，请手动导出")
+    if not db_path.exists():
+        raise HTTPException(status_code=404, detail=f"数据库文件不存在: {db_path}")
+
+    backup_dir = _get_backup_dir()
+    backup_dir.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_file = backup_dir / f"e9_salary_{timestamp}.db"
+
+    shutil.copy2(db_path, backup_file)
+    write_log(db, "data_change", current_user.id, current_user.username, "system", "backup",
+              f"数据库备份完成: {backup_file.name}")
+
+    return {
+        "success": True,
+        "message": "备份成功",
+        "filename": backup_file.name,
+        "size": backup_file.stat().st_size,
+        "size_display": f"{backup_file.stat().st_size / 1024:.1f} KB",
+    }

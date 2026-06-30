@@ -4,10 +4,13 @@
 - 考勤同步：将钉钉考勤数据同步到系统 AttendanceRecord 表
 - 同步日志：查询同步历史记录
 """
+from io import BytesIO
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
+from openpyxl import Workbook
 
 from app.core.database import get_db
 from app.core.log_helper import write_log
@@ -22,6 +25,8 @@ from app.services.dingtalk_service import (
     _get_access_token,
     get_root_departments,
     sync_root_depts_to_db,
+    get_raw_attendance_by_employee,
+    ATTENDANCE_COLUMN_MAP,
 )
 
 router = APIRouter()
@@ -207,3 +212,73 @@ def api_sync_root_depts(
         return {"success": True, "message": f"同步完成：新增 {stats['created']} 个部门，跳过 {stats['skipped']} 个", **stats}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
+
+
+@router.get("/raw-attendance/columns")
+def api_raw_attendance_columns(
+    current_user: UserInfo = Depends(get_current_user),
+):
+    """查看钉钉考勤报表所有原始列定义（不做映射筛选）"""
+    try:
+        columns = get_attendance_columns()
+        return {
+            "success": True,
+            "total": len(columns),
+            "columns": columns,
+            "mapped_columns": list(ATTENDANCE_COLUMN_MAP.keys()),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取考勤列定义失败: {str(e)}")
+
+
+@router.get("/raw-attendance/export")
+def api_raw_attendance_export(
+    period: str = Query(..., description="考勤月份，格式 YYYYMM，如 202406"),
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user),
+):
+    """导出钉钉原始考勤数据（所有列，不做映射筛选）为 Excel"""
+    raw = get_raw_attendance_by_employee(db, period)
+    columns = raw["columns"]
+    employees = raw["employees"]
+
+    # 收集所有原始列名（按钉钉返回顺序）
+    all_col_names = [c["name"] for c in columns]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "钉钉原始考勤数据"
+
+    # 表头
+    headers = ["员工编号", "员工姓名", "钉钉UserId"] + all_col_names + ["出错信息"]
+    ws.append(headers)
+
+    # 数据行
+    for emp in employees:
+        row = [
+            emp.get("employee_no", ""),
+            emp.get("employee_name", ""),
+            emp.get("dingtalk_user_id", ""),
+        ]
+        values = emp.get("values", {})
+        for col_name in all_col_names:
+            row.append(values.get(col_name, ""))
+        row.append(emp.get("error", ""))
+        ws.append(row)
+
+    # 标注哪些列是系统已映射的
+    ws2 = wb.create_sheet("列映射说明")
+    ws2.append(["钉钉原始列名", "是否被系统映射", "映射系统字段"])
+    for col in columns:
+        cn = col["name"]
+        mapped_field = ATTENDANCE_COLUMN_MAP.get(cn, "")
+        ws2.append([cn, "是" if mapped_field else "否", mapped_field])
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=dingtalk_raw_attendance_{period}.xlsx"},
+    )

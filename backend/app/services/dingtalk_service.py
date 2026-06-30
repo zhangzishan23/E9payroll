@@ -17,6 +17,13 @@ from app.models.models import SysDictBase
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_str(value, max_len=200):
+    """截断字符串，防止超长值导致数据库写入失败"""
+    if not value:
+        return ""
+    return str(value)[:max_len]
+
 # ========== Token 缓存 ==========
 _token_cache: dict = {
     "access_token": None,
@@ -419,14 +426,14 @@ def sync_root_depts_to_db(db_session) -> dict:
 
 def get_target_dept_ids(db_session=None) -> list[int]:
     """
-    从数据库读取已启用的部门，通过 code（钉钉 deptId）匹配，获取需要同步的部门ID列表。
-    支持子部门独立禁用：只返回数据库中 is_enabled=True 的部门。
+    从数据库读取已启用的部门，通过 code 或 name 匹配钉钉部门树，获取需要同步的部门ID列表。
+    优先用数字 code（钉钉 deptId）匹配，其次用部门名称匹配。
     """
     from app.models.models import SysDictBase
 
     dept_map = get_dept_tree()
 
-    # 从数据库读取所有已启用的部门（不再限制 parent_id）
+    # 从数据库读取所有已启用的部门
     if db_session:
         enabled_depts = db_session.query(SysDictBase).filter(
             SysDictBase.category == "department",
@@ -443,18 +450,34 @@ def get_target_dept_ids(db_session=None) -> list[int]:
         finally:
             db.close()
 
-    # code 就是钉钉 deptId，转换为 int 匹配
+    # 构建钉钉部门 name→id 映射（用于按名称匹配）
+    dept_name_to_id = {info["name"]: did for did, info in dept_map.items() if did != 1}
+
     target_ids: set[int] = set()
+    matched_by_code = 0
+    matched_by_name = 0
     for d in enabled_depts:
+        # 方式1：code 是数字 → 直接作为钉钉 deptId 匹配
         if d.code and d.code.isdigit():
             dept_id = int(d.code)
             if dept_id in dept_map:
                 target_ids.add(dept_id)
+                matched_by_code += 1
+                continue
+        # 方式2：用部门名称去钉钉部门树中查找对应 deptId
+        if d.name:
+            dept_id = dept_name_to_id.get(d.name.strip())
+            if dept_id:
+                target_ids.add(dept_id)
+                matched_by_name += 1
 
     if not target_ids:
-        logger.warning("没有已启用的部门（code 为空或不在钉钉部门树中），数据同步将跳过所有部门")
+        logger.warning("没有已启用的部门能匹配到钉钉部门树（code匹配%d个，名称匹配%d个），同步将跳过所有部门",
+                      matched_by_code, matched_by_name)
         return []
 
+    logger.info("目标部门匹配完成：code匹配%d个，名称匹配%d个，共%d个钉钉部门",
+                matched_by_code, matched_by_name, len(target_ids))
     return list(target_ids)
 
 
@@ -492,6 +515,36 @@ def get_all_user_ids(db_session=None) -> list[str]:
                 if not result.get("has_more"):
                     break
                 body["cursor"] = result.get("next_cursor", 0)
+
+    return list(set(all_users))  # 去重
+
+
+def get_all_dingtalk_user_ids_from_all_depts() -> list[str]:
+    """
+    直接从钉钉获取所有部门的所有员工 userId（不经过数据库部门过滤）。
+    用于原始数据导出等需要完整数据的场景。
+    """
+    token = _get_access_token()
+    all_users = []
+    dept_map = get_dept_tree()
+    headers = {"Content-Type": "application/json"}
+
+    for dept_id in dept_map:
+        if dept_id == 1:  # 根部门跳过
+            continue
+        url = "https://oapi.dingtalk.com/topapi/user/listsimple"
+        params = {"access_token": token}
+        body = {"dept_id": dept_id, "cursor": 0, "size": 100}
+        try:
+            with httpx.Client(timeout=30) as client:
+                resp = client.post(url, params=params, json=body, headers=headers)
+                data = resp.json()
+            if data.get("errcode") == 0:
+                result = data.get("result", {})
+                users = result.get("list", [])
+                all_users.extend(u.get("userid", "") for u in users)
+        except Exception:
+            pass
 
     return list(set(all_users))  # 去重
 
@@ -654,7 +707,8 @@ def sync_roster_to_db(db_session, mode: str = "full") -> dict:
 
     # 4. 获取字典映射（部门、岗位、状态等）
     dict_items = db_session.query(SysDictBase).all()
-    dept_map = {d.code: d.id for d in dict_items if d.category == "department" and d.code}
+    dept_map_by_code = {d.code: d.id for d in dict_items if d.category == "department" and d.code}
+    dept_map_by_name = {d.name: d.id for d in dict_items if d.category == "department" and d.name}
     position_map = {d.name: d.id for d in dict_items if d.category == "position"}
     status_map = {d.name: d.id for d in dict_items if d.category == "employee_status"}
     company_map = {d.name: d.id for d in dict_items if d.category == "contract_company"}
@@ -674,8 +728,8 @@ def sync_roster_to_db(db_session, mode: str = "full") -> dict:
             root_id = current
         dept_id_to_root_id[did] = root_id
 
-    # 钉钉 dept_name → dept_id 映射
-    dept_name_to_id = {info["name"]: did for did, info in dept_tree.items()}
+    # 钉钉 dept_name → dept_id 映射（规范化为strip后的名称）
+    dept_name_to_id = {info["name"].strip(): did for did, info in dept_tree.items()}
     logger.info(f"部门映射样本: {dict(list(dept_name_to_id.items())[:5])}")
 
     # 获取所有已有员工（按 dingtalk_user_id 索引）
@@ -685,65 +739,65 @@ def sync_roster_to_db(db_session, mode: str = "full") -> dict:
 
     for user_id, fields in user_roster_map.items():
         try:
-            # ---- 提取所有字段 ----
-            name = fields.get("sys00-name", "")
-            phone = fields.get("sys00-mobile", "")
-            email = fields.get("sys00-email", "")
-            work_place = fields.get("sys00-workPlace", "")
-            job_number = fields.get("sys00-jobNumber", "")
-            dept_name = fields.get("sys00-dept", "")
-            main_dept_name = fields.get("sys00-mainDept", dept_name)
-            position_name = fields.get("sys00-position", "")
-            report_manager = fields.get("sys00-reportManager", "")
-            remark = fields.get("sys00-remark", "")
+            # ---- 提取所有字段（统一截断保护，防止超长值导致数据库写入失败） ----
+            name = _safe_str(fields.get("sys00-name", ""), 50)
+            phone = _safe_str(fields.get("sys00-mobile", ""), 30)
+            email = _safe_str(fields.get("sys00-email", ""), 100)
+            work_place = _safe_str(fields.get("sys00-workPlace", ""), 100)
+            job_number = _safe_str(fields.get("sys00-jobNumber", ""), 64)
+            dept_name = _safe_str(fields.get("sys00-dept", ""), 500)
+            main_dept_name = _safe_str(fields.get("sys00-mainDept", dept_name), 100)
+            position_name = _safe_str(fields.get("sys00-position", ""), 50)
+            report_manager = _safe_str(fields.get("sys00-reportManager", ""), 50)
+            remark = _safe_str(fields.get("sys00-remark", ""), 500)
             hired_date_str = fields.get("sys00-confirmJoinTime", "") or fields.get("sys00-hiredDate", "")
             # sys01 - 工作信息
-            employee_type = fields.get("sys01-employeeType", "")
-            status_name = fields.get("sys01-employeeStatus", "") or fields.get("sys00-staffStatus", "")
-            position_level = fields.get("sys01-positionLevel", "")
+            employee_type = _safe_str(fields.get("sys01-employeeType", ""), 50)
+            status_name = _safe_str(fields.get("sys01-employeeStatus", "") or fields.get("sys00-staffStatus", ""), 50)
+            position_level = _safe_str(fields.get("sys01-positionLevel", ""), 50)
             plan_regular_date_str = fields.get("sys01-planRegularTime", "")
             regular_date_str = fields.get("sys01-regularTime", "") or fields.get("sys00-regularDate", "")
             resign_date_str = fields.get("sys00-resignDate", "")
             # sys02 - 个人信息
-            id_card = fields.get("sys02-certNo", "") or fields.get("sys00-idCard", "")
+            id_card = _safe_str(fields.get("sys02-certNo", "") or fields.get("sys00-idCard", ""), 18)
             gender_raw = fields.get("sys02-sexType", "") or fields.get("sys00-gender", "")
             birth_date_str = fields.get("sys02-birthTime", "")
-            nation = fields.get("sys02-nationType", "")
-            marital_status = fields.get("sys02-marriage", "")
-            children_status = fields.get("1e8e7d6d-6f56-49fc-a7aa-215f3bb5361c", "")
-            political_status = fields.get("sys02-politicalStatus", "")
-            native_place = fields.get("e6535432-0334-4090-bc86-aeec046c45b7", "")
-            residence_type = fields.get("sys02-residenceType", "")
-            census_address = fields.get("sys02-certAddress", "")
-            home_address = fields.get("sys02-address", "")
+            nation = _safe_str(fields.get("sys02-nationType", ""), 50)
+            marital_status = _safe_str(fields.get("sys02-marriage", ""), 20)
+            children_status = _safe_str(fields.get("1e8e7d6d-6f56-49fc-a7aa-215f3bb5361c", ""), 50)
+            political_status = _safe_str(fields.get("sys02-politicalStatus", ""), 50)
+            native_place = _safe_str(fields.get("e6535432-0334-4090-bc86-aeec046c45b7", ""), 100)
+            residence_type = _safe_str(fields.get("sys02-residenceType", ""), 50)
+            census_address = _safe_str(fields.get("sys02-certAddress", ""), 200)
+            home_address = _safe_str(fields.get("sys02-address", ""), 200)
             first_work_date_str = fields.get("sys02-joinWorkingTime", "")
             # sys03 - 学历
-            education = fields.get("sys03-highestEdu", "")
-            graduate_school = fields.get("sys03-graduateSchool", "")
+            education = _safe_str(fields.get("sys03-highestEdu", ""), 50)
+            graduate_school = _safe_str(fields.get("sys03-graduateSchool", ""), 100)
             graduate_date_str = fields.get("sys03-graduationTime", "")
-            major = fields.get("sys03-major", "")
+            major = _safe_str(fields.get("sys03-major", ""), 100)
             # sys04 - 银行卡
-            bank_card = fields.get("sys04-bankAccountNo", "")
-            bank_branch = fields.get("sys04-accountBank", "")
-            bank_branch_detail = fields.get("c973eb37-4d74-47c3-b84a-c685e73b1e30", "")
+            bank_card = _safe_str(fields.get("sys04-bankAccountNo", ""), 30)
+            bank_branch = _safe_str(fields.get("sys04-accountBank", ""), 100)
+            bank_branch_detail = _safe_str(fields.get("c973eb37-4d74-47c3-b84a-c685e73b1e30", ""), 100)
             # sys05 - 合同
-            contract_company_name = fields.get("sys05-contractCompanyName", "")
-            contract_type = fields.get("sys05-contractType", "")
+            contract_company_name = _safe_str(fields.get("sys05-contractCompanyName", ""), 100)
+            contract_type = _safe_str(fields.get("sys05-contractType", ""), 50)
             contract_start_date_str = fields.get("sys05-nowContractStartTime", "")
             contract_end_date_str = fields.get("sys05-nowContractEndTime", "")
             # sys06 - 紧急联系人
-            emergency_contact_name = fields.get("sys06-urgentContactsName", "")
-            emergency_contact_relation = fields.get("sys06-urgentContactsRelation", "")
-            emergency_contact_phone = fields.get("sys06-urgentContactsPhone", "")
+            emergency_contact_name = _safe_str(fields.get("sys06-urgentContactsName", ""), 100)
+            emergency_contact_relation = _safe_str(fields.get("sys06-urgentContactsRelation", ""), 100)
+            emergency_contact_phone = _safe_str(fields.get("sys06-urgentContactsPhone", ""), 50)
             # 自定义字段
-            job_level = fields.get("81922c26-7b0a-40fe-b87c-7373b85a8941", "")
-            recruitment_channel = fields.get("9e199205-1337-44e2-94e8-624a92adca9f", "")
-            hobby = fields.get("90300477-bcc9-4c70-a5ee-dbc256df20c5", "")
-            cert1 = fields.get("89474793-54fe-4cc8-bbb0-b21a834949dc", "")
-            cert2 = fields.get("cba563d1-96cd-4739-89e3-18f912bb707e", "")
+            job_level = _safe_str(fields.get("81922c26-7b0a-40fe-b87c-7373b85a8941", ""), 50)
+            recruitment_channel = _safe_str(fields.get("9e199205-1337-44e2-94e8-624a92adca9f", ""), 100)
+            hobby = _safe_str(fields.get("90300477-bcc9-4c70-a5ee-dbc256df20c5", ""), 200)
+            cert1 = _safe_str(fields.get("89474793-54fe-4cc8-bbb0-b21a834949dc", ""), 100)
+            cert2 = _safe_str(fields.get("cba563d1-96cd-4739-89e3-18f912bb707e", ""), 100)
             insurance_start_date_str = fields.get("6d119e8d-0cde-4d73-975d-85d15174d0d0", "")
-            insurance_location = fields.get("6ea63544-3d03-47aa-929d-8995277029c4", "")
-            commercial_insurance_type = fields.get("fd1cc8aa-8af7-4574-bba4-1986d5acff03", "")
+            insurance_location = _safe_str(fields.get("6ea63544-3d03-47aa-929d-8995277029c4", ""), 100)
+            commercial_insurance_type = _safe_str(fields.get("fd1cc8aa-8af7-4574-bba4-1986d5acff03", ""), 50)
 
             # ---- 部门层级解析 ----
             # 部门路径格式: "总经室/物资供应部/工艺组" 或 "物资供应部,总经室"（多部门）
@@ -760,7 +814,23 @@ def sync_roster_to_db(db_session, mode: str = "full") -> dict:
             first_dept = first_dept.split("/")[0].strip() if "/" in first_dept else first_dept
             sub_dept_id = dept_name_to_id.get(first_dept)
             root_dept_id = dept_id_to_root_id.get(sub_dept_id) if sub_dept_id else None
-            dept_id = dept_map.get(str(root_dept_id), 1) if root_dept_id else 1
+            
+            # 查找部门ID：优先用钉钉部门名匹配数据库字典
+            dept_id = 1  # 默认值
+            if root_dept_id:
+                # 用钉钉根部门名称去数据库字典中查找
+                root_dept_name = dept_tree.get(root_dept_id, {}).get("name", "")
+                if root_dept_name:
+                    dept_id = dept_map_by_name.get(root_dept_name.strip())
+                # 降级：用数字code匹配
+                if not dept_id or dept_id == 1:
+                    dept_id = dept_map_by_code.get(str(root_dept_id), 1)
+            # 如果根部门没匹配到，尝试直接用子部门名匹配
+            if (not dept_id or dept_id == 1) and first_dept:
+                dept_id = dept_map_by_name.get(first_dept, 1)
+            # 再降级：用 dept_level1 匹配
+            if (not dept_id or dept_id == 1) and dept_level1 and dept_level1 != first_dept:
+                dept_id = dept_map_by_name.get(dept_level1.strip(), 1)
 
             # 合同公司映射（自动创建不存在的公司）
             contract_company_id = _get_or_create_contract_company(db_session, contract_company_name, company_map)
@@ -804,15 +874,10 @@ def sync_roster_to_db(db_session, mode: str = "full") -> dict:
                     emp.contract_company_id = _get_or_create_contract_company(db_session, contract_company_name, company_map)
                 if dept_id != 1:
                     emp.department_id = dept_id
-                if position_name and position_name in position_map:
-                    emp.position_id = position_map[position_name]
-                if status_name and not _get_status_id(status_name, status_map) == 1:
-                    if "离职" in status_name:
-                        emp.status_id = status_map.get("离职", emp.status_id)
-                    elif "试用" in status_name:
-                        emp.status_id = status_map.get("试用期", emp.status_id)
-                    elif "正式" in status_name:
-                        emp.status_id = status_map.get("正式", emp.status_id)
+                if position_name:
+                    emp.position_id = _get_or_create_dict_item(db_session, position_name, "position", position_map)
+                if status_name:
+                    emp.status_id = _get_or_create_dict_item(db_session, status_name, "employee_status", status_map)
                 # 更新新字段（钉钉每次覆盖，因为这些字段用户不会手动修改）
                 if position_level:
                     emp.position_level = position_level
@@ -890,6 +955,8 @@ def sync_roster_to_db(db_session, mode: str = "full") -> dict:
                     emp.bank_branch = bank_branch
                 if bank_branch_detail:
                     emp.bank_branch_detail = bank_branch_detail
+                if home_address:
+                    emp.home_address = home_address
                 if dept_path:
                     emp.dept_path = dept_path
                 if dept_level1:
@@ -918,8 +985,8 @@ def sync_roster_to_db(db_session, mode: str = "full") -> dict:
                     work_place=work_place or None,
                     contract_company_id=contract_company_id,
                     department_id=dept_id,
-                    position_id=position_map.get(position_name, 1) if position_name in position_map else 1,
-                    status_id=_get_status_id(status_name, status_map),
+                    position_id=_get_or_create_dict_item(db_session, position_name, "position", position_map),
+                    status_id=_get_or_create_dict_item(db_session, status_name, "employee_status", status_map),
                     position_level=position_level or None,
                     employee_type=employee_type or None,
                     job_level=job_level or None,
@@ -1142,6 +1209,105 @@ def _aggregate_attendance(vals: list[dict], col_name_to_id: dict) -> dict:
     return result
 
 
+def get_raw_attendance_by_employee(
+    db_session, period: str
+) -> dict:
+    """
+    获取钉钉原始考勤数据（所有列，不做映射筛选）。
+    返回: {
+        "columns": [{"id": 123, "name": "应出勤天数", "type": 1}, ...],
+        "employees": [
+            {
+                "employee_no": "E001",
+                "employee_name": "张三",
+                "dingtalk_user_id": "...",
+                "values": {"应出勤天数": 22.0, "出勤天数": 25.0, ...}
+            },
+            ...
+        ]
+    }
+    """
+    from app.models.models import Employee
+
+    # 1. 获取所有考勤列定义（排除id为null的列，这些是计算/派生列，钉钉API不接受）
+    columns = get_attendance_columns()
+    valid_columns = [c for c in columns if c["id"] is not None]
+    # 去重（钉钉返回的列中可能存在重复id）
+    seen_ids = set()
+    unique_columns = []
+    for c in valid_columns:
+        if c["id"] not in seen_ids:
+            seen_ids.add(c["id"])
+            unique_columns.append(c)
+    all_col_ids = [c["id"] for c in unique_columns]
+    col_name_map = {c["id"]: c["name"] for c in unique_columns}
+
+    # 2. 计算月份日期范围
+    year = int(period[:4])
+    month = int(period[4:6])
+    from_date = date(year, month, 1)
+    if month == 12:
+        to_date = date(year, month, 31)
+    else:
+        to_date = date(year, month + 1, 1) - timedelta(days=1)
+
+    # 3. 从钉钉获取所有用户ID（遍历所有部门，不受数据库配置限制）
+    all_dingtalk_user_ids = get_all_dingtalk_user_ids_from_all_depts()
+    # 同时获取本地员工表中已关联的钉钉ID→员工信息映射
+    local_emp_map = {}
+    for emp in db_session.query(Employee).filter(Employee.dingtalk_user_id.isnot(None)).all():
+        local_emp_map[emp.dingtalk_user_id] = emp
+
+    emp_data = []
+
+    # 4. 分批获取考勤数据（钉钉API可能限制每次查询的列数）
+    batch_size = 20
+
+    for user_id in all_dingtalk_user_ids:
+        emp = local_emp_map.get(user_id)
+        emp_name = emp.name if emp else user_id
+        emp_no = emp.employee_no if emp else ""
+        try:
+            monthly = {}
+            # 分批查询，避免单次请求列数过多被钉钉API拒绝
+            for i in range(0, len(all_col_ids), batch_size):
+                batch_ids = all_col_ids[i:i + batch_size]
+                vals = get_attendance_column_values(
+                    user_id, batch_ids, from_date, to_date
+                )
+                # 按列名聚合月度值
+                for item in vals:
+                    col_name = item.get("column_name") or col_name_map.get(item.get("column_id"), "")
+                    if not col_name:
+                        continue
+                    try:
+                        val = float(item.get("value", 0))
+                    except (ValueError, TypeError):
+                        val = 0
+                    monthly[col_name] = monthly.get(col_name, 0) + val
+
+            emp_data.append({
+                "employee_no": emp_no,
+                "employee_name": emp_name,
+                "dingtalk_user_id": user_id,
+                "values": monthly,
+            })
+        except Exception as e:
+            logger.warning("获取 %s(%s) 原始考勤失败: %s", emp_name, user_id, str(e))
+            emp_data.append({
+                "employee_no": emp_no,
+                "employee_name": emp_name,
+                "dingtalk_user_id": user_id,
+                "values": {},
+                "error": str(e),
+            })
+
+    return {
+        "columns": columns,
+        "employees": emp_data,
+    }
+
+
 def _parse_gender(gender_raw: str) -> str:
     """解析钉钉性别字段"""
     if not gender_raw:
@@ -1151,19 +1317,6 @@ def _parse_gender(gender_raw: str) -> str:
     if "女" in gender_raw:
         return "女"
     return "未知"
-
-
-def _get_status_id(status_name: str, status_map: dict) -> int:
-    """根据钉钉状态名映射到系统状态ID"""
-    if not status_name:
-        return 1
-    if "离职" in status_name:
-        return status_map.get("离职", 1)
-    if "试用" in status_name:
-        return status_map.get("试用期", 1)
-    if "正式" in status_name:
-        return status_map.get("正式", 1)
-    return 1
 
 
 def _get_or_create_contract_company(db_session, company_name: str, company_map: dict) -> int:
@@ -1183,6 +1336,26 @@ def _get_or_create_contract_company(db_session, company_name: str, company_map: 
     db_session.flush()
     company_map[company_name] = new_company.id
     return new_company.id
+
+
+def _get_or_create_dict_item(db_session, name: str, category: str, name_map: dict) -> int:
+    """获取字典项ID，如果不存在则自动创建。name为空时创建"未设置"条目。"""
+    if not name:
+        name = "未设置"
+    if name in name_map:
+        return name_map[name]
+    # 自动创建字典项
+    new_id = max(name_map.values(), default=0) + 1
+    new_item = SysDictBase(
+        category=category,
+        code=f"dingtalk_{name}",
+        name=name,
+    )
+    db_session.add(new_item)
+    db_session.flush()
+    name_map[name] = new_item.id
+    logger.info("自动创建字典项: category=%s name=%s id=%s", category, name, new_item.id)
+    return new_item.id
 
 
 def _parse_date(date_str: str) -> Optional[date]:

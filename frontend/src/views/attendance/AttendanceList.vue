@@ -31,8 +31,8 @@
 
     <el-table :data="records" border stripe v-loading="loading" max-height="600" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
       <el-table-column type="selection" width="55" />
-      <el-table-column prop="employee_no" label="员工编号" width="100" fixed />
-      <el-table-column prop="employee_name" label="员工姓名" width="80" fixed />
+      <el-table-column prop="employee_no" label="员工编号" width="100" fixed show-overflow-tooltip />
+      <el-table-column prop="employee_name" label="员工姓名" width="80" fixed show-overflow-tooltip />
       <el-table-column prop="total_work_days" label="总计薪天数" width="100">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.id]">
@@ -108,7 +108,7 @@
           <template v-else>{{ row.other_leave_days != null ? row.other_leave_days : '' }}</template>
         </template>
       </el-table-column>
-      <el-table-column prop="verify_status" label="核实状态" width="100">
+      <el-table-column prop="verify_status" label="核实状态" width="110" show-overflow-tooltip>
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.id]">
             <el-select v-model="editCache[row.id].verify_status" size="small" class="cell-select" @change="markChanged(row.id)">
@@ -118,6 +118,14 @@
             </el-select>
           </template>
           <template v-else>{{ row.verify_status || '' }}</template>
+        </template>
+      </el-table-column>
+      <el-table-column prop="remark" label="备注" min-width="150" show-overflow-tooltip>
+        <template #default="{ row }">
+          <template v-if="editMode && editCache[row.id]">
+            <el-input v-model="editCache[row.id].remark" size="small" class="cell-input" @input="markChanged(row.id)" />
+          </template>
+          <template v-else>{{ row.remark || '' }}</template>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="120" fixed="right">
@@ -246,6 +254,34 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Download, Upload, Delete, Refresh } from '@element-plus/icons-vue'
 import api from '../../api'
 
+function getDefaultPeriod() {
+  // 获取北京时间当前日期
+  const now = new Date()
+  const bjOffset = 8 * 60  // UTC+8 分钟偏移
+  const localOffset = now.getTimezoneOffset()
+  const bjTime = new Date(now.getTime() + (bjOffset + localOffset) * 60 * 1000)
+  const year = bjTime.getFullYear()
+  const month = bjTime.getMonth() + 1
+  const day = bjTime.getDate()
+  // 当月15号之前显示上个月，15号及之后显示当月
+  let targetYear, targetMonth
+  if (day < 15) {
+    if (month === 1) {
+      targetYear = year - 1
+      targetMonth = 12
+    } else {
+      targetYear = year
+      targetMonth = month - 1
+    }
+  } else {
+    targetYear = year
+    targetMonth = month
+  }
+  return `${targetYear}${String(targetMonth).padStart(2, '0')}`
+}
+
+const defaultPeriod = getDefaultPeriod()
+
 const loading = ref(false)
 const saving = ref(false)
 const savingEdits = ref(false)
@@ -254,7 +290,7 @@ const syncingAttendance = ref(false)
 const dialogVisible = ref(false)
 const importVisible = ref(false)
 const isEdit = ref(false)
-const periodDate = ref('202604')
+const periodDate = ref(defaultPeriod)
 const filterField = ref('')
 const filterValue = ref('')
 const records = ref([])
@@ -295,7 +331,7 @@ const editFields = [
 ]
 
 const form = reactive({
-  period: '202604', employee_id: null, total_work_days: 22, actual_work_days: 22,
+  period: defaultPeriod, employee_id: null, total_work_days: 22, actual_work_days: 22,
   late_count: 0, early_count: 0, missed_punch_count: 0,
   sick_leave_days: 0, personal_leave_days: 0, annual_leave_days: 0, other_leave_days: 0,
   is_home_checkin: false, need_verify: false, verify_status: '已核实', remark: ''
@@ -633,6 +669,12 @@ onMounted(() => {
 }
 .cell-select {
   width: 100%;
+}
+.cell-input {
+  width: 100%;
+}
+.cell-input :deep(.el-input__wrapper) {
+  padding: 0 4px;
 }
 :deep(.row-changed) {
   background-color: #fef3c7 !important;

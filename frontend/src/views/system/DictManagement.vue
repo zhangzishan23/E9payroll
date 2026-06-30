@@ -2,7 +2,7 @@
   <div class="apple-card p-6">
     <div class="flex items-center gap-1.5 mb-4 flex-wrap">
       <h3 class="text-lg font-semibold text-gray-700 shrink-0 mr-1">数据字典</h3>
-      <el-select v-model="category" placeholder="选择分类" size="small" class="!w-32" @change="fetchData">
+      <el-select v-model="category" placeholder="选择分类" size="small" class="!w-32" @change="onCategoryChange">
         <el-option label="合同公司" value="contract_company" />
         <el-option label="部门" value="department" />
         <el-option label="职务" value="position" />
@@ -14,33 +14,45 @@
       <el-button type="success" :icon="Upload" size="small" @click="showImport">导入</el-button>
       <el-button type="info" :icon="Download" size="small" :disabled="!items.length" @click="handleExport">导出</el-button>
       <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}</el-button>
+      <el-divider direction="vertical" />
+      <el-tooltip content="展开/折叠所有层级" placement="bottom">
+        <el-switch
+          v-model="expandAll"
+          size="small"
+          active-text="展开"
+          inactive-text="折叠"
+          @change="handleExpandChange"
+        />
+      </el-tooltip>
+      <el-button type="warning" size="small" @click="switchDisplayMode">
+        <el-icon class="mr-1"><Sort /></el-icon>{{ treeMode ? '平铺' : '树形' }}
+      </el-button>
       <el-button v-if="category === 'department'" type="primary" size="small" @click="handleSyncRootDepts" :loading="syncingDepts">
         <el-icon class="mr-1"><Refresh /></el-icon>数据同步
       </el-button>
     </div>
 
-    <el-table :data="displayItems" border stripe v-loading="loading" row-key="id" :tree-props="treeProps" @selection-change="handleSelectionChange">
+    <el-table
+      :data="displayItems"
+      border stripe
+      v-loading="loading"
+      row-key="id"
+      :tree-props="treeProps"
+      :default-expand-all="expandAll"
+      @selection-change="handleSelectionChange"
+      ref="tableRef"
+    >
       <el-table-column type="selection" width="55" />
       <el-table-column prop="code" label="编码" width="150" />
       <el-table-column prop="name" label="名称" width="200" />
       <el-table-column prop="sort_order" label="排序" width="80" />
       <el-table-column prop="is_enabled" label="启动" width="100">
         <template #default="{ row }">
-          <template v-if="category === 'department'">
-            <el-switch
-              v-model="row.is_enabled"
-              size="small"
-              @change="handleToggle(row)"
-            />
-          </template>
-          <template v-else>
-            <el-button
-              :type="row.is_enabled ? 'success' : 'info'"
-              link
-              size="small"
-              @click="handleToggle(row)"
-            >{{ row.is_enabled ? '启用' : '禁用' }}</el-button>
-          </template>
+          <el-switch
+            v-model="row.is_enabled"
+            size="small"
+            @change="handleToggle(row)"
+          />
         </template>
       </el-table-column>
       <el-table-column label="操作" width="150" fixed="right">
@@ -58,6 +70,18 @@
 
     <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑字典项' : '新增字典项'" width="520px" append-to-body>
       <el-form :model="form" label-width="80px">
+        <el-form-item label="父级" v-if="treeMode">
+          <el-tree-select
+            v-model="form.parent_id"
+            :data="parentOptions"
+            :props="{ value: 'id', label: 'name', children: 'children' }"
+            placeholder="无（顶级）"
+            clearable
+            check-strictly
+            class="w-full"
+            :render-after-expand="false"
+          />
+        </el-form-item>
         <el-form-item label="编码" required>
           <el-input v-model="form.code" :disabled="isEdit" />
         </el-form-item>
@@ -102,10 +126,10 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Upload, Download, Delete, InfoFilled, Refresh } from '@element-plus/icons-vue'
+import { Plus, Upload, Download, Delete, InfoFilled, Refresh, Sort } from '@element-plus/icons-vue'
 import api from '../../api'
 
 const route = useRoute()
@@ -117,17 +141,75 @@ const category = ref(route.query.category || 'contract_company')
 const items = ref([])
 const selectedRows = ref([])
 const editId = ref(null)
+const treeMode = ref(true)
+const expandAll = ref(false)
+const tableRef = ref(null)
 
-// 树形展示配置（仅部门分类使用）
+// 树形展示配置
 const treeProps = computed(() => {
-  if (category.value === 'department') {
-    return { children: 'children' }
+  if (treeMode.value) {
+    return { children: 'children', hasChildren: 'hasChildren' }
   }
   return {}
 })
 
-// 构建部门树形结构
-function buildDeptTree(flatList) {
+// 父级选择器的选项（树形结构，排除当前编辑项自身）
+const parentOptions = computed(() => {
+  const flat = items.value
+  const map = {}
+  const roots = []
+  flat.forEach(item => {
+    map[item.id] = { id: item.id, name: item.name, children: [] }
+  })
+  flat.forEach(item => {
+    const node = map[item.id]
+    if (item.parent_id && map[item.parent_id]) {
+      map[item.parent_id].children.push(node)
+    } else {
+      roots.push(node)
+    }
+  })
+  // 清理空 children
+  function clean(nodes) {
+    nodes.forEach(node => {
+      if (!node.children || node.children.length === 0) {
+        delete node.children
+      } else {
+        clean(node.children)
+      }
+    })
+  }
+  clean(roots)
+  // 编辑模式下排除自身及子节点（防止循环引用）
+  if (isEdit.value && editId.value) {
+    function filterSelf(nodes, selfId) {
+      return nodes.filter(node => {
+        if (node.id === selfId) return false
+        if (node.children) {
+          node.children = filterSelf(node.children, selfId)
+        }
+        return true
+      })
+    }
+    return filterSelf(JSON.parse(JSON.stringify(roots)), editId.value)
+  }
+  return roots
+})
+
+// 判断是否有层级关系
+const hasHierarchy = computed(() => {
+  return items.value.some(item => item.parent_id != null)
+})
+
+const displayItems = computed(() => {
+  if (treeMode.value) {
+    return buildTree(items.value)
+  }
+  return items.value
+})
+
+// 构建通用树形结构
+function buildTree(flatList) {
   const map = {}
   const roots = []
   flatList.forEach(item => {
@@ -141,26 +223,23 @@ function buildDeptTree(flatList) {
       roots.push(node)
     }
   })
-  // 清理空的 children 数组
+  // 清理空的 children 数组，并添加 hasChildren 标记
   function cleanChildren(nodes) {
     nodes.forEach(node => {
       if (node.children && node.children.length === 0) {
         delete node.children
+        node.hasChildren = false
       } else if (node.children) {
+        node.hasChildren = true
         cleanChildren(node.children)
+      } else {
+        node.hasChildren = false
       }
     })
   }
   cleanChildren(roots)
   return roots
 }
-
-const displayItems = computed(() => {
-  if (category.value === 'department') {
-    return buildDeptTree(items.value)
-  }
-  return items.value
-})
 
 const importVisible = ref(false)
 const importing = ref(false)
@@ -170,7 +249,32 @@ const uploadRef = ref(null)
 
 const syncingDepts = ref(false)
 
-const form = reactive({ code: '', name: '', sort_order: 0, is_enabled: true })
+const form = reactive({ code: '', name: '', sort_order: 0, is_enabled: true, parent_id: null })
+
+function onCategoryChange() {
+  expandAll.value = false
+  fetchData()
+}
+
+function switchDisplayMode() {
+  treeMode.value = !treeMode.value
+  expandAll.value = false
+}
+
+function handleExpandChange(val) {
+  if (!tableRef.value) return
+  const table = tableRef.value
+  // 使用 el-table 的 toggleRowExpansion 方法逐行展开/折叠
+  function toggleNodes(nodes) {
+    nodes.forEach(node => {
+      if (node.children && node.children.length > 0) {
+        table.toggleRowExpansion(node, val)
+        toggleNodes(node.children)
+      }
+    })
+  }
+  toggleNodes(displayItems.value)
+}
 
 async function fetchData() {
   if (!category.value) return
@@ -187,9 +291,21 @@ function showDialog(row) {
   isEdit.value = !!row
   editId.value = row?.id || null
   if (row) {
-    Object.assign(form, { code: row.code, name: row.name, sort_order: row.sort_order, is_enabled: row.is_enabled })
+    Object.assign(form, {
+      code: row.code,
+      name: row.name,
+      sort_order: row.sort_order,
+      is_enabled: row.is_enabled,
+      parent_id: row.parent_id || null
+    })
   } else {
-    Object.assign(form, { code: '', name: '', sort_order: items.value.length + 1, is_enabled: true })
+    Object.assign(form, {
+      code: '',
+      name: '',
+      sort_order: items.value.length + 1,
+      is_enabled: true,
+      parent_id: null
+    })
   }
   dialogVisible.value = true
 }
@@ -197,7 +313,14 @@ function showDialog(row) {
 async function handleSave() {
   saving.value = true
   try {
-    const data = { ...form, category: category.value }
+    const data = {
+      category: category.value,
+      code: form.code,
+      name: form.name,
+      sort_order: form.sort_order,
+      is_enabled: form.is_enabled,
+      parent_id: form.parent_id || null
+    }
     if (isEdit.value) {
       await api.put(`/system/dict/${editId.value}`, data)
       ElMessage.success('编辑成功')

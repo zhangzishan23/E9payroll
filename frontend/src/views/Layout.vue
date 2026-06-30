@@ -52,6 +52,7 @@
         <el-menu-item index="/system/dict">数据字典</el-menu-item>
         <el-menu-item index="/system/dict?category=department">部门管理</el-menu-item>
         <el-menu-item index="/system/logs">操作日志</el-menu-item>
+        <el-menu-item index="/system/backup">数据备份</el-menu-item>
       </el-sub-menu>
 
       <div class="px-4 pt-6 pb-4 space-y-2">

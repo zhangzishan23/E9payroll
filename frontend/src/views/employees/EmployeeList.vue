@@ -76,7 +76,7 @@
           <template #default="{ row }">
             <template v-if="editMode">
               <el-select v-model="editCache[row.id].department_id" size="small" class="cell-select" @change="markChanged(row.id)">
-                <el-option v-for="d in departments" :key="d.id" :label="d.name" :value="d.id" />
+                <el-option v-for="d in enabledDepartments" :key="d.id" :label="d.name" :value="d.id" />
               </el-select>
             </template>
             <template v-else>{{ row.department_name }}</template>
@@ -339,7 +339,7 @@
               </el-form-item>
               <el-form-item label="部门" prop="department_id">
                 <el-select v-model="form.department_id" class="w-full">
-                  <el-option v-for="d in departments" :key="d.id" :label="d.name" :value="d.id" />
+                  <el-option v-for="d in enabledDepartments" :key="d.id" :label="d.name" :value="d.id" />
                 </el-select>
               </el-form-item>
               <el-form-item label="职务" prop="position_id">
@@ -594,7 +594,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Download, Upload, Delete, ArrowLeft, Refresh } from '@element-plus/icons-vue'
 import api from '../../api'
@@ -684,6 +684,11 @@ const rules = {
   status_id: [{ required: true, message: '请选择用工状态', trigger: 'change' }],
   entry_date: [{ required: true, message: '请选择入职时间', trigger: 'change' }]
 }
+
+// 仅启用的部门（用于下拉选择）
+const enabledDepartments = computed(() => {
+  return departments.value.filter(d => d.is_enabled !== false)
+})
 
 async function fetchDicts() {
   const res = await api.get('/system/dict')
@@ -886,6 +891,24 @@ async function saveAllEdits() {
   let successCount = 0
   let failCount = 0
 
+  // 预校验：检查是否有员工被分配到已禁用的部门
+  const disabledDeptIds = new Set(
+    departments.value.filter(d => d.is_enabled === false).map(d => d.id)
+  )
+  const invalidItems = []
+  for (const item of confirmList.value) {
+    const cache = editCache[item.id]
+    if (cache.department_id && disabledDeptIds.has(cache.department_id)) {
+      const deptName = departments.value.find(d => d.id === cache.department_id)?.name || '未知'
+      invalidItems.push(`「${item.name}」的部门「${deptName}」已被禁用`)
+    }
+  }
+  if (invalidItems.length > 0) {
+    ElMessage.error('以下员工的部门已被禁用，无法保存：\n' + invalidItems.join('；'))
+    savingEdits.value = false
+    return
+  }
+
   try {
     for (const item of confirmList.value) {
       try {
@@ -1027,7 +1050,7 @@ function showDialog(row) {
     Object.assign(form, {
       name: '', gender: '男', id_card: '', phone: '', email: '', work_place: '',
       contract_company_id: companies.value[0]?.id || null,
-      department_id: departments.value[0]?.id || null,
+      department_id: enabledDepartments.value[0]?.id || null,
       position_id: positions.value[0]?.id || null,
       status_id: statuses.value[0]?.id || null,
       position_level: '', employee_type: '', job_level: '', cost_owner: '', report_manager: '',
@@ -1075,6 +1098,16 @@ async function showSalaryHistory(row) {
 async function handleSave() {
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
+
+  // 校验：不允许选择已禁用的部门
+  if (form.department_id) {
+    const selectedDept = departments.value.find(d => d.id === form.department_id)
+    if (selectedDept && selectedDept.is_enabled === false) {
+      ElMessage.error('所选部门「' + selectedDept.name + '」已被禁用，请选择启用的部门')
+      return
+    }
+  }
+
   saving.value = true
 
   const payload = {}
