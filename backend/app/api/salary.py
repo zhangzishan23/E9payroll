@@ -136,9 +136,9 @@ def get_available_periods(db: Session = Depends(get_db), current_user: UserInfo 
 
 
 @router.get("/check-completeness/{period}", response_model=DataCompletenessOut)
-def check_data_completeness(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+def check_data_completeness(period: str, hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"), db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     query = db.query(Employee)
-    active_employees = filter_active_employees(query, db).order_by(Employee.employee_no).all()
+    active_employees = filter_active_employees(query, db, hide_status_id=hide_status_id).order_by(Employee.employee_no).all()
 
     sources = []
     missing_map = {}
@@ -248,7 +248,7 @@ def check_data_completeness(period: str, db: Session = Depends(get_db), current_
 
 
 @router.post("/calculate/{period}", response_model=CalculationSummary)
-def calculate_salary(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+def calculate_salary(period: str, hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"), db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     existing = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).first()
     if existing:
         db.query(SalaryCalculation).filter(SalaryCalculation.period == period).delete()
@@ -258,7 +258,7 @@ def calculate_salary(period: str, db: Session = Depends(get_db), current_user: U
     start_time = datetime.now()
 
     query = db.query(Employee)
-    active_employees = filter_active_employees(query, db).order_by(Employee.employee_no).all()
+    active_employees = filter_active_employees(query, db, hide_status_id=hide_status_id).order_by(Employee.employee_no).all()
 
     period_end = _get_period_end(period)
     salaries = {}
@@ -461,13 +461,14 @@ def calculate_salary(period: str, db: Session = Depends(get_db), current_user: U
 @router.get("/results/{period}", response_model=List[SalaryCalcOut])
 def get_calculation_results(
     period: str,
+    hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"),
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
     calcs = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()
     calc_map = {c.employee_id: c for c in calcs}
     query = db.query(Employee)
-    employees = filter_active_employees(query, db).order_by(Employee.employee_no).all()
+    employees = filter_active_employees(query, db, hide_status_id=hide_status_id).order_by(Employee.employee_no).all()
 
     period_end = _get_period_end(period)
     salary_map = {}
@@ -746,12 +747,13 @@ def get_calculation_logs(period: str, db: Session = Depends(get_db), current_use
 @router.get("/export/{period}")
 def export_salary_results(
     period: str,
+    hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"),
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
     calcs = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()
     calc_map = {c.employee_id: c for c in calcs}
-    employees = db.query(Employee).order_by(Employee.employee_no).all()
+    employees = filter_active_employees(db.query(Employee), db, hide_status_id=hide_status_id).order_by(Employee.employee_no).all()
 
     wb = Workbook()
     ws = wb.active

@@ -377,7 +377,12 @@ async function saveAllEdits() {
 async function fetchData() {
   loading.value = true
   try {
-    const res = await api.get('/performance/', { params: { period: periodDate.value } })
+    const params = { period: periodDate.value }
+    const hideStatusId = localStorage.getItem('employee_hide_status_id')
+    if (hideStatusId) {
+      params.hide_status_id = Number(hideStatusId)
+    }
+    const res = await api.get('/performance/', { params })
     records.value = res.data
   } finally {
     loading.value = false
@@ -527,7 +532,12 @@ async function doImport() {
 
 async function handleExport() {
   try {
-    const res = await api.get(`/performance/export/${periodDate.value}`, { responseType: 'blob' })
+    const params = {}
+    const hideStatusId = localStorage.getItem('employee_hide_status_id')
+    if (hideStatusId) {
+      params.hide_status_id = Number(hideStatusId)
+    }
+    const res = await api.get(`/performance/export/${periodDate.value}`, { params, responseType: 'blob' })
     const url = window.URL.createObjectURL(new Blob([res.data]))
     const link = document.createElement('a')
     link.href = url

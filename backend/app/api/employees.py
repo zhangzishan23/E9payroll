@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.models.models import Employee, EmployeeSalary, SysDictBase
 from app.api.auth import get_current_user, UserInfo
+from app.core.query_utils import filter_active_employees
 
 router = APIRouter()
 
@@ -309,6 +310,7 @@ def get_employees(
     filter_field: Optional[str] = Query(None),
     filter_value: Optional[str] = Query(None),
     include_disabled_dept: bool = Query(False, description="是否包含已禁用部门的员工"),
+    hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"),
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
@@ -347,14 +349,8 @@ def get_employees(
         query = query.filter(
             Employee.name.contains(keyword) | Employee.employee_no.contains(keyword)
         )
-    # 默认隐藏已禁用部门的员工
-    if not include_disabled_dept:
-        disabled_dept_ids = db.query(SysDictBase.id).filter(
-            SysDictBase.category == 'department',
-            SysDictBase.is_enabled == False
-        ).all()
-        if disabled_dept_ids:
-            query = query.filter(Employee.department_id.notin_([d[0] for d in disabled_dept_ids]))
+    # 默认隐藏已禁用部门的员工，可选隐藏指定状态
+    query = filter_active_employees(query, db, hide_status_id=hide_status_id)
     employees = query.order_by(Employee.employee_no).all()
     return [_enrich_employee(e, db) for e in employees]
 

@@ -29,6 +29,12 @@
           </el-checkbox>
         </el-tooltip>
         <el-divider direction="vertical" />
+        <el-tooltip content="选择要隐藏的员工状态，隐藏后该状态员工不在列表中显示" placement="bottom">
+          <el-select v-model="hideStatusId" placeholder="隐藏状态" size="small" clearable class="!w-32" @change="onHideStatusChange">
+            <el-option v-for="s in statuses" :key="s.id" :label="s.name" :value="s.id" />
+          </el-select>
+        </el-tooltip>
+        <el-divider direction="vertical" />
         <el-button size="small" :type="editMode ? 'warning' : 'default'" @click="toggleEditMode">
           {{ editMode ? '退出编辑' : '编辑' }}
         </el-button>
@@ -605,6 +611,7 @@ const savingEdits = ref(false)
 const importing = ref(false)
 const syncingRoster = ref(false)
 const showDisabledDept = ref(false)
+const hideStatusId = ref(null)
 const dialogVisible = ref(false)
 const dialogTab = ref('basic')
 const importVisible = ref(false)
@@ -706,6 +713,12 @@ function onFilterChange() {
   }
 }
 
+function onHideStatusChange() {
+  // 切换隐藏状态时，保存偏好设置并刷新
+  localStorage.setItem('employee_hide_status_id', hideStatusId.value || '')
+  fetchData()
+}
+
 async function fetchData() {
   loading.value = true
   try {
@@ -716,6 +729,9 @@ async function fetchData() {
     }
     if (showDisabledDept.value) {
       params.include_disabled_dept = true
+    }
+    if (hideStatusId.value) {
+      params.hide_status_id = hideStatusId.value
     }
     const res = await api.get('/employees/', { params })
     employees.value = res.data
@@ -1314,8 +1330,13 @@ async function doImport() {
   }
 }
 
-onMounted(() => {
-  fetchDicts()
+onMounted(async () => {
+  await fetchDicts()
+  // 从 localStorage 恢复偏好设置
+  const saved = localStorage.getItem('employee_hide_status_id')
+  if (saved) {
+    hideStatusId.value = Number(saved)
+  }
   fetchData()
 })
 </script>

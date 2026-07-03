@@ -666,7 +666,12 @@ function onPeriodChange(val) {
 async function checkCompleteness() {
   checking.value = true
   try {
-    const res = await api.get(`/salary/check-completeness/${periodDate.value}`)
+    const params = {}
+    const hideStatusId = localStorage.getItem('employee_hide_status_id')
+    if (hideStatusId) {
+      params.hide_status_id = Number(hideStatusId)
+    }
+    const res = await api.get(`/salary/check-completeness/${periodDate.value}`, { params })
     completeness.value = res.data
   } finally {
     checking.value = false
@@ -679,7 +684,12 @@ async function startCalculate() {
   })
   calculating.value = true
   try {
-    const res = await api.post(`/salary/calculate/${periodDate.value}`)
+    const params = {}
+    const hideStatusId = localStorage.getItem('employee_hide_status_id')
+    if (hideStatusId) {
+      params.hide_status_id = Number(hideStatusId)
+    }
+    const res = await api.post(`/salary/calculate/${periodDate.value}`, null, { params })
     summary.value = res.data
     ElMessage.success('核算完成')
     await fetchResults()
@@ -696,7 +706,12 @@ async function startCalculate() {
 async function fetchResults() {
   loading.value = true
   try {
-    const res = await api.get(`/salary/results/${periodDate.value}`)
+    const params = {}
+    const hideStatusId = localStorage.getItem('employee_hide_status_id')
+    if (hideStatusId) {
+      params.hide_status_id = Number(hideStatusId)
+    }
+    const res = await api.get(`/salary/results/${periodDate.value}`, { params })
     let data = res.data
     if (filterField.value && filterValue.value) {
       const fv = filterValue.value.toLowerCase()
@@ -774,7 +789,12 @@ async function batchSubmitApproval() {
 
 async function handleExport() {
   try {
-    const res = await api.get(`/salary/export/${periodDate.value}`, { responseType: 'blob' })
+    const params = {}
+    const hideStatusId = localStorage.getItem('employee_hide_status_id')
+    if (hideStatusId) {
+      params.hide_status_id = Number(hideStatusId)
+    }
+    const res = await api.get(`/salary/export/${periodDate.value}`, { params, responseType: 'blob' })
     const url = window.URL.createObjectURL(new Blob([res.data]))
     const link = document.createElement('a')
     link.href = url

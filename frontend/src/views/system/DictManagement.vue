@@ -9,6 +9,7 @@
         <el-option label="用工状态" value="employee_status" />
         <el-option label="假期类型" value="leave_type" />
         <el-option label="薪资项目" value="salary_item" />
+        <el-option label="法定节假日" value="holiday" />
       </el-select>
       <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)">新增</el-button>
       <el-button type="success" :icon="Upload" size="small" @click="showImport">导入</el-button>

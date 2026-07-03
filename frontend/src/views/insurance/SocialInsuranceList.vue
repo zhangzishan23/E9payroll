@@ -474,7 +474,12 @@ async function saveAllEdits() {
 async function fetchData() {
   loading.value = true
   try {
-    const res = await api.get('/social-insurance/', { params: { period: periodDate.value } })
+    const params = { period: periodDate.value }
+    const hideStatusId = localStorage.getItem('employee_hide_status_id')
+    if (hideStatusId) {
+      params.hide_status_id = Number(hideStatusId)
+    }
+    const res = await api.get('/social-insurance/', { params })
     records.value = res.data
   } catch {
     ElMessage.error('加载数据失败')
@@ -618,7 +623,12 @@ async function doImport() {
 
 async function handleExport() {
   try {
-    const res = await api.get(`/social-insurance/export/${periodDate.value}`, { responseType: 'blob' })
+    const params = {}
+    const hideStatusId = localStorage.getItem('employee_hide_status_id')
+    if (hideStatusId) {
+      params.hide_status_id = Number(hideStatusId)
+    }
+    const res = await api.get(`/social-insurance/export/${periodDate.value}`, { params, responseType: 'blob' })
     const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)

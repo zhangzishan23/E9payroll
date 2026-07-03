@@ -8,6 +8,7 @@
 """
 import time
 import logging
+import calendar
 from datetime import datetime, date, timedelta
 from typing import Optional
 import httpx
@@ -568,25 +569,225 @@ def get_attendance_columns() -> list[dict]:
     return [{"id": c.get("id"), "name": c.get("name"), "type": c.get("type")} for c in columns]
 
 
+def get_attendance_groups() -> list[dict]:
+    """批量获取所有考勤组。返回: [{"group_id": 123, "group_name": "考勤组名", "member_count": 10}, ...]"""
+    token = _get_access_token()
+    url = "https://oapi.dingtalk.com/topapi/attendance/getsimplegroups"
+    params = {"access_token": token}
+    groups = []
+    offset = 0
+    size = 10
+
+    with httpx.Client(timeout=30) as client:
+        while True:
+            body = {"offset": offset, "size": size}
+            resp = client.post(url, params=params, json=body)
+            data = resp.json()
+            if data.get("errcode") != 0:
+                raise Exception(f"获取考勤组列表失败: {data.get('errmsg')}")
+
+            result = data.get("result", {})
+            batch = result.get("groups", [])
+            groups.extend({
+                "group_id": g.get("group_id"),
+                "group_name": g.get("group_name"),
+                "member_count": g.get("member_count", 0),
+                "type": g.get("type"),
+            } for g in batch)
+
+            if not result.get("has_more"):
+                break
+            offset += size
+
+    logger.info(f"钉钉返回考勤组: {[(g['group_name'], g['member_count']) for g in groups]}")
+    return groups
+
+
+def get_attendance_group_members(group_id: int) -> list[str]:
+    """获取指定考勤组的参与考勤人员 userId 列表（仅返回 type=0 的员工，不含 type=1 的部门）"""
+    token = _get_access_token()
+    url = "https://oapi.dingtalk.com/topapi/attendance/group/member/list"
+    params = {"access_token": token}
+    user_ids = []
+    cursor = 0
+
+    with httpx.Client(timeout=30) as client:
+        while True:
+            body = {
+                "group_id": group_id,
+                "op_user_id": DINGTALK_AGENT_ID or "manager4220",
+                "cursor": cursor,
+            }
+            resp = client.post(url, params=params, json=body)
+            data = resp.json()
+            if data.get("errcode") != 0:
+                raise Exception(f"获取考勤组成员失败(group_id={group_id}): {data.get('errmsg')}")
+
+            result = data.get("result", {})
+            members = result.get("result", [])
+            for m in members:
+                # type=0 是员工，type=1 是部门（跳过部门）
+                if m.get("type") == "0" and m.get("atc_flag") == "0":
+                    user_ids.append(m.get("member_id"))
+
+            if not result.get("has_more"):
+                break
+            cursor = result.get("cursor", 0)
+
+    return user_ids
+
+
+def get_all_attendance_user_ids() -> list[str]:
+    """获取所有参与考勤的员工 userId（遍历所有考勤组成员并去重）"""
+    groups = get_attendance_groups()
+    all_ids = set()
+    errors = []
+
+    for group in groups:
+        gid = group["group_id"]
+        if group.get("member_count", 0) == 0:
+            continue
+        try:
+            members = get_attendance_group_members(gid)
+            all_ids.update(members)
+            logger.info(f"考勤组 [{group['group_name']}]({gid}): 获取到 {len(members)} 人")
+        except Exception as e:
+            errors.append(str(e))
+            logger.warning(f"获取考勤组成员失败: {e}")
+
+    if errors:
+        logger.warning(f"考勤组成员获取中有 {len(errors)} 个错误: {errors[:3]}")
+
+    logger.info(f"所有考勤组去重后共 {len(all_ids)} 人参与考勤")
+    return list(all_ids)
+
+
 # 考勤列名 → 系统字段映射（根据钉钉实际返回的列名）
 ATTENDANCE_COLUMN_MAP = {
+    # === 基础考勤 ===
     "应出勤天数": "total_work_days",
-    "出勤天数": "actual_work_days",  # 钉钉实际列名
+    "出勤天数": "actual_work_days",
+    "休息天数": "rest_days",
+    "工作时长": "work_hours",
+
+    # === 补卡 ===
+    "补卡次数": "resupplement_count",
+
+    # === 迟到 ===
     "迟到次数": "late_count",
+    "迟到时长": "late_duration",
+    "严重迟到次数": "severe_late_count",
+    "严重迟到时长": "severe_late_duration",
+    "旷工迟到次数": "absenteeism_late_count",
+    "旷工迟到天数": "absenteeism_late_days",
+    "迟到10分钟以上次数": "late_over_10min_count",
+    "迟到30分钟以上次数": "late_over_30min_count",
+
+    # === 早退 ===
     "早退次数": "early_count",
-    "上班缺卡次数": "missed_punch_count",  # 钉钉分上班/下班缺卡
-    "下班缺卡次数": "missed_punch_count",  # 会累加
-    "全薪病假": "sick_leave_days",  # 钉钉实际列名
-    "法定病假": "sick_leave_days",  # 备用
-    "事假": "personal_leave_days",  # 钉钉实际列名
-    "年假": "annual_leave_days",  # 钉钉实际列名
-    "调休": "other_leave_days",  # 钉钉实际列名
-    "调休假天数": "other_leave_days",  # 备用
-    "婚假": "other_leave_days",
-    "产假": "other_leave_days",
-    "陪产假": "other_leave_days",
-    "丧假": "other_leave_days",
+    "早退时长": "early_duration",
+
+    # === 缺卡 ===
+    "上班缺卡次数": "missed_clock_in_count",
+    "下班缺卡次数": "missed_clock_out_count",
+    "半天缺卡次数合计": "half_day_missed_punch",
+
+    # === 旷工 ===
+    "旷工天数": "absenteeism_days",
+
+    # === 出差/外出 ===
+    "出差时长": "business_travel_duration",
+    "外出时长": "out_duration",
+
+    # === 加班 ===
+    "加班-审批单统计": "overtime_approval_count",
+    "工作日加班": "workday_overtime",
+    "休息日加班": "weekend_overtime",
+    "节假日加班": "holiday_overtime",
+    "加班总时长": "total_overtime",
+    "工作日（转加班费）": "workday_overtime_pay",
+    "休息日（转加班费）": "weekend_overtime_pay",
+    "节假日（转加班费）": "holiday_overtime_pay",
+    "工作日（转调休）": "workday_overtime_leave",
+    "休息日（转调休）": "weekend_overtime_leave",
+    "节假日（转调休）": "holiday_overtime_leave",
+
+    # === 晚下班 ===
+    "下班晚于7点次数": "clock_out_after_7pm_count",
+    "下班晚于8点次数": "clock_out_after_8pm_count",
+    "下班晚于9点次数": "clock_out_after_9pm_count",
+
+    # === 打卡 ===
+    "打卡次数": "punch_count",
+
+    # === 请假类型（来自钉钉独立列，如有） ===
+    "事假": "personal_leave_days",
+    "全薪病假": "full_pay_sick_days",
+    "法定病假": "statutory_sick_days",
+    "减薪病假": "reduced_pay_sick_days",
+    "年假": "annual_leave_days",
+    "调休": "compensatory_leave_days",
+    "调休假天数": "compensatory_leave_days",
+    "调休-工程交付（天）": "engineering_compensatory_days",
+    "产检假": "prenatal_checkup_days",
+    "产假": "maternity_leave_days",
+    "陪产假": "paternity_leave_days",
+    "婚假": "marriage_leave_days",
+    "丧假": "funeral_leave_days",
 }
+
+
+# 请假类型关键词 → 系统字段（用于从'考勤结果'文本解析）
+LEAVE_KEYWORD_MAP = {
+    "事假": "personal_leave_days",
+    "全薪病假": "full_pay_sick_days",
+    "减薪病假": "reduced_pay_sick_days",
+    "法定病假": "statutory_sick_days",
+    "病假": "sick_leave_days",
+    "年假": "annual_leave_days",
+    "调休-工程交付": "engineering_compensatory_days",
+    "调休": "compensatory_leave_days",
+    "产检假": "prenatal_checkup_days",
+    "产假": "maternity_leave_days",
+    "陪产假": "paternity_leave_days",
+    "婚假": "marriage_leave_days",
+    "丧假": "funeral_leave_days",
+}
+
+
+def parse_leave_from_result(attendance_result_text: str) -> list[dict]:
+    """
+    从钉钉'考勤结果'列文本解析请假信息。
+    格式示例: "事假06-03 09:00到06-03 12:00 3小时"
+    返回: [{"type": "事假", "field": "personal_leave_days", "hours": 3.0}, ...]
+    """
+    if not attendance_result_text or attendance_result_text in ("正常", "休息", ""):
+        return []
+
+    import re
+    results = []
+    # 匹配: {请假类型}(可选具体内容) {月-日} {时:分}到{月-日} {时:分} {N}小时
+    pattern = r'(事假|全薪病假|减薪病假|法定病假|病假|年假|调休-工程交付|调休|产检假|产假|陪产假|婚假|丧假)\S*\s*(\d{2}-\d{2})\s*(\d{2}:\d{2})到(\d{2}-\d{2})\s*(\d{2}:\d{2})\s*(\d+(?:\.\d+)?)小时'
+
+    for match in re.finditer(pattern, attendance_result_text):
+        leave_name = match.group(1)
+        hours = float(match.group(6))
+
+        # 匹配最长的关键词（如"调休-工程交付"优先于"调休"）
+        field = None
+        for keyword, field_name in sorted(LEAVE_KEYWORD_MAP.items(), key=lambda x: -len(x[0])):
+            if leave_name == keyword or leave_name.startswith(keyword):
+                field = field_name
+                break
+
+        if field:
+            results.append({
+                "type": leave_name,
+                "field": field,
+                "hours": hours,
+            })
+
+    return results
 
 
 def get_attendance_column_values(
@@ -1079,19 +1280,19 @@ def sync_attendance_to_db(db_session, period: str) -> dict:
                         error_detail=stats["errors"], started_at=started_at, finished_at=datetime.now())
         return stats
 
-    # 建立列名→列ID映射（根据ATTENDANCE_COLUMN_MAP中的中文名匹配）
+    # 建立列名→列ID映射
     col_name_to_id = {}
     for col in columns:
         col_name_to_id[col["name"]] = col["id"]
 
-    # 找出我们关心的列ID（过滤掉None）
-    target_col_ids = []
-    for cn_name in ATTENDANCE_COLUMN_MAP:
-        if cn_name in col_name_to_id and col_name_to_id[cn_name] is not None:
-            target_col_ids.append(col_name_to_id[cn_name])
+    # 获取所有可用的列ID（包括文本列如考勤结果、班次、出勤班次）
+    target_col_ids = [cid for cid in col_name_to_id.values() if cid is not None]
+
+    # 钉钉 getcolumnval 接口单次最多支持 20 列，超限需分批获取
+    COL_BATCH_SIZE = 20
 
     if not target_col_ids:
-        stats["errors"].append("未找到匹配的考勤列，请检查钉钉考勤报表列定义")
+        stats["errors"].append("未找到有效的考勤列，请检查钉钉考勤报表列定义")
         _write_sync_log(db_session, "attendance_monthly", "failed", period=period,
                         error_detail=stats["errors"], started_at=started_at, finished_at=datetime.now())
         return stats
@@ -1105,8 +1306,27 @@ def sync_attendance_to_db(db_session, period: str) -> dict:
     else:
         to_date = date(year, month + 1, 1) - timedelta(days=1)
 
-    # 3. 获取所有已关联钉钉的员工
-    employees = db_session.query(Employee).filter(Employee.dingtalk_user_id.isnot(None)).all()
+    # 3. 获取需要同步考勤的员工 userId（通过部门）
+    try:
+        dept_user_ids = get_all_user_ids(db_session)
+    except Exception as e:
+        stats["errors"].append(f"获取部门员工失败: {str(e)}")
+        _write_sync_log(db_session, "attendance_monthly", "failed", period=period,
+                        error_detail=stats["errors"], started_at=started_at, finished_at=datetime.now())
+        return stats
+
+    if not dept_user_ids:
+        stats["errors"].append("未获取到任何需要同步考勤的员工，请检查部门配置")
+        _write_sync_log(db_session, "attendance_monthly", "failed", period=period,
+                        error_detail=stats["errors"], started_at=started_at, finished_at=datetime.now())
+        return stats
+
+    # 查询部门员工中已关联钉钉的员工
+    employees = db_session.query(Employee).filter(
+        Employee.dingtalk_user_id.in_(dept_user_ids)
+    ).all()
+
+    logger.info(f"部门员工({len(dept_user_ids)}人)，数据库中匹配到 {len(employees)} 人")
     if not employees:
         stats["errors"].append("没有已关联钉钉的员工，请先同步花名册")
         _write_sync_log(db_session, "attendance_monthly", "failed", period=period,
@@ -1116,52 +1336,151 @@ def sync_attendance_to_db(db_session, period: str) -> dict:
     # 4. 逐员工获取考勤数据并汇总
     for emp in employees:
         try:
-            vals = get_attendance_column_values(
-                emp.dingtalk_user_id, target_col_ids, from_date, to_date
-            )
-            # 汇总：按列名聚合月内每天的值
-            monthly = _aggregate_attendance(vals, col_name_to_id)
-            if not monthly:
+            # 分批获取考勤列值（钉钉单次最多20列）
+            all_vals = []
+            for i in range(0, len(target_col_ids), COL_BATCH_SIZE):
+                batch_ids = target_col_ids[i:i + COL_BATCH_SIZE]
+                batch_vals = get_attendance_column_values(
+                    emp.dingtalk_user_id, batch_ids, from_date, to_date
+                )
+                all_vals.extend(batch_vals)
+            summary = _aggregate_attendance(all_vals, col_name_to_id)
+            if not summary or not summary.get("numerical"):
                 continue
 
-            # 计算出勤率
-            total = monthly.get("total_work_days", 0)
-            actual = monthly.get("actual_work_days", 0)
+            num = summary["numerical"]
+            leave = summary.get("leave_days", {})
+            txt = summary.get("text_fields", {})
+
+            total = num.get("total_work_days", 0)
+            # 从"考勤结果"文本解析出的小时级请假天数（钉钉按天计出勤时不会自动扣减）
+            text_leave_total = sum(leave.values())
+            actual = num.get("actual_work_days", 0) - text_leave_total
+            actual = max(actual, 0)  # 防止出现负数
             rate = round(actual / total, 4) if total > 0 else 0
 
+            # 请假天数合并：独立列 + 文本解析
+            personal_leave = round(num.get("personal_leave_days", 0) + leave.get("personal_leave_days", 0), 1)
+            full_pay_sick = round(num.get("full_pay_sick_days", 0) + leave.get("full_pay_sick_days", 0), 1)
+            reduced_pay_sick = round(num.get("reduced_pay_sick_days", 0) + leave.get("reduced_pay_sick_days", 0), 1)
+            statutory_sick = round(num.get("statutory_sick_days", 0) + leave.get("statutory_sick_days", 0), 1)
+            sick_total = round(full_pay_sick + reduced_pay_sick + statutory_sick + leave.get("sick_leave_days", 0), 1)
+            annual_leave = round(num.get("annual_leave_days", 0) + leave.get("annual_leave_days", 0), 1)
+            compensatory = round(num.get("compensatory_leave_days", 0) + leave.get("compensatory_leave_days", 0), 1)
+            prenatal = round(num.get("prenatal_checkup_days", 0) + leave.get("prenatal_checkup_days", 0), 1)
+            maternity = round(num.get("maternity_leave_days", 0) + leave.get("maternity_leave_days", 0), 1)
+            paternity = round(num.get("paternity_leave_days", 0) + leave.get("paternity_leave_days", 0), 1)
+            marriage = round(num.get("marriage_leave_days", 0) + leave.get("marriage_leave_days", 0), 1)
+            funeral = round(num.get("funeral_leave_days", 0) + leave.get("funeral_leave_days", 0), 1)
+            engineering = round(num.get("engineering_compensatory_days", 0) + leave.get("engineering_compensatory_days", 0), 1)
+            other_leave = round(personal_leave + sick_total + annual_leave + compensatory +
+                               prenatal + maternity + paternity + marriage + funeral + engineering, 1)
+
+            # 缺卡总数 = 上班 + 下班
+            missed_total = int(num.get("missed_clock_in_count", 0)) + int(num.get("missed_clock_out_count", 0))
+
+            # === 加工字段计算 ===
+            # 计薪日期
+            first_day = date(int(period[:4]), int(period[4:6]), 1)
+            last_day = date(int(period[:4]), int(period[4:6]), calendar.monthrange(int(period[:4]), int(period[4:6]))[1])
+
+            # 迟到转事假：迟到次数>3次时，累计迟到时长(分钟)换算为天数(每天7小时)
+            late_count_val = int(num.get("late_count", 0))
+            late_duration_val = int(num.get("late_duration", 0))
+            late_to_leave = 0.0
+            if late_count_val > 3 and late_duration_val > 0:
+                late_to_leave = round(late_duration_val / 60 / 7, 1)
+
+            # 请假合计
+            leave_total = round(
+                late_to_leave + personal_leave + full_pay_sick + reduced_pay_sick +
+                statutory_sick + compensatory + annual_leave + prenatal +
+                maternity + paternity + marriage + funeral + engineering, 1
+            )
+
+            # 应计薪天数 = 总计薪天数（默认，后续用户可通过日历调整）
+            adjusted = float(total)
+
+            # 计薪天数 = 应计薪 - 请假合计
+            actual_salary = max(round(adjusted - leave_total, 1), 0)
+
+            # 出勤率 = 计薪天数 / 应计薪天数
+            att_rate = round(actual_salary / adjusted, 4) if adjusted > 0 else 0
+
+            record_data = dict(
+                period=period, employee_id=emp.id,
+                total_work_days=total, actual_work_days=actual_salary, attendance_rate=att_rate,
+                # 计薪加工字段
+                salary_start_date=first_day, salary_end_date=last_day,
+                adjusted_salary_days=adjusted,
+                actual_salary_days=actual_salary,
+                late_to_personal_leave_days=late_to_leave,
+                leave_total_days=leave_total,
+                rest_days=num.get("rest_days", 0),
+                work_hours=num.get("work_hours", 0),
+                resupplement_count=int(num.get("resupplement_count", 0)),
+                late_count=int(num.get("late_count", 0)),
+                late_duration=int(num.get("late_duration", 0)),
+                severe_late_count=int(num.get("severe_late_count", 0)),
+                severe_late_duration=int(num.get("severe_late_duration", 0)),
+                absenteeism_late_count=int(num.get("absenteeism_late_count", 0)),
+                absenteeism_late_days=num.get("absenteeism_late_days", 0),
+                late_over_10min_count=int(num.get("late_over_10min_count", 0)),
+                late_over_30min_count=int(num.get("late_over_30min_count", 0)),
+                early_count=int(num.get("early_count", 0)),
+                early_duration=int(num.get("early_duration", 0)),
+                missed_clock_in_count=int(num.get("missed_clock_in_count", 0)),
+                missed_clock_out_count=int(num.get("missed_clock_out_count", 0)),
+                missed_punch_count=missed_total,
+                half_day_missed_punch=int(num.get("half_day_missed_punch", 0)),
+                absenteeism_days=num.get("absenteeism_days", 0),
+                business_travel_duration=num.get("business_travel_duration", 0),
+                out_duration=num.get("out_duration", 0),
+                overtime_approval_count=num.get("overtime_approval_count", 0),
+                workday_overtime=num.get("workday_overtime", 0),
+                weekend_overtime=num.get("weekend_overtime", 0),
+                holiday_overtime=num.get("holiday_overtime", 0),
+                total_overtime=num.get("total_overtime", 0),
+                workday_overtime_pay=num.get("workday_overtime_pay", 0),
+                weekend_overtime_pay=num.get("weekend_overtime_pay", 0),
+                holiday_overtime_pay=num.get("holiday_overtime_pay", 0),
+                workday_overtime_leave=num.get("workday_overtime_leave", 0),
+                weekend_overtime_leave=num.get("weekend_overtime_leave", 0),
+                holiday_overtime_leave=num.get("holiday_overtime_leave", 0),
+                clock_out_after_7pm_count=int(num.get("clock_out_after_7pm_count", 0)),
+                clock_out_after_8pm_count=int(num.get("clock_out_after_8pm_count", 0)),
+                clock_out_after_9pm_count=int(num.get("clock_out_after_9pm_count", 0)),
+                punch_count=int(num.get("punch_count", 0)),
+                shift_type=txt.get("出勤班次"),
+                shift_name=txt.get("班次"),
+                personal_leave_days=personal_leave,
+                full_pay_sick_days=full_pay_sick,
+                reduced_pay_sick_days=reduced_pay_sick,
+                statutory_sick_days=statutory_sick,
+                sick_leave_days=sick_total,
+                annual_leave_days=annual_leave,
+                compensatory_leave_days=compensatory,
+                prenatal_checkup_days=prenatal,
+                maternity_leave_days=maternity,
+                paternity_leave_days=paternity,
+                marriage_leave_days=marriage,
+                funeral_leave_days=funeral,
+                engineering_compensatory_days=engineering,
+                other_leave_days=other_leave,
+            )
+
             # upsert
-            record = db_session.query(AttendanceRecord).filter(
+            existing = db_session.query(AttendanceRecord).filter(
                 AttendanceRecord.period == period,
                 AttendanceRecord.employee_id == emp.id,
             ).first()
 
-            if record:
-                record.total_work_days = total
-                record.actual_work_days = actual
-                record.attendance_rate = rate
-                record.late_count = int(monthly.get("late_count", 0))
-                record.early_count = int(monthly.get("early_count", 0))
-                record.missed_punch_count = int(monthly.get("missed_punch_count", 0))
-                record.sick_leave_days = monthly.get("sick_leave_days", 0)
-                record.personal_leave_days = monthly.get("personal_leave_days", 0)
-                record.annual_leave_days = monthly.get("annual_leave_days", 0)
-                record.other_leave_days = monthly.get("other_leave_days", 0)
+            if existing:
+                for k, v in record_data.items():
+                    if k not in ("period", "employee_id"):
+                        setattr(existing, k, v)
             else:
-                record = AttendanceRecord(
-                    period=period,
-                    employee_id=emp.id,
-                    total_work_days=total,
-                    actual_work_days=actual,
-                    attendance_rate=rate,
-                    late_count=int(monthly.get("late_count", 0)),
-                    early_count=int(monthly.get("early_count", 0)),
-                    missed_punch_count=int(monthly.get("missed_punch_count", 0)),
-                    sick_leave_days=monthly.get("sick_leave_days", 0),
-                    personal_leave_days=monthly.get("personal_leave_days", 0),
-                    annual_leave_days=monthly.get("annual_leave_days", 0),
-                    other_leave_days=monthly.get("other_leave_days", 0),
-                )
-                db_session.add(record)
+                db_session.add(AttendanceRecord(**record_data))
 
             stats["synced"] += 1
 
@@ -1170,7 +1489,7 @@ def sync_attendance_to_db(db_session, period: str) -> dict:
 
     db_session.commit()
 
-    # 5. 数据校验：确认同步数量
+    # 5. 数据校验
     synced_count = db_session.query(AttendanceRecord).filter(
         AttendanceRecord.period == period
     ).count()
@@ -1192,12 +1511,33 @@ def sync_attendance_to_db(db_session, period: str) -> dict:
 def _aggregate_attendance(vals: list[dict], col_name_to_id: dict) -> dict:
     """
     将每天的考勤列值汇总为月度值。
-    列ID→中文名逆向映射，再映射到系统字段。
+    数值列：累加求和
+    文本列（考勤结果）：收集后解析请假类型
+    班次列：记录第一个非空值
+    返回: {"numerical": {field: value}, "text_fields": {field: text}, "leave_days": {field: days}}
     """
     id_to_name = {v: k for k, v in col_name_to_id.items()}
-    result = {}
+    numerical = {}
+    text_fields = {}
+    leave_texts = []
+
+    # 需要特殊处理的文本列
+    text_col_names = {"考勤结果", "班次", "出勤班次"}
+
     for item in vals:
         col_name = item.get("column_name") or id_to_name.get(item.get("column_id"), "")
+        raw_value = str(item.get("value", "")).strip() if item.get("value") else ""
+
+        # 文本列特殊处理
+        if col_name in text_col_names:
+            if col_name == "考勤结果" and raw_value not in ("", "正常", "休息"):
+                leave_texts.append(raw_value)
+            elif col_name in ("班次", "出勤班次"):
+                if raw_value and col_name not in text_fields:
+                    text_fields[col_name] = raw_value
+            continue
+
+        # 数值列：按ATTENDANCE_COLUMN_MAP映射后累加
         field = ATTENDANCE_COLUMN_MAP.get(col_name)
         if not field:
             continue
@@ -1205,8 +1545,27 @@ def _aggregate_attendance(vals: list[dict], col_name_to_id: dict) -> dict:
             val = float(item.get("value", 0))
         except (ValueError, TypeError):
             val = 0
-        result[field] = result.get(field, 0) + val
-    return result
+        numerical[field] = numerical.get(field, 0) + val
+
+    # 小时单位字段转换为天（每天7小时）
+    hour_based_fields = {"personal_leave_days", "full_pay_sick_days", "reduced_pay_sick_days", "compensatory_leave_days"}
+    for fld in hour_based_fields:
+        if fld in numerical:
+            numerical[fld] = round(numerical[fld] / 7.0, 1)
+
+    # 解析请假文本 → 请假天数
+    leave_days = {}
+    for text in leave_texts:
+        parsed = parse_leave_from_result(text)
+        for p in parsed:
+            days = p["hours"] / 7.0  # 7小时/天
+            leave_days[p["field"]] = round(leave_days.get(p["field"], 0) + days, 1)
+
+    return {
+        "numerical": numerical,
+        "text_fields": text_fields,
+        "leave_days": leave_days,
+    }
 
 
 def get_raw_attendance_by_employee(

@@ -205,20 +205,99 @@ class AttendanceRecord(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     period = Column(String(7), nullable=False)
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
-    total_work_days = Column(DECIMAL(4, 1), nullable=False)
-    actual_work_days = Column(DECIMAL(4, 1), nullable=False)
-    attendance_rate = Column(DECIMAL(5, 4), nullable=False)
-    late_count = Column(Integer, default=0)
-    early_count = Column(Integer, default=0)
-    missed_punch_count = Column(Integer, default=0)
-    sick_leave_days = Column(DECIMAL(4, 1), default=0)
-    personal_leave_days = Column(DECIMAL(4, 1), default=0)
-    annual_leave_days = Column(DECIMAL(4, 1), default=0)
-    other_leave_days = Column(DECIMAL(4, 1), default=0)
+
+    # === 考勤基本信息 ===
+    total_work_days = Column(DECIMAL(4, 1), nullable=False, comment="当月总计薪天数(钉钉应出勤天数)")
+    actual_work_days = Column(DECIMAL(4, 1), nullable=False, comment="出勤天数")
+    attendance_rate = Column(DECIMAL(5, 4), nullable=False, comment="出勤率")
+    rest_days = Column(DECIMAL(4, 1), default=0, comment="休息天数")
+    work_hours = Column(DECIMAL(7, 1), default=0, comment="工作时长(分钟)")
+
+    # === 计薪相关（加工字段） ===
+    salary_start_date = Column(Date, nullable=True, comment="计薪开始日期")
+    salary_end_date = Column(Date, nullable=True, comment="计薪截至日期")
+    adjusted_salary_days = Column(DECIMAL(5, 2), nullable=False, default=0, comment="应计薪天数(总计薪-扣减)")
+    actual_salary_days = Column(DECIMAL(5, 2), nullable=False, default=0, comment="计薪天数(实际计薪)")
+    late_to_personal_leave_days = Column(DECIMAL(4, 2), default=0, comment="迟到转事假(天)")
+    leave_total_days = Column(DECIMAL(5, 2), default=0, comment="请假合计(天)")
+
+    # === 补卡 ===
+    resupplement_count = Column(Integer, default=0, comment="补卡次数")
+
+    # === 迟到相关 ===
+    late_count = Column(Integer, default=0, comment="迟到次数")
+    late_duration = Column(Integer, default=0, comment="迟到时长(分钟)")
+    severe_late_count = Column(Integer, default=0, comment="严重迟到次数")
+    severe_late_duration = Column(Integer, default=0, comment="严重迟到时长(分钟)")
+    absenteeism_late_count = Column(Integer, default=0, comment="旷工迟到次数")
+    absenteeism_late_days = Column(DECIMAL(4, 1), default=0, comment="旷工迟到天数")
+    late_over_10min_count = Column(Integer, default=0, comment="迟到10分钟以上次数")
+    late_over_30min_count = Column(Integer, default=0, comment="迟到30分钟以上次数")
+
+    # === 早退相关 ===
+    early_count = Column(Integer, default=0, comment="早退次数")
+    early_duration = Column(Integer, default=0, comment="早退时长(分钟)")
+
+    # === 缺卡相关 ===
+    missed_clock_in_count = Column(Integer, default=0, comment="上班缺卡次数")
+    missed_clock_out_count = Column(Integer, default=0, comment="下班缺卡次数")
+    missed_punch_count = Column(Integer, default=0, comment="缺卡总次数(上下班合计)")
+    half_day_missed_punch = Column(Integer, default=0, comment="半天缺卡次数合计")
+
+    # === 旷工 ===
+    absenteeism_days = Column(DECIMAL(4, 2), default=0, comment="旷工天数")
+
+    # === 出差/外出 ===
+    business_travel_duration = Column(DECIMAL(5, 1), default=0, comment="出差时长(小时)")
+    out_duration = Column(DECIMAL(5, 1), default=0, comment="外出时长(小时)")
+
+    # === 加班相关 ===
+    overtime_approval_count = Column(DECIMAL(4, 1), default=0, comment="加班-审批单统计")
+    workday_overtime = Column(DECIMAL(5, 1), default=0, comment="工作日加班(小时)")
+    weekend_overtime = Column(DECIMAL(5, 1), default=0, comment="休息日加班(小时)")
+    holiday_overtime = Column(DECIMAL(5, 1), default=0, comment="节假日加班(小时)")
+    total_overtime = Column(DECIMAL(5, 1), default=0, comment="加班总时长(小时)")
+    workday_overtime_pay = Column(DECIMAL(5, 1), default=0, comment="工作日(转加班费)")
+    weekend_overtime_pay = Column(DECIMAL(5, 1), default=0, comment="休息日(转加班费)")
+    holiday_overtime_pay = Column(DECIMAL(5, 1), default=0, comment="节假日(转加班费)")
+    workday_overtime_leave = Column(DECIMAL(5, 1), default=0, comment="工作日(转调休)")
+    weekend_overtime_leave = Column(DECIMAL(5, 1), default=0, comment="休息日(转调休)")
+    holiday_overtime_leave = Column(DECIMAL(5, 1), default=0, comment="节假日(转调休)")
+
+    # === 晚下班统计 ===
+    clock_out_after_7pm_count = Column(Integer, default=0, comment="下班晚于7点次数")
+    clock_out_after_8pm_count = Column(Integer, default=0, comment="下班晚于8点次数")
+    clock_out_after_9pm_count = Column(Integer, default=0, comment="下班晚于9点次数")
+
+    # === 打卡次数 ===
+    punch_count = Column(Integer, default=0, comment="打卡次数")
+
+    # === 班次信息 ===
+    shift_type = Column(String(50), nullable=True, comment="出勤班次")
+    shift_name = Column(String(100), nullable=True, comment="班次名称")
+
+    # === 请假分项（从钉钉'考勤结果'列解析） ===
+    personal_leave_days = Column(DECIMAL(4, 2), default=0, comment="事假(天)")
+    full_pay_sick_days = Column(DECIMAL(4, 2), default=0, comment="全薪病假(天)")
+    reduced_pay_sick_days = Column(DECIMAL(4, 2), default=0, comment="减薪病假(天)")
+    statutory_sick_days = Column(DECIMAL(4, 2), default=0, comment="法定病假(天)")
+    sick_leave_days = Column(DECIMAL(4, 2), default=0, comment="病假合计(天)")
+    annual_leave_days = Column(DECIMAL(4, 2), default=0, comment="年假(天)")
+    compensatory_leave_days = Column(DECIMAL(4, 2), default=0, comment="调休(天)")
+    prenatal_checkup_days = Column(DECIMAL(4, 2), default=0, comment="产检假(天)")
+    maternity_leave_days = Column(DECIMAL(4, 2), default=0, comment="产假(天)")
+    paternity_leave_days = Column(DECIMAL(4, 2), default=0, comment="陪产假(天)")
+    marriage_leave_days = Column(DECIMAL(4, 2), default=0, comment="婚假(天)")
+    funeral_leave_days = Column(DECIMAL(4, 2), default=0, comment="丧假(天)")
+    engineering_compensatory_days = Column(DECIMAL(4, 2), default=0, comment="调休-工程交付(天)")
+    other_leave_days = Column(DECIMAL(4, 2), default=0, comment="其他假合计(天)")
+
+    # === 审核标记 ===
     is_home_checkin = Column(Boolean, default=False)
     need_verify = Column(Boolean, default=False)
     verify_status = Column(String(20), nullable=True)
-    remark = Column(String(200), nullable=True)
+    remark = Column(String(500), nullable=True)
+
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -439,3 +518,15 @@ class AttendanceDaily(Base):
     __table_args__ = (
         {"comment": "每日考勤明细（保留2个月自动清理）"}
     )
+
+
+class SalaryCalendarOverride(Base):
+    """计薪日历覆盖表 — 记录用户手动覆盖的计薪日（排除工作日 或 纳入休息日）"""
+    __tablename__ = "salary_calendar_override"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    period = Column(String(7), nullable=False, comment="核算周期 YYYYMM")
+    override_date = Column(Date, nullable=False, comment="覆盖日期")
+    is_salary_day = Column(Boolean, nullable=False, default=False, comment="Ture=纳入计薪日(调休补班), False=排除计薪日(请假)")
+    reason = Column(String(200), nullable=True, comment="覆盖原因")
+    created_at = Column(DateTime, server_default=func.now())

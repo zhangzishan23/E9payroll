@@ -72,12 +72,13 @@ class SocialInsuranceUpdate(BaseModel):
 @router.get("/", response_model=List[SocialInsuranceOut])
 def get_social_insurance(
     period: Optional[str] = Query(None),
+    hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"),
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
     if period:
         query = db.query(Employee)
-        employees = filter_active_employees(query, db).order_by(Employee.employee_no).all()
+        employees = filter_active_employees(query, db, hide_status_id=hide_status_id).order_by(Employee.employee_no).all()
         si_map = {}
         records = db.query(SocialInsurance).filter(SocialInsurance.period == period).all()
         for r in records:
@@ -303,11 +304,12 @@ def import_social_insurance(
 @router.get("/export/{period}")
 def export_social_insurance(
     period: str,
+    hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"),
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
     query = db.query(Employee)
-    employees = filter_active_employees(query, db).order_by(Employee.employee_no).all()
+    employees = filter_active_employees(query, db, hide_status_id=hide_status_id).order_by(Employee.employee_no).all()
     si_map = {}
     records = db.query(SocialInsurance).filter(SocialInsurance.period == period).all()
     for r in records:
