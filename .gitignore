@@ -42,3 +42,21 @@ backend/verify_sync.py
 backend/seed.py
 backend/app/api/ai_assistant.py
 frontend/src/views/AIAssistant.vue
+
+# 数据备份目录
+backups/
+
+# 原始考勤数据文件(不提交)
+*钉钉原始考勤数据*.xlsx
+*原始考勤数据*.xlsx
+~$*.xlsx
+
+# 调试/分析脚本
+backend/analyze_*.py
+backend/create_*_templates.py
+backend/verify_*.py
+
+# 编辑器临时文件
+*.swp
+*.swo
+.path.join*

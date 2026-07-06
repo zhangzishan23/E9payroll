@@ -49,6 +49,12 @@ const routes = [
         meta: { title: '社保公积金' }
       },
       {
+        path: 'insurance-template',
+        name: 'InsuranceTemplate',
+        component: () => import('../views/insurance/TemplateConfig.vue'),
+        meta: { title: '导入模板配置' }
+      },
+      {
         path: 'reports',
         name: 'Reports',
         component: () => import('../views/reports/ReportCenter.vue'),

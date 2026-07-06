@@ -81,10 +81,10 @@ def _calc_leave_total(
     prenatal: float, maternity: float, paternity: float,
     marriage: float, funeral: float, engineering: float
 ) -> float:
-    """请假合计（天）"""
+    """扣薪请假合计（天）：全薪病假、年假、调休为带薪假，不计入扣减"""
     return round(
-        late_to_personal + personal_leave + full_pay_sick + reduced_pay_sick +
-        statutory_sick + compensatory + annual + prenatal + maternity +
+        late_to_personal + personal_leave + reduced_pay_sick +
+        statutory_sick + prenatal + maternity +
         paternity + marriage + funeral + engineering, 2
     )
 

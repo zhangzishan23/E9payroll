@@ -14,7 +14,7 @@ from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.core.config import DATABASE_URL
 from app.core.security import get_password_hash
-from app.models.models import SysUser, SysRole, SysUserRole, SysPermission, SysDictBase, SysLog
+from app.models.models import SysUser, SysRole, SysUserRole, SysPermission, SysDictBase, SysLog, Employee
 from app.api.auth import get_current_user, UserInfo
 
 router = APIRouter()
@@ -288,6 +288,74 @@ def batch_delete_dict(ids: List[int], db: Session = Depends(get_db), current_use
     db.commit()
     write_log(db, "data_change", current_user.id, current_user.username, "system", "delete", f"批量删除 {len(items)} 个字典项")
     return {"message": f"成功删除 {len(items)} 个字典项", "deleted_count": len(items)}
+
+
+@router.post("/dict/dedup")
+def dedup_dict(
+    category: Optional[str] = Query(None, description="指定分类去重，为空则处理所有分类"),
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user),
+):
+    """
+    数据字典去重：对指定分类（或全部分类）按名称去重，保留首次出现的记录，删除重复项。
+    并更新外键引用的员工记录，指向保留的记录。
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="仅管理员可操作数据字典")
+
+    q = db.query(SysDictBase)
+    if category:
+        q = q.filter(SysDictBase.category == category)
+    items = q.order_by(SysDictBase.id).all()
+
+    # 按 (category, name) 分组，保留第一条，标记后面的为重复
+    seen = {}
+    to_delete = []
+    kept_ids = set()
+    for item in items:
+        key = (item.category, item.name.strip())
+        if key not in seen:
+            seen[key] = item
+            kept_ids.add(item.id)
+        else:
+            to_delete.append(item)
+
+    if not to_delete:
+        return {"message": "没有发现重复数据", "deleted_count": 0, "affected_categories": []}
+
+    # 更新外键引用：将员工表中指向被删除字典项的 FK 更新为保留的字典项
+    affected_categories = set()
+    for dup in to_delete:
+        kept = seen[(dup.category, dup.name.strip())]
+        if dup.category == "department":
+            db.query(Employee).filter(Employee.department_id == dup.id).update(
+                {"department_id": kept.id}, synchronize_session=False
+            )
+        elif dup.category == "contract_company":
+            db.query(Employee).filter(Employee.contract_company_id == dup.id).update(
+                {"contract_company_id": kept.id}, synchronize_session=False
+            )
+        elif dup.category == "position":
+            db.query(Employee).filter(Employee.position_id == dup.id).update(
+                {"position_id": kept.id}, synchronize_session=False
+            )
+        elif dup.category == "employee_status":
+            db.query(Employee).filter(Employee.status_id == dup.id).update(
+                {"status_id": kept.id}, synchronize_session=False
+            )
+        affected_categories.add(dup.category)
+        db.delete(dup)
+
+    db.commit()
+    write_log(
+        db, "data_change", current_user.id, current_user.username, "system", "dedup",
+        f"数据字典去重：删除 {len(to_delete)} 个重复项，涉及分类：{', '.join(affected_categories)}"
+    )
+    return {
+        "message": f"去重完成，删除了 {len(to_delete)} 条重复记录",
+        "deleted_count": len(to_delete),
+        "affected_categories": list(affected_categories),
+    }
 
 
 @router.post("/dict/import")

@@ -201,15 +201,15 @@ def api_sync_root_depts(
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user),
 ):
-    """从钉钉获取一级部门，同步到数据字典"""
+    """从钉钉获取一级部门，同步到数据字典（自动去重：同名部门更新code）"""
     try:
         stats = sync_root_depts_to_db(db)
         write_log(
             db, "sync", current_user.id, current_user.username,
             "dingtalk", "sync_root_depts",
-            f"同步根部门：新增{stats['created']}，跳过{stats['skipped']}"
+            f"同步根部门：新增{stats['created']}，更新{stats['updated']}，跳过{stats['skipped']}"
         )
-        return {"success": True, "message": f"同步完成：新增 {stats['created']} 个部门，跳过 {stats['skipped']} 个", **stats}
+        return {"success": True, "message": f"同步完成：新增 {stats['created']} 个，更新 {stats['updated']} 个，跳过 {stats['skipped']} 个", **stats}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
 

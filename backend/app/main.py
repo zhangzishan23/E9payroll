@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from app.core.config import CORS_ORIGINS
 from app.core.database import engine, Base
 from app.core.scheduler import start_scheduler, stop_scheduler
+from app.core.migrations import run_migrations
 from app.models import models
 from app.api import auth, employees, attendance, salary, approval, reports, system, performance, social_insurance, dingtalk
 
@@ -11,6 +12,7 @@ from app.api import auth, employees, attendance, salary, approval, reports, syst
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    run_migrations()
     start_scheduler()
     yield
     stop_scheduler()

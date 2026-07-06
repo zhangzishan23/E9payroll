@@ -207,11 +207,11 @@ class AttendanceRecord(Base):
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
 
     # === 考勤基本信息 ===
-    total_work_days = Column(DECIMAL(4, 1), nullable=False, comment="当月总计薪天数(钉钉应出勤天数)")
-    actual_work_days = Column(DECIMAL(4, 1), nullable=False, comment="出勤天数")
+    total_work_days = Column(DECIMAL(4, 2), nullable=False, comment="当月总计薪天数(钉钉应出勤天数)")
+    actual_work_days = Column(DECIMAL(4, 2), nullable=False, comment="出勤天数")
     attendance_rate = Column(DECIMAL(5, 4), nullable=False, comment="出勤率")
-    rest_days = Column(DECIMAL(4, 1), default=0, comment="休息天数")
-    work_hours = Column(DECIMAL(7, 1), default=0, comment="工作时长(分钟)")
+    rest_days = Column(DECIMAL(4, 2), default=0, comment="休息天数")
+    work_hours = Column(DECIMAL(7, 2), default=0, comment="工作时长(分钟)")
 
     # === 计薪相关（加工字段） ===
     salary_start_date = Column(Date, nullable=True, comment="计薪开始日期")
@@ -230,7 +230,7 @@ class AttendanceRecord(Base):
     severe_late_count = Column(Integer, default=0, comment="严重迟到次数")
     severe_late_duration = Column(Integer, default=0, comment="严重迟到时长(分钟)")
     absenteeism_late_count = Column(Integer, default=0, comment="旷工迟到次数")
-    absenteeism_late_days = Column(DECIMAL(4, 1), default=0, comment="旷工迟到天数")
+    absenteeism_late_days = Column(DECIMAL(4, 2), default=0, comment="旷工迟到天数")
     late_over_10min_count = Column(Integer, default=0, comment="迟到10分钟以上次数")
     late_over_30min_count = Column(Integer, default=0, comment="迟到30分钟以上次数")
 
@@ -248,21 +248,21 @@ class AttendanceRecord(Base):
     absenteeism_days = Column(DECIMAL(4, 2), default=0, comment="旷工天数")
 
     # === 出差/外出 ===
-    business_travel_duration = Column(DECIMAL(5, 1), default=0, comment="出差时长(小时)")
-    out_duration = Column(DECIMAL(5, 1), default=0, comment="外出时长(小时)")
+    business_travel_duration = Column(DECIMAL(5, 2), default=0, comment="出差时长(小时)")
+    out_duration = Column(DECIMAL(5, 2), default=0, comment="外出时长(小时)")
 
     # === 加班相关 ===
-    overtime_approval_count = Column(DECIMAL(4, 1), default=0, comment="加班-审批单统计")
-    workday_overtime = Column(DECIMAL(5, 1), default=0, comment="工作日加班(小时)")
-    weekend_overtime = Column(DECIMAL(5, 1), default=0, comment="休息日加班(小时)")
-    holiday_overtime = Column(DECIMAL(5, 1), default=0, comment="节假日加班(小时)")
-    total_overtime = Column(DECIMAL(5, 1), default=0, comment="加班总时长(小时)")
-    workday_overtime_pay = Column(DECIMAL(5, 1), default=0, comment="工作日(转加班费)")
-    weekend_overtime_pay = Column(DECIMAL(5, 1), default=0, comment="休息日(转加班费)")
-    holiday_overtime_pay = Column(DECIMAL(5, 1), default=0, comment="节假日(转加班费)")
-    workday_overtime_leave = Column(DECIMAL(5, 1), default=0, comment="工作日(转调休)")
-    weekend_overtime_leave = Column(DECIMAL(5, 1), default=0, comment="休息日(转调休)")
-    holiday_overtime_leave = Column(DECIMAL(5, 1), default=0, comment="节假日(转调休)")
+    overtime_approval_count = Column(DECIMAL(4, 2), default=0, comment="加班-审批单统计")
+    workday_overtime = Column(DECIMAL(5, 2), default=0, comment="工作日加班(小时)")
+    weekend_overtime = Column(DECIMAL(5, 2), default=0, comment="休息日加班(小时)")
+    holiday_overtime = Column(DECIMAL(5, 2), default=0, comment="节假日加班(小时)")
+    total_overtime = Column(DECIMAL(5, 2), default=0, comment="加班总时长(小时)")
+    workday_overtime_pay = Column(DECIMAL(5, 2), default=0, comment="工作日(转加班费)")
+    weekend_overtime_pay = Column(DECIMAL(5, 2), default=0, comment="休息日(转加班费)")
+    holiday_overtime_pay = Column(DECIMAL(5, 2), default=0, comment="节假日(转加班费)")
+    workday_overtime_leave = Column(DECIMAL(5, 2), default=0, comment="工作日(转调休)")
+    weekend_overtime_leave = Column(DECIMAL(5, 2), default=0, comment="休息日(转调休)")
+    holiday_overtime_leave = Column(DECIMAL(5, 2), default=0, comment="节假日(转调休)")
 
     # === 晚下班统计 ===
     clock_out_after_7pm_count = Column(Integer, default=0, comment="下班晚于7点次数")
@@ -319,20 +319,101 @@ class SocialInsurance(Base):
     __tablename__ = "social_insurance"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    period = Column(String(7), nullable=False)
+    period = Column(String(7), nullable=False, comment="核算月份 YYYYMM")
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
-    si_base = Column(DECIMAL(10, 2), nullable=False)
-    pension_personal = Column(DECIMAL(10, 2), default=0)
-    unemployment_personal = Column(DECIMAL(10, 2), default=0)
-    medical_personal = Column(DECIMAL(10, 2), default=0)
-    si_personal = Column(DECIMAL(10, 2), nullable=False)
-    pension_company = Column(DECIMAL(10, 2), default=0)
-    unemployment_company = Column(DECIMAL(10, 2), default=0)
-    medical_company = Column(DECIMAL(10, 2), default=0)
-    si_company = Column(DECIMAL(10, 2), nullable=False)
-    hf_base = Column(DECIMAL(10, 2), nullable=False)
-    hf_personal = Column(DECIMAL(10, 2), nullable=False)
-    hf_company = Column(DECIMAL(10, 2), nullable=False)
+    employee_social_insurance_no = Column(String(50), nullable=True, comment="个人社保号")
+    # 社保基数
+    si_base = Column(DECIMAL(10, 2), nullable=False, comment="社保缴存基数")
+    # 各险种单独基数（综合表文件使用）
+    pension_personal_base = Column(DECIMAL(10, 2), default=0, comment="养老保险个人基数")
+    pension_company_base = Column(DECIMAL(10, 2), default=0, comment="养老保险单位基数")
+    unemployment_personal_base = Column(DECIMAL(10, 2), default=0, comment="失业保险个人基数")
+    unemployment_company_base = Column(DECIMAL(10, 2), default=0, comment="失业保险单位基数")
+    medical_personal_base = Column(DECIMAL(10, 2), default=0, comment="医疗保险个人基数")
+    medical_company_base = Column(DECIMAL(10, 2), default=0, comment="医疗保险单位基数")
+    injury_company_base = Column(DECIMAL(10, 2), default=0, comment="工伤保险单位基数")
+    # 社保-个人缴纳金额
+    pension_personal = Column(DECIMAL(10, 2), default=0, comment="养老保险个人金额")
+    unemployment_personal = Column(DECIMAL(10, 2), default=0, comment="失业保险个人金额")
+    medical_personal = Column(DECIMAL(10, 2), default=0, comment="医疗保险个人金额")
+    si_personal = Column(DECIMAL(10, 2), nullable=False, comment="社保个人合计")
+    # 社保-单位缴纳金额
+    pension_company = Column(DECIMAL(10, 2), default=0, comment="养老保险单位金额")
+    unemployment_company = Column(DECIMAL(10, 2), default=0, comment="失业保险单位金额")
+    medical_company = Column(DECIMAL(10, 2), default=0, comment="医疗保险单位金额")
+    injury_company = Column(DECIMAL(10, 2), default=0, comment="工伤保险单位金额")
+    si_company = Column(DECIMAL(10, 2), nullable=False, comment="社保单位合计")
+    # 社保-各险种缴纳比例
+    pension_personal_rate = Column(DECIMAL(6, 4), default=0, comment="养老保险个人比例")
+    pension_company_rate = Column(DECIMAL(6, 4), default=0, comment="养老保险单位比例")
+    unemployment_personal_rate = Column(DECIMAL(6, 4), default=0, comment="失业保险个人比例")
+    unemployment_company_rate = Column(DECIMAL(6, 4), default=0, comment="失业保险单位比例")
+    medical_personal_rate = Column(DECIMAL(6, 4), default=0, comment="医疗保险个人比例")
+    medical_company_rate = Column(DECIMAL(6, 4), default=0, comment="医疗保险单位比例")
+    injury_company_rate = Column(DECIMAL(6, 4), default=0, comment="工伤保险单位比例")
+    # 社保-各险种合计（个人+单位）
+    pension_total = Column(DECIMAL(10, 2), default=0, comment="养老保险合计")
+    unemployment_total = Column(DECIMAL(10, 2), default=0, comment="失业保险合计")
+    medical_total = Column(DECIMAL(10, 2), default=0, comment="医疗保险合计")
+    injury_total = Column(DECIMAL(10, 2), default=0, comment="工伤保险合计")
+    si_grand_total = Column(DECIMAL(10, 2), default=0, comment="社保总合计(个人+单位)")
+    # 公积金
+    hf_base = Column(DECIMAL(10, 2), nullable=False, comment="公积金缴存基数")
+    hf_personal = Column(DECIMAL(10, 2), nullable=False, comment="公积金个人金额")
+    hf_company = Column(DECIMAL(10, 2), nullable=False, comment="公积金单位金额")
+    hf_personal_rate = Column(DECIMAL(6, 4), default=0, comment="公积金个人比例")
+    hf_company_rate = Column(DECIMAL(6, 4), default=0, comment="公积金单位比例")
+    hf_total = Column(DECIMAL(10, 2), default=0, comment="公积金合计")
+    # 总合计
+    grand_total = Column(DECIMAL(10, 2), default=0, comment="社保公积金总合计")
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class SiImportTemplate(Base):
+    """社保公积金导入模板配置——适配不同政务平台导出的文件格式"""
+    __tablename__ = "si_import_templates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, comment="模板名称，如「广州公积金」")
+    source_category = Column(String(20), nullable=False, comment="数据来源类别: social_insurance / housing_fund")
+    file_type = Column(String(10), nullable=False, comment="文件类型: excel / pdf")
+    city = Column(String(50), nullable=True, comment="适用城市")
+    description = Column(String(500), nullable=True, comment="模板说明")
+    # 文件识别
+    file_pattern = Column(String(200), nullable=True, comment="文件名匹配正则，用于自动识别模板")
+    sheet_pattern = Column(String(200), nullable=True, comment="工作表名匹配正则")
+    # 解析配置
+    header_rows = Column(JSON, nullable=False, comment="表头行号列表(0-based)，如[6,7]表示第7-8行为表头")
+    data_start_row = Column(Integer, nullable=False, comment="数据起始行号(0-based)")
+    skip_footer_rows = Column(Integer, default=0, comment="跳过末尾行数")
+    # 字段映射: {"文件中的列名": "数据库字段名"}
+    column_mappings = Column(JSON, nullable=False, comment="列名到数据库字段的映射")
+    # 行过滤规则: {"列名": "要保留的值"}，如{"缴存状态":"正常"}
+    row_filters = Column(JSON, nullable=True, comment="行过滤条件，只保留满足条件的行")
+    # 数值解析规则: {"remove_chars":[","], "decimal_separator":"."}
+    number_format = Column(JSON, nullable=True, comment="数值解析规则")
+    # 管理字段
+    is_active = Column(Boolean, default=True, comment="是否启用")
+    sort_order = Column(Integer, default=0, comment="排序序号")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class SiImportLog(Base):
+    """社保公积金导入异常日志"""
+    __tablename__ = "si_import_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    period = Column(String(7), nullable=False, comment="核算月份")
+    batch_id = Column(String(36), nullable=False, comment="导入批次UUID，同一次导入共用")
+    file_name = Column(String(500), nullable=True, comment="来源文件名")
+    row_number = Column(Integer, nullable=True, comment="文件中的行号(1-based)")
+    employee_name = Column(String(50), nullable=True, comment="涉及的员工姓名")
+    error_level = Column(String(20), nullable=False, comment="级别: error(阻断) / warning(预警)")
+    error_type = Column(String(50), nullable=False, comment="异常类型: file_error/name_not_found/duplicate_name/empty_name/missing_period/missing_base/amount_mismatch/duplicate_record/unknown_format")
+    error_message = Column(String(500), nullable=False, comment="异常描述（中文）")
+    raw_data = Column(JSON, nullable=True, comment="原始行数据，便于排查")
+    resolved = Column(Boolean, default=False, comment="是否已处理")
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -402,8 +483,8 @@ class SalaryCalculation(Base):
     pretax_adjustment = Column(DECIMAL(10, 2), default=0)
     posttax_adjustment = Column(DECIMAL(10, 2), default=0)
     posttax_adjustment_reason = Column(String(200), nullable=True)
-    total_work_days = Column(DECIMAL(4, 1), nullable=False)
-    actual_work_days = Column(DECIMAL(4, 1), nullable=False)
+    total_work_days = Column(DECIMAL(4, 2), nullable=False)
+    actual_work_days = Column(DECIMAL(4, 2), nullable=False)
     attendance_rate = Column(DECIMAL(5, 4), nullable=False)
     gross_salary = Column(DECIMAL(10, 2), nullable=False)
     pension_personal = Column(DECIMAL(10, 2), default=0)

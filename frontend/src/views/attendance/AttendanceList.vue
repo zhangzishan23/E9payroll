@@ -45,16 +45,16 @@
       <el-table-column prop="total_work_days" label="当月总计薪天数" width="115">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.id]">
-            <el-input-number v-model="editCache[row.id].total_work_days" :min="0" :max="31" :precision="1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <el-input-number v-model="editCache[row.id].total_work_days" :min="0" :max="31" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.total_work_days != null ? row.total_work_days : '' }}</template>
+          <template v-else>{{ formatNum(row.total_work_days) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="adjusted_salary_days" label="应计薪天数" width="95">
-        <template #default="{ row }">{{ row.adjusted_salary_days != null ? row.adjusted_salary_days : '' }}</template>
+        <template #default="{ row }">{{ formatNum(row.adjusted_salary_days) }}</template>
       </el-table-column>
       <el-table-column prop="actual_salary_days" label="计薪天数" width="85">
-        <template #default="{ row }">{{ row.actual_salary_days != null ? row.actual_salary_days : '' }}</template>
+        <template #default="{ row }">{{ formatNum(row.actual_salary_days) }}</template>
       </el-table-column>
       <el-table-column prop="attendance_rate" label="出勤率" width="80">
         <template #default="{ row }">{{ row.attendance_rate != null ? (row.attendance_rate * 100).toFixed(1) + '%' : '' }}</template>
@@ -64,7 +64,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].half_day_missed_punch" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.half_day_missed_punch != null ? row.half_day_missed_punch : '' }}</template>
+          <template v-else>{{ formatInt(row.half_day_missed_punch, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="absenteeism_days" label="全天缺卡（天数）" width="115">
@@ -72,7 +72,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].absenteeism_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.absenteeism_days != null ? row.absenteeism_days : '' }}</template>
+          <template v-else>{{ formatNum(row.absenteeism_days, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="late_count" label="迟到次数" width="80">
@@ -80,7 +80,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].late_count" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.late_count != null ? row.late_count : '' }}</template>
+          <template v-else>{{ formatInt(row.late_count, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="late_duration" label="迟到时长（分钟）" width="115">
@@ -88,7 +88,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].late_duration" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.late_duration != null ? row.late_duration : '' }}</template>
+          <template v-else>{{ formatInt(row.late_duration, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="severe_late_count" label="严重迟到次数" width="100">
@@ -96,7 +96,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].severe_late_count" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.severe_late_count != null ? row.severe_late_count : '' }}</template>
+          <template v-else>{{ formatInt(row.severe_late_count, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="severe_late_duration" label="严重迟到时长（分钟）" width="130">
@@ -104,7 +104,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].severe_late_duration" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.severe_late_duration != null ? row.severe_late_duration : '' }}</template>
+          <template v-else>{{ formatInt(row.severe_late_duration, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="early_count" label="早退次数" width="80">
@@ -112,7 +112,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].early_count" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.early_count != null ? row.early_count : '' }}</template>
+          <template v-else>{{ formatInt(row.early_count, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="early_duration" label="早退时长（分钟）" width="115">
@@ -120,26 +120,26 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].early_duration" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.early_duration != null ? row.early_duration : '' }}</template>
+          <template v-else>{{ formatInt(row.early_duration, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="total_overtime" label="加班（小时）" width="90">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.id]">
-            <el-input-number v-model="editCache[row.id].total_overtime" :min="0" :precision="1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <el-input-number v-model="editCache[row.id].total_overtime" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.total_overtime != null ? row.total_overtime : '' }}</template>
+          <template v-else>{{ formatNum(row.total_overtime, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="late_to_personal_leave_days" label="迟到转事假" width="95">
-        <template #default="{ row }">{{ row.late_to_personal_leave_days != null ? row.late_to_personal_leave_days : '' }}</template>
+        <template #default="{ row }">{{ formatNum(row.late_to_personal_leave_days, true) }}</template>
       </el-table-column>
       <el-table-column prop="personal_leave_days" label="事假" width="70">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].personal_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.personal_leave_days != null ? row.personal_leave_days : '' }}</template>
+          <template v-else>{{ formatNum(row.personal_leave_days, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="full_pay_sick_days" label="全薪病假" width="80">
@@ -147,7 +147,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].full_pay_sick_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.full_pay_sick_days != null ? row.full_pay_sick_days : '' }}</template>
+          <template v-else>{{ formatNum(row.full_pay_sick_days, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="reduced_pay_sick_days" label="减薪病假" width="80">
@@ -155,7 +155,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].reduced_pay_sick_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.reduced_pay_sick_days != null ? row.reduced_pay_sick_days : '' }}</template>
+          <template v-else>{{ formatNum(row.reduced_pay_sick_days, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="statutory_sick_days" label="法定病假" width="80">
@@ -163,7 +163,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].statutory_sick_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.statutory_sick_days != null ? row.statutory_sick_days : '' }}</template>
+          <template v-else>{{ formatNum(row.statutory_sick_days, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="compensatory_leave_days" label="调休" width="70">
@@ -171,7 +171,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].compensatory_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.compensatory_leave_days != null ? row.compensatory_leave_days : '' }}</template>
+          <template v-else>{{ formatNum(row.compensatory_leave_days, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="annual_leave_days" label="年假" width="70">
@@ -179,7 +179,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].annual_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.annual_leave_days != null ? row.annual_leave_days : '' }}</template>
+          <template v-else>{{ formatNum(row.annual_leave_days, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="prenatal_checkup_days" label="产检假" width="70">
@@ -187,7 +187,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].prenatal_checkup_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.prenatal_checkup_days != null ? row.prenatal_checkup_days : '' }}</template>
+          <template v-else>{{ formatNum(row.prenatal_checkup_days, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="maternity_leave_days" label="产假" width="70">
@@ -195,7 +195,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].maternity_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.maternity_leave_days != null ? row.maternity_leave_days : '' }}</template>
+          <template v-else>{{ formatNum(row.maternity_leave_days, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="paternity_leave_days" label="陪产假" width="70">
@@ -203,7 +203,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].paternity_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.paternity_leave_days != null ? row.paternity_leave_days : '' }}</template>
+          <template v-else>{{ formatNum(row.paternity_leave_days, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="marriage_leave_days" label="婚假" width="70">
@@ -211,7 +211,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].marriage_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.marriage_leave_days != null ? row.marriage_leave_days : '' }}</template>
+          <template v-else>{{ formatNum(row.marriage_leave_days, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="funeral_leave_days" label="丧假" width="70">
@@ -219,7 +219,7 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].funeral_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.funeral_leave_days != null ? row.funeral_leave_days : '' }}</template>
+          <template v-else>{{ formatNum(row.funeral_leave_days, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="engineering_compensatory_days" label="调休-工程交付（天）" width="140">
@@ -227,11 +227,11 @@
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].engineering_compensatory_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.engineering_compensatory_days != null ? row.engineering_compensatory_days : '' }}</template>
+          <template v-else>{{ formatNum(row.engineering_compensatory_days, true) }}</template>
         </template>
       </el-table-column>
       <el-table-column prop="leave_total_days" label="合计" width="70">
-        <template #default="{ row }">{{ row.leave_total_days != null ? row.leave_total_days : '' }}</template>
+        <template #default="{ row }">{{ formatNum(row.leave_total_days, true) }}</template>
       </el-table-column>
       <el-table-column prop="remark" label="备注" min-width="130" show-overflow-tooltip>
         <template #default="{ row }">
@@ -269,7 +269,7 @@
         <el-row :gutter="16">
           <el-col :span="12">
             <el-form-item label="当月总计薪天数" required>
-              <el-input-number v-model="form.total_work_days" :min="0" :precision="1" class="w-full" />
+              <el-input-number v-model="form.total_work_days" :min="0" :precision="2" class="w-full" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -308,7 +308,7 @@
           </el-col>
           <el-col :span="8">
             <el-form-item label="加班(小时)">
-              <el-input-number v-model="form.total_overtime" :min="0" :precision="1" class="w-full" />
+              <el-input-number v-model="form.total_overtime" :min="0" :precision="2" class="w-full" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -655,6 +655,22 @@ function formatDate(dateStr) {
   if (!dateStr) return ''
   if (dateStr.length === 10 && dateStr.includes('-')) return dateStr
   return dateStr
+}
+
+function formatNum(val, hideZero = false) {
+  if (val == null || val === '') return ''
+  const n = Number(val)
+  if (isNaN(n)) return ''
+  if (hideZero && n === 0) return ''
+  return n.toFixed(2)
+}
+
+function formatInt(val, hideZero = false) {
+  if (val == null || val === '') return ''
+  const n = Number(val)
+  if (isNaN(n)) return ''
+  if (hideZero && n === 0) return ''
+  return String(n)
 }
 
 function onPeriodChange() { fetchData() }

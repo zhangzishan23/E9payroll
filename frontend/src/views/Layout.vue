@@ -33,6 +33,10 @@
         <el-icon><CreditCard /></el-icon>
         <span>社保公积金</span>
       </el-menu-item>
+      <el-menu-item index="/insurance-template">
+        <el-icon><Setting /></el-icon>
+        <span>导入模板</span>
+      </el-menu-item>
       <el-menu-item index="/approval">
         <el-icon><Checked /></el-icon>
         <span>审批流程</span>

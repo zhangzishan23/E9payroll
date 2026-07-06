@@ -371,29 +371,56 @@ def get_root_departments() -> list[dict]:
 def sync_root_depts_to_db(db_session) -> dict:
     """
     从钉钉获取所有部门（含子部门），同步到 sys_dict_base（category=department）。
-    用钉钉 deptId 作为 code，新增不存在的部门，已有部门不修改名称和启用状态。
+    用钉钉 deptId 作为 code，新增不存在的部门。
+    如果名称相同但 code 不同的已有部门，则更新其 code 和 parent_id 避免重复。
     同时更新 parent_id 以支持层级展示。
-    返回: {"created": 0, "skipped": 0}
+    返回: {"created": 0, "updated": 0, "skipped": 0}
     """
     from app.models.models import SysDictBase
 
     dept_map = get_dept_tree()
-    existing = {d.code: d for d in db_session.query(SysDictBase).filter(SysDictBase.category == "department").all()}
+    all_db_depts = db_session.query(SysDictBase).filter(SysDictBase.category == "department").all()
+
+    # 建立索引：code -> record, name.strip() -> record
+    existing_by_code = {d.code: d for d in all_db_depts}
+    existing_by_name = {}
+    for d in all_db_depts:
+        key = d.name.strip()
+        if key not in existing_by_name:
+            existing_by_name[key] = d
 
     created = 0
+    updated = 0
     skipped = 0
-    # 第一步：创建不存在的部门
+
+    # 第一步：创建或更新部门
     for did, info in dept_map.items():
         if did == 1:  # 跳过钉钉根节点
             continue
         code = str(did)
-        if code in existing:
-            skipped += 1
+        dept_name = info["name"].strip()
+
+        if code in existing_by_code:
+            # 已存在相同 code 的部门，检查是否需要更新名称
+            existing = existing_by_code[code]
+            if existing.name != dept_name:
+                existing.name = dept_name
+                updated += 1
+            else:
+                skipped += 1
+        elif dept_name in existing_by_name:
+            # code 不同但名称已存在 → 更新 code 避免重复
+            existing = existing_by_name[dept_name]
+            existing.code = code
+            updated += 1
+            # 更新索引
+            existing_by_code[code] = existing
         else:
+            # 全新部门
             db_session.add(SysDictBase(
                 category="department",
                 code=code,
-                name=info["name"],
+                name=dept_name,
                 sort_order=0,
                 is_enabled=True,
             ))
@@ -422,7 +449,7 @@ def sync_root_depts_to_db(db_session) -> dict:
                 d.parent_id = parent_db_id
 
     db_session.commit()
-    return {"created": created, "skipped": skipped, "total": len(dept_map) - 1}
+    return {"created": created, "updated": updated, "skipped": skipped, "total": len(dept_map) - 1}
 
 
 def get_target_dept_ids(db_session=None) -> list[int]:
@@ -722,18 +749,34 @@ ATTENDANCE_COLUMN_MAP = {
 
     # === 请假类型（来自钉钉独立列，如有） ===
     "事假": "personal_leave_days",
+    "事假(小时)": "personal_leave_days",
     "全薪病假": "full_pay_sick_days",
+    "全薪病假(小时)": "full_pay_sick_days",
     "法定病假": "statutory_sick_days",
+    "法定病假(天)": "statutory_sick_days",
     "减薪病假": "reduced_pay_sick_days",
+    "减薪病假(小时)": "reduced_pay_sick_days",
     "年假": "annual_leave_days",
+    "年假(天)": "annual_leave_days",
     "调休": "compensatory_leave_days",
+    "调休(小时)": "compensatory_leave_days",
     "调休假天数": "compensatory_leave_days",
+    "调休（综合工时）": "compensatory_leave_days",
+    "调休-工程交付": "engineering_compensatory_days",
     "调休-工程交付（天）": "engineering_compensatory_days",
+    "调休（工程交付）(天)": "engineering_compensatory_days",
     "产检假": "prenatal_checkup_days",
+    "产检假(天)": "prenatal_checkup_days",
     "产假": "maternity_leave_days",
+    "产假(天)": "maternity_leave_days",
     "陪产假": "paternity_leave_days",
+    "陪产假(天)": "paternity_leave_days",
     "婚假": "marriage_leave_days",
+    "婚假(天)": "marriage_leave_days",
     "丧假": "funeral_leave_days",
+    "丧假(天)": "funeral_leave_days",
+    # 带空格或全角括号的列名
+    "旷工 （天数）": "absenteeism_days",
 }
 
 
@@ -759,7 +802,7 @@ def parse_leave_from_result(attendance_result_text: str) -> list[dict]:
     """
     从钉钉'考勤结果'列文本解析请假信息。
     格式示例: "事假06-03 09:00到06-03 12:00 3小时"
-    返回: [{"type": "事假", "field": "personal_leave_days", "hours": 3.0}, ...]
+    返回: [{"type": "事假", "field": "personal_leave_days", "hours": 3.0, "start": "06-03", "end": "06-03"}, ...]
     """
     if not attendance_result_text or attendance_result_text in ("正常", "休息", ""):
         return []
@@ -771,6 +814,8 @@ def parse_leave_from_result(attendance_result_text: str) -> list[dict]:
 
     for match in re.finditer(pattern, attendance_result_text):
         leave_name = match.group(1)
+        start_date = match.group(2)
+        end_date = match.group(4)
         hours = float(match.group(6))
 
         # 匹配最长的关键词（如"调休-工程交付"优先于"调休"）
@@ -785,6 +830,8 @@ def parse_leave_from_result(attendance_result_text: str) -> list[dict]:
                 "type": leave_name,
                 "field": field,
                 "hours": hours,
+                "start": start_date,
+                "end": end_date,
             })
 
     return results
@@ -1359,22 +1406,22 @@ def sync_attendance_to_db(db_session, period: str) -> dict:
             actual = max(actual, 0)  # 防止出现负数
             rate = round(actual / total, 4) if total > 0 else 0
 
-            # 请假天数合并：独立列 + 文本解析
-            personal_leave = round(num.get("personal_leave_days", 0) + leave.get("personal_leave_days", 0), 1)
-            full_pay_sick = round(num.get("full_pay_sick_days", 0) + leave.get("full_pay_sick_days", 0), 1)
-            reduced_pay_sick = round(num.get("reduced_pay_sick_days", 0) + leave.get("reduced_pay_sick_days", 0), 1)
-            statutory_sick = round(num.get("statutory_sick_days", 0) + leave.get("statutory_sick_days", 0), 1)
-            sick_total = round(full_pay_sick + reduced_pay_sick + statutory_sick + leave.get("sick_leave_days", 0), 1)
-            annual_leave = round(num.get("annual_leave_days", 0) + leave.get("annual_leave_days", 0), 1)
-            compensatory = round(num.get("compensatory_leave_days", 0) + leave.get("compensatory_leave_days", 0), 1)
-            prenatal = round(num.get("prenatal_checkup_days", 0) + leave.get("prenatal_checkup_days", 0), 1)
-            maternity = round(num.get("maternity_leave_days", 0) + leave.get("maternity_leave_days", 0), 1)
-            paternity = round(num.get("paternity_leave_days", 0) + leave.get("paternity_leave_days", 0), 1)
-            marriage = round(num.get("marriage_leave_days", 0) + leave.get("marriage_leave_days", 0), 1)
-            funeral = round(num.get("funeral_leave_days", 0) + leave.get("funeral_leave_days", 0), 1)
-            engineering = round(num.get("engineering_compensatory_days", 0) + leave.get("engineering_compensatory_days", 0), 1)
+            # 请假天数合并：数值列优先，文本解析兜底（两者为同源数据，不可叠加）
+            personal_leave = round(num.get("personal_leave_days", 0) or leave.get("personal_leave_days", 0), 2)
+            full_pay_sick = round(num.get("full_pay_sick_days", 0) or leave.get("full_pay_sick_days", 0), 2)
+            reduced_pay_sick = round(num.get("reduced_pay_sick_days", 0) or leave.get("reduced_pay_sick_days", 0), 2)
+            statutory_sick = round(num.get("statutory_sick_days", 0) or leave.get("statutory_sick_days", 0), 2)
+            sick_total = round(full_pay_sick + reduced_pay_sick + statutory_sick + leave.get("sick_leave_days", 0), 2)
+            annual_leave = round(num.get("annual_leave_days", 0) or leave.get("annual_leave_days", 0), 2)
+            compensatory = round(num.get("compensatory_leave_days", 0) or leave.get("compensatory_leave_days", 0), 2)
+            prenatal = round(num.get("prenatal_checkup_days", 0) or leave.get("prenatal_checkup_days", 0), 2)
+            maternity = round(num.get("maternity_leave_days", 0) or leave.get("maternity_leave_days", 0), 2)
+            paternity = round(num.get("paternity_leave_days", 0) or leave.get("paternity_leave_days", 0), 2)
+            marriage = round(num.get("marriage_leave_days", 0) or leave.get("marriage_leave_days", 0), 2)
+            funeral = round(num.get("funeral_leave_days", 0) or leave.get("funeral_leave_days", 0), 2)
+            engineering = round(num.get("engineering_compensatory_days", 0) or leave.get("engineering_compensatory_days", 0), 2)
             other_leave = round(personal_leave + sick_total + annual_leave + compensatory +
-                               prenatal + maternity + paternity + marriage + funeral + engineering, 1)
+                               prenatal + maternity + paternity + marriage + funeral + engineering, 2)
 
             # 缺卡总数 = 上班 + 下班
             missed_total = int(num.get("missed_clock_in_count", 0)) + int(num.get("missed_clock_out_count", 0))
@@ -1389,20 +1436,20 @@ def sync_attendance_to_db(db_session, period: str) -> dict:
             late_duration_val = int(num.get("late_duration", 0))
             late_to_leave = 0.0
             if late_count_val > 3 and late_duration_val > 0:
-                late_to_leave = round(late_duration_val / 60 / 7, 1)
+                late_to_leave = round(late_duration_val / 60 / 7, 2)
 
-            # 请假合计
+            # 扣薪请假合计（全薪病假、年假、调休为带薪假，不计入扣减）
             leave_total = round(
-                late_to_leave + personal_leave + full_pay_sick + reduced_pay_sick +
-                statutory_sick + compensatory + annual_leave + prenatal +
-                maternity + paternity + marriage + funeral + engineering, 1
+                late_to_leave + personal_leave + reduced_pay_sick +
+                statutory_sick + prenatal +
+                maternity + paternity + marriage + funeral + engineering, 2
             )
 
             # 应计薪天数 = 总计薪天数（默认，后续用户可通过日历调整）
             adjusted = float(total)
 
             # 计薪天数 = 应计薪 - 请假合计
-            actual_salary = max(round(adjusted - leave_total, 1), 0)
+            actual_salary = max(round(adjusted - leave_total, 2), 0)
 
             # 出勤率 = 计薪天数 / 应计薪天数
             att_rate = round(actual_salary / adjusted, 4) if adjusted > 0 else 0
@@ -1511,13 +1558,15 @@ def sync_attendance_to_db(db_session, period: str) -> dict:
 def _aggregate_attendance(vals: list[dict], col_name_to_id: dict) -> dict:
     """
     将每天的考勤列值汇总为月度值。
-    数值列：累加求和
-    文本列（考勤结果）：收集后解析请假类型
+    数值列：累加求和（月度汇总列API只返回一次，直接使用即可）
+    文本列（考勤结果）：收集后解析请假类型（跨天假期自动去重）
     班次列：记录第一个非空值
     返回: {"numerical": {field: value}, "text_fields": {field: text}, "leave_days": {field: days}}
     """
     id_to_name = {v: k for k, v in col_name_to_id.items()}
     numerical = {}
+    # 记录每个字段对应的原始列名，用于判断单位（小时/天）
+    field_source_col = {}
     text_fields = {}
     leave_texts = []
 
@@ -1530,7 +1579,7 @@ def _aggregate_attendance(vals: list[dict], col_name_to_id: dict) -> dict:
 
         # 文本列特殊处理
         if col_name in text_col_names:
-            if col_name == "考勤结果" and raw_value not in ("", "正常", "休息"):
+            if col_name == "考勤结果" and raw_value not in ("", "正常", "休息", "旷工"):
                 leave_texts.append(raw_value)
             elif col_name in ("班次", "出勤班次"):
                 if raw_value and col_name not in text_fields:
@@ -1545,21 +1594,38 @@ def _aggregate_attendance(vals: list[dict], col_name_to_id: dict) -> dict:
             val = float(item.get("value", 0))
         except (ValueError, TypeError):
             val = 0
-        numerical[field] = numerical.get(field, 0) + val
+        if val != 0:
+            numerical[field] = numerical.get(field, 0) + val
+            # 记录第一个非零值的来源列名（用于判断单位）
+            if field not in field_source_col:
+                field_source_col[field] = col_name
 
-    # 小时单位字段转换为天（每天7小时）
-    hour_based_fields = {"personal_leave_days", "full_pay_sick_days", "reduced_pay_sick_days", "compensatory_leave_days"}
-    for fld in hour_based_fields:
-        if fld in numerical:
-            numerical[fld] = round(numerical[fld] / 7.0, 1)
+    # 单位转换：带"(小时)"后缀的列是小时单位，除以7转为天；其他默认是天单位
+    for fld in list(numerical.keys()):
+        source_col = field_source_col.get(fld, "")
+        # 小时单位：事假(小时)、全薪病假(小时)、减薪病假(小时)、调休(小时) 等
+        if "(小时)" in source_col or "时长" in source_col:
+            # 注意：加班时长（workday_overtime等）是小时单位但不需要转天，保持原值
+            # 只有请假类型的小时列需要转天
+            leave_fields = {"personal_leave_days", "full_pay_sick_days", "reduced_pay_sick_days", 
+                           "compensatory_leave_days", "sick_leave_days"}
+            if fld in leave_fields:
+                numerical[fld] = round(numerical[fld] / 7.0, 2)
 
-    # 解析请假文本 → 请假天数
+    # 解析请假文本 → 请假天数（跨天假期自动去重）
     leave_days = {}
+    # 用于去重：(field, start_date, end_date, hours) 作为唯一键
+    seen_leaves = set()
     for text in leave_texts:
         parsed = parse_leave_from_result(text)
         for p in parsed:
+            # 去重：同一段跨天假期在多天的考勤结果中重复出现，只算一次
+            leave_key = (p["field"], p["start"], p["end"], p["hours"])
+            if leave_key in seen_leaves:
+                continue
+            seen_leaves.add(leave_key)
             days = p["hours"] / 7.0  # 7小时/天
-            leave_days[p["field"]] = round(leave_days.get(p["field"], 0) + days, 1)
+            leave_days[p["field"]] = round(leave_days.get(p["field"], 0) + days, 2)
 
     return {
         "numerical": numerical,
@@ -1679,41 +1745,59 @@ def _parse_gender(gender_raw: str) -> str:
 
 
 def _get_or_create_contract_company(db_session, company_name: str, company_map: dict) -> int:
-    """获取合同公司ID，如果不存在则自动创建。"""
+    """获取合同公司ID，如果不存在则自动创建。
+    优先从 company_map 缓存中查找，未命中则查询数据库（按名称去重）。"""
     if not company_name:
         return 1
-    if company_name in company_map:
-        return company_map[company_name]
+    key = company_name.strip()
+    if key in company_map:
+        return company_map[key]
+    # 检查数据库是否有同名记录（避免不同 code 造成重复）
+    existing = db_session.query(SysDictBase).filter(
+        SysDictBase.category == "contract_company",
+        SysDictBase.name == key,
+    ).first()
+    if existing:
+        company_map[key] = existing.id
+        return existing.id
     # 自动创建合同公司
-    new_id = max(company_map.values(), default=0) + 1
     new_company = SysDictBase(
         category="contract_company",
-        code=f"dingtalk_{company_name}",
-        name=company_name,
+        code=f"dingtalk_{key}",
+        name=key,
     )
     db_session.add(new_company)
     db_session.flush()
-    company_map[company_name] = new_company.id
+    company_map[key] = new_company.id
     return new_company.id
 
 
 def _get_or_create_dict_item(db_session, name: str, category: str, name_map: dict) -> int:
-    """获取字典项ID，如果不存在则自动创建。name为空时创建"未设置"条目。"""
+    """获取字典项ID，如果不存在则自动创建。name为空时创建"未设置"条目。
+    优先从 name_map 缓存中查找，未命中则查询数据库（按名称去重）。"""
     if not name:
         name = "未设置"
-    if name in name_map:
-        return name_map[name]
+    key = name.strip()
+    if key in name_map:
+        return name_map[key]
+    # 检查数据库是否有同名记录（避免不同 code 造成重复）
+    existing = db_session.query(SysDictBase).filter(
+        SysDictBase.category == category,
+        SysDictBase.name == key,
+    ).first()
+    if existing:
+        name_map[key] = existing.id
+        return existing.id
     # 自动创建字典项
-    new_id = max(name_map.values(), default=0) + 1
     new_item = SysDictBase(
         category=category,
-        code=f"dingtalk_{name}",
-        name=name,
+        code=f"dingtalk_{key}",
+        name=key,
     )
     db_session.add(new_item)
     db_session.flush()
-    name_map[name] = new_item.id
-    logger.info("自动创建字典项: category=%s name=%s id=%s", category, name, new_item.id)
+    name_map[key] = new_item.id
+    logger.info("自动创建字典项: category=%s name=%s id=%s", category, key, new_item.id)
     return new_item.id
 
 
