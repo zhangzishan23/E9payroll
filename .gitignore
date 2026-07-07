@@ -55,6 +55,11 @@ backups/
 backend/analyze_*.py
 backend/create_*_templates.py
 backend/verify_*.py
+check_template.py
+
+# 调试文档
+debug-*.md
+columns_v2.json
 
 # 编辑器临时文件
 *.swp

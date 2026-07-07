@@ -13,7 +13,7 @@
     <div class="bg-blue-50 rounded-lg p-3 mb-4 text-sm text-gray-600">
       <el-icon class="mr-1"><InfoFilled /></el-icon>
       配置不同政务平台导出的社保/公积金文件解析规则。配置后，「智能导入」即可自动识别并解析对应格式的文件。
-      <span class="text-green-600 font-medium ml-2">推荐：上传一份样本文件，系统自动识别配置，您只需核对微调即可。</span>
+    <span class="text-blue-600 font-medium ml-2">推荐：上传一份样本文件，系统自动提取列名，您手动配置字段映射后保存即可。</span>
     </div>
 
     <el-table :data="templates" border stripe v-loading="loading">
@@ -35,7 +35,11 @@
       </el-table-column>
       <el-table-column prop="city" label="城市" width="80" />
       <el-table-column prop="description" label="说明" min-width="150" show-overflow-tooltip />
-      <el-table-column prop="data_start_row" label="数据起始行" width="90" />
+      <el-table-column label="数据起始行" width="110">
+        <template #default="{ row }">
+          第{{ (row.data_start_row || 0) + 1 }}行
+        </template>
+      </el-table-column>
       <el-table-column label="映射字段数" width="90">
         <template #default="{ row }">
           {{ row.column_mappings ? Object.keys(row.column_mappings).length : 0 }}
@@ -67,14 +71,14 @@
     <el-dialog
       v-model="dialogVisible"
       :title="isEdit ? '编辑模板' : (isAutoDetected ? '核对自动识别结果' : '新增模板')"
-      width="750px"
+      width="800px"
       append-to-body
       @close="resetForm"
     >
       <!-- 自动识别结果提示 -->
       <el-alert
         v-if="isAutoDetected"
-        title="已根据上传文件自动识别配置，请核对以下信息是否正确，可手动调整后保存。"
+        :title="`已根据上传文件自动识别配置。${autoMatchStats}，请核对以下信息是否正确，可手动调整后保存。`"
         type="success"
         :closable="false"
         show-icon
@@ -86,7 +90,7 @@
         <el-row :gutter="16">
           <el-col :span="12">
             <el-form-item label="模板名称" prop="name">
-              <el-input v-model="form.name" placeholder="如：广州公积金" />
+              <el-input v-model="form.name" placeholder="如：邯郸公积金" />
             </el-form-item>
           </el-col>
           <el-col :span="6">
@@ -110,17 +114,73 @@
         <el-row :gutter="16">
           <el-col :span="8">
             <el-form-item label="城市">
-              <el-input v-model="form.city" placeholder="如：广州" />
+              <el-input v-model="form.city" placeholder="如：邯郸" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
-            <el-form-item label="文件名匹配">
-              <el-input v-model="form.file_pattern" placeholder="正则，如：公积金|CI_EXCEL" />
+          <el-col :span="16">
+            <el-form-item>
+              <template #label>
+                <span>
+                  文件名匹配
+                  <el-tooltip
+                    content="系统通过文件名来判断该文件应该使用哪个模板。如文件名叫「邯郸公积金缴费明细.xlsx」，模板中配置了关键词「邯郸」「公积金」，系统就会自动使用这个模板来解析文件。"
+                    placement="top"
+                  >
+                    <el-icon class="ml-1 cursor-help text-gray-400"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </span>
+              </template>
+              <div class="w-full">
+                <el-select
+                  v-model="form.file_keywords"
+                  multiple
+                  filterable
+                  allow-create
+                  default-first-option
+                  placeholder="输入关键词后按回车，如：邯郸 公积金"
+                  class="w-full"
+                  :reserve-keyword="false"
+                >
+                </el-select>
+                <div class="text-xs text-gray-400 mt-1">
+                  <template v-if="form.file_keywords.length > 0">
+                    文件名中须同时包含：
+                    <el-tag v-for="kw in form.file_keywords" :key="kw" size="small" type="info" effect="plain" class="mx-0.5">{{ kw }}</el-tag>
+                    才匹配此模板
+                  </template>
+                  <template v-else>
+                    输入文件名中包含的关键词。例如文件叫「邯郸公积金缴费明细.xlsx」，输入「邯郸」「公积金」即可。
+                  </template>
+                </div>
+                <el-collapse-transition>
+                  <div v-if="showAdvanced" class="mt-2">
+                    <el-input v-model="form.file_pattern" placeholder="正则表达式（高级），如：养老保险|单位缴纳" size="small" />
+                    <div class="text-xs text-gray-400 mt-1">高级用户可选：使用正则表达式匹配文件名。留空则使用关键词模式。</div>
+                  </div>
+                </el-collapse-transition>
+                <el-button link type="primary" size="small" class="mt-1 p-0" @click="showAdvanced = !showAdvanced">
+                  {{ showAdvanced ? '收起高级选项' : '高级选项（正则匹配）' }}
+                </el-button>
+              </div>
             </el-form-item>
           </el-col>
+        </el-row>
+
+        <el-row :gutter="16">
           <el-col :span="8">
-            <el-form-item label="工作表匹配">
-              <el-input v-model="form.sheet_pattern" placeholder="工作表名正则" />
+            <el-form-item>
+              <template #label>
+                <span>
+                  工作表匹配
+                  <el-tooltip
+                    content="Excel 文件包含多个工作表时，通过工作表的名称来判断应该读取哪个工作表。通常不需要设置；只有当文件有多个工作表时才需要配置。"
+                    placement="top"
+                  >
+                    <el-icon class="ml-1 cursor-help text-gray-400"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </span>
+              </template>
+              <el-input v-model="form.sheet_pattern" placeholder="工作表名关键词" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -128,7 +188,7 @@
         <el-row :gutter="16">
           <el-col :span="24">
             <el-form-item label="说明">
-              <el-input v-model="form.description" placeholder="模板用途说明" />
+              <el-input v-model="form.description" placeholder="模板用途说明，如：邯郸社保分险种文件，表头为通用列名，文件名包含险种和缴纳方向" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -137,20 +197,20 @@
         <el-row :gutter="16">
           <el-col :span="8">
             <el-form-item label="表头行号" prop="header_rows_str">
-              <el-input v-model="form.header_rows_str" placeholder="如：6,7（第7-8行为表头）" />
-              <div class="text-xs text-gray-400 mt-1">0-based行号，逗号分隔。多层表头用多行</div>
+              <el-input v-model="form.header_rows_str" placeholder="如：1（第一行是表头）" />
+              <div class="text-xs text-gray-400 mt-1">输入Excel中表头所在的行号。多层表头用逗号分隔，如「1,2」表示前两行合并为表头</div>
             </el-form-item>
           </el-col>
           <el-col :span="8">
             <el-form-item label="数据起始行" prop="data_start_row">
-              <el-input-number v-model="form.data_start_row" :min="0" class="w-full" />
-              <div class="text-xs text-gray-400 mt-1">0-based，数据从第几行开始</div>
+              <el-input-number v-model="form.data_start_row" :min="1" class="w-full" />
+              <div class="text-xs text-gray-400 mt-1">第一条员工数据从第几行开始（表头之后的第一行）</div>
             </el-form-item>
           </el-col>
           <el-col :span="8">
             <el-form-item label="跳过末尾行">
               <el-input-number v-model="form.skip_footer_rows" :min="0" class="w-full" />
-              <div class="text-xs text-gray-400 mt-1">跳过文件末尾的合计行等</div>
+              <div class="text-xs text-gray-400 mt-1">跳过文件末尾的合计行、备注行等</div>
             </el-form-item>
           </el-col>
         </el-row>
@@ -158,47 +218,197 @@
         <el-divider content-position="left">字段映射（文件列名 → 系统字段）</el-divider>
         <div class="mb-2">
           <el-button size="small" type="primary" :icon="Plus" @click="addMapping">添加映射</el-button>
-          <span class="text-xs text-gray-400 ml-2">将政务平台文件中的列名，对应到系统数据库字段</span>
-          <el-tag v-if="hasLevel2Headers" size="small" type="info" class="ml-2">已识别两级表头，按一级分组展示</el-tag>
+          <span class="text-xs text-gray-400 ml-2">将文件中的列名对应到系统字段</span>
         </div>
 
-        <template v-if="mappingGroups.length > 0">
-          <!-- 单层字段：直接罗列 -->
-          <template v-if="singleLevelMappings.length > 0">
-            <div v-for="item in singleLevelMappings" :key="'s' + item.flatIndex" class="flex gap-2 mb-2 items-center">
-              <el-input v-model="item.header_name" placeholder="文件中的列名" class="flex-1" size="small" />
-              <span class="text-gray-400">→</span>
-              <el-select v-model="item.db_field" placeholder="系统字段" class="flex-1" size="small" filterable clearable>
-                <el-option label="未映射（留空，手动调整）" :value="null" />
-                <el-option v-for="(label, value) in fieldLabels" :key="value" :label="`${label} (${value})`" :value="value" />
-              </el-select>
-              <el-button :icon="Delete" size="small" type="danger" circle @click="removeMapping(item.flatIndex)" />
+        <div class="mb-3 p-3 bg-blue-50 rounded-lg text-xs">
+          <div class="flex items-start gap-2">
+            <el-icon class="text-blue-600 mt-0.5"><InfoFilled /></el-icon>
+            <div>
+              <p class="font-medium text-blue-700 mb-1">💡 两种配置方式：</p>
+              <p class="text-gray-600 mb-1">
+                <span class="font-medium">① 指定险种模板：</span>直接选择具体险种字段（如"医疗保险个人基数"）。适用于文件内容固定为某一险种的场景。
+              </p>
+              <p class="text-gray-600">
+                <span class="font-medium">② 通用险种模板（推荐用于多险种同格式场景）：</span>选择<span class="text-amber-600 font-medium">[通用]</span>开头的字段，系统将<span class="font-medium">根据文件名自动识别险种</span>。例如邯郸社保：养老/失业/医疗/工伤文件格式相同，但文件名含"养老""医疗"等关键词，只需配置1个通用模板即可适配所有险种文件。
+              </p>
             </div>
-          </template>
+          </div>
+        </div>
 
-          <!-- 双层字段：按一级分组展示 -->
-          <div v-for="(group, gIdx) in level2Groups" :key="'g' + gIdx" class="mb-3 border border-blue-100 rounded-lg overflow-hidden">
-            <div class="flex items-center gap-2 px-2 py-1.5 cursor-pointer bg-blue-50 hover:bg-blue-100 transition-colors" @click="toggleGroup(gIdx)">
-              <el-icon :size="14" class="transition-transform duration-200" :class="{ 'rotate-90': group.expanded }">
-                <ArrowRight />
-              </el-icon>
-              <span class="text-sm font-medium text-blue-700">{{ group.parent }}</span>
-              <span class="text-xs text-gray-400">({{ group.items.length }} 列)</span>
-            </div>
-            <div v-show="group.expanded" class="px-2 py-1">
-              <div v-for="item in group.items" :key="'gi' + item.flatIndex" class="flex gap-2 mb-2 items-center pl-4">
-                <el-input v-model="item.header_name" placeholder="文件中的列名" class="flex-1" size="small" />
-                <span class="text-gray-400">→</span>
-                <el-select v-model="item.db_field" placeholder="系统字段" class="flex-1" size="small" filterable clearable>
-                  <el-option label="未映射（留空，手动调整）" :value="null" />
-                  <el-option v-for="(label, value) in fieldLabels" :key="value" :label="`${label} (${value})`" :value="value" />
-                </el-select>
-                <el-button :icon="Delete" size="small" type="danger" circle @click="removeMapping(item.flatIndex)" />
-              </div>
-            </div>
+        <div v-if="hasGenericMappings" class="mb-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+          <el-icon class="mr-1"><WarningFilled /></el-icon>
+          此模板包含通用险种映射字段，系统将根据文件名自动识别险种和缴纳方向。<span class="font-medium">请确保文件名关键词不要限定单一险种</span>（应使用"邯郸 社保"等通用词，让"养老""医疗"等词保留在文件名中供自动识别）。
+        </div>
+
+        <template v-if="form.mapping_list.length > 0">
+          <div
+            v-for="item in form.mapping_list"
+            :key="item.flatIndex"
+            class="flex gap-2 mb-2 items-center mapping-row"
+            :class="{ 'mapping-matched': item.db_field, 'mapping-generic': isGenericField(item.db_field) }"
+          >
+            <el-input v-model="item.header_name" placeholder="文件中的列名" class="flex-1" size="small" />
+            <span class="text-gray-400">→</span>
+            <el-select v-model="item.db_field" placeholder="系统字段" class="flex-1" size="small" filterable clearable>
+              <el-option label="未映射（留空）" :value="null" />
+              <el-option-group label="通用字段（文件名自动识别险种）">
+                <el-option v-for="(label, key) in genericFieldLabels" :key="key" :label="label" :value="key" />
+              </el-option-group>
+              <el-option-group label="基础信息">
+                <el-option v-for="(label, key) in fieldGroups.basic" :key="key" :label="label" :value="key" />
+              </el-option-group>
+              <el-option-group label="养老保险">
+                <el-option v-for="(label, key) in fieldGroups.pension" :key="key" :label="label" :value="key" />
+              </el-option-group>
+              <el-option-group label="失业保险">
+                <el-option v-for="(label, key) in fieldGroups.unemployment" :key="key" :label="label" :value="key" />
+              </el-option-group>
+              <el-option-group label="医疗保险">
+                <el-option v-for="(label, key) in fieldGroups.medical" :key="key" :label="label" :value="key" />
+              </el-option-group>
+              <el-option-group label="工伤保险">
+                <el-option v-for="(label, key) in fieldGroups.injury" :key="key" :label="label" :value="key" />
+              </el-option-group>
+              <el-option-group label="社保汇总">
+                <el-option v-for="(label, key) in fieldGroups.si_summary" :key="key" :label="label" :value="key" />
+              </el-option-group>
+              <el-option-group label="公积金">
+                <el-option v-for="(label, key) in fieldGroups.hf" :key="key" :label="label" :value="key" />
+              </el-option-group>
+              <el-option-group label="合计">
+                <el-option v-for="(label, key) in fieldGroups.totals" :key="key" :label="label" :value="key" />
+              </el-option-group>
+            </el-select>
+            <el-tag v-if="item.db_field" size="small" :type="isGenericField(item.db_field) ? 'warning' : 'success'" effect="plain" class="shrink-0">
+              {{ isGenericField(item.db_field) ? '通用' : '已匹配' }}
+            </el-tag>
+            <el-button :icon="Delete" size="small" type="danger" circle @click="removeMapping(item.flatIndex)" />
           </div>
         </template>
         <el-empty v-if="form.mapping_list.length === 0" description="暂无字段映射，请点击「添加映射」" :image-size="40" />
+
+        <el-divider content-position="left">默认缴纳比例配置（用于数据推算）</el-divider>
+        <div class="bg-blue-50 rounded-lg p-3 mb-3 text-xs text-gray-600">
+          <el-icon class="mr-1"><InfoFilled /></el-icon>
+          配置当地各险种和公积金的默认缴纳比例。当导入文件中缺少比例数据、或只有合计金额时，系统将使用此处配置的比例自动推算缺失的基数、金额和比例。<span class="text-blue-600 font-medium">比例请输入百分比数值，如8%输入8。</span>
+        </div>
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <div class="border border-gray-200 rounded-lg p-3 mb-2">
+              <div class="font-medium text-sm mb-2 text-gray-700">养老保险</div>
+              <el-row :gutter="8">
+                <el-col :span="12">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-500 w-16">个人比例</span>
+                    <el-input-number v-model="form.default_rates.pension.personal_rate_pct" :min="0" :max="100" :step="0.1" :precision="2" size="small" class="flex-1" controls-position="right" />
+                    <span class="text-xs text-gray-400">%</span>
+                  </div>
+                </el-col>
+                <el-col :span="12">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-500 w-16">单位比例</span>
+                    <el-input-number v-model="form.default_rates.pension.company_rate_pct" :min="0" :max="100" :step="0.1" :precision="2" size="small" class="flex-1" controls-position="right" />
+                    <span class="text-xs text-gray-400">%</span>
+                  </div>
+                </el-col>
+              </el-row>
+            </div>
+          </el-col>
+          <el-col :span="12">
+            <div class="border border-gray-200 rounded-lg p-3 mb-2">
+              <div class="font-medium text-sm mb-2 text-gray-700">失业保险</div>
+              <el-row :gutter="8">
+                <el-col :span="12">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-500 w-16">个人比例</span>
+                    <el-input-number v-model="form.default_rates.unemployment.personal_rate_pct" :min="0" :max="100" :step="0.1" :precision="2" size="small" class="flex-1" controls-position="right" />
+                    <span class="text-xs text-gray-400">%</span>
+                  </div>
+                </el-col>
+                <el-col :span="12">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-500 w-16">单位比例</span>
+                    <el-input-number v-model="form.default_rates.unemployment.company_rate_pct" :min="0" :max="100" :step="0.1" :precision="2" size="small" class="flex-1" controls-position="right" />
+                    <span class="text-xs text-gray-400">%</span>
+                  </div>
+                </el-col>
+              </el-row>
+            </div>
+          </el-col>
+        </el-row>
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <div class="border border-gray-200 rounded-lg p-3 mb-2">
+              <div class="font-medium text-sm mb-2 text-gray-700">医疗保险</div>
+              <el-row :gutter="8">
+                <el-col :span="12">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-500 w-16">个人比例</span>
+                    <el-input-number v-model="form.default_rates.medical.personal_rate_pct" :min="0" :max="100" :step="0.1" :precision="2" size="small" class="flex-1" controls-position="right" />
+                    <span class="text-xs text-gray-400">%</span>
+                  </div>
+                </el-col>
+                <el-col :span="12">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-500 w-16">单位比例</span>
+                    <el-input-number v-model="form.default_rates.medical.company_rate_pct" :min="0" :max="100" :step="0.1" :precision="2" size="small" class="flex-1" controls-position="right" />
+                    <span class="text-xs text-gray-400">%</span>
+                  </div>
+                </el-col>
+              </el-row>
+            </div>
+          </el-col>
+          <el-col :span="12">
+            <div class="border border-gray-200 rounded-lg p-3 mb-2">
+              <div class="font-medium text-sm mb-2 text-gray-700">工伤保险</div>
+              <el-row :gutter="8">
+                <el-col :span="12">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-500 w-16">个人比例</span>
+                    <span class="text-xs text-gray-400">（无需缴纳）</span>
+                  </div>
+                </el-col>
+                <el-col :span="12">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-500 w-16">单位比例</span>
+                    <el-input-number v-model="form.default_rates.injury.company_rate_pct" :min="0" :max="100" :step="0.01" :precision="3" size="small" class="flex-1" controls-position="right" />
+                    <span class="text-xs text-gray-400">%</span>
+                  </div>
+                </el-col>
+              </el-row>
+            </div>
+          </el-col>
+        </el-row>
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <div class="border border-gray-200 rounded-lg p-3 mb-2">
+              <div class="font-medium text-sm mb-2 text-gray-700">住房公积金</div>
+              <el-row :gutter="8">
+                <el-col :span="12">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-500 w-16">个人比例</span>
+                    <el-input-number v-model="form.default_rates.hf.personal_rate_pct" :min="0" :max="100" :step="1" :precision="1" size="small" class="flex-1" controls-position="right" />
+                    <span class="text-xs text-gray-400">%</span>
+                  </div>
+                </el-col>
+                <el-col :span="12">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-500 w-16">单位比例</span>
+                    <el-input-number v-model="form.default_rates.hf.company_rate_pct" :min="0" :max="100" :step="1" :precision="1" size="small" class="flex-1" controls-position="right" :disabled="form.default_rates.hf.split_equal" />
+                    <span class="text-xs text-gray-400">%</span>
+                  </div>
+                </el-col>
+              </el-row>
+              <div class="mt-2">
+                <el-checkbox v-model="form.default_rates.hf.split_equal" size="small">个人与单位比例相同（自动同步）</el-checkbox>
+              </div>
+              <div class="text-xs text-gray-400 mt-1">
+                示例：邯郸公积金个人和单位比例均为10%，只知道合计金额时系统将自动拆分个人/单位金额并反推缴存基数。
+              </div>
+            </div>
+          </el-col>
+        </el-row>
 
         <el-divider content-position="left">高级配置</el-divider>
         <el-row :gutter="16">
@@ -241,7 +451,7 @@
 <script setup>
 import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, InfoFilled, Upload, ArrowRight } from '@element-plus/icons-vue'
+import { Plus, Delete, InfoFilled, Upload, QuestionFilled, WarningFilled } from '@element-plus/icons-vue'
 import api from '../../api'
 
 const loading = ref(false)
@@ -249,11 +459,101 @@ const saving = ref(false)
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const isAutoDetected = ref(false)
+const showAdvanced = ref(false)
 const editId = ref(null)
 const templates = ref([])
 const fieldLabels = ref({})
 const formRef = ref(null)
 const fileInputRef = ref(null)
+
+// 通用字段（用于文件名险种推断，中文标签）
+// 【使用方法】当多个险种（养老/失业/医疗/工伤）的文件格式完全相同时（如邯郸社保），
+// 将列映射到 [通用] 字段，系统会根据文件名中的关键词自动识别险种：
+//   - 文件名含"养老"→养老保险、"失业"→失业保险、"医疗"→医疗保险、"工伤"→工伤保险
+//   - 文件名含"个人"→个人部分、"单位"/"企业"→单位部分
+// 例如：文件叫"邯郸养老保险个人.xlsx"，[通用]缴费基数 → 养老保险个人基数
+const genericFieldLabels = {
+  amount_base: '[通用] 缴费基数（文件名含个人/单位）',
+  rate: '[通用] 费率/比例（文件名含个人/单位）',
+  amount: '[通用] 应缴费额（文件名含个人/单位）',
+  personal_base: '[通用·个人] 缴费基数',
+  personal_amount: '[通用·个人] 应缴费额',
+  personal_rate: '[通用·个人] 费率/比例',
+  company_base: '[通用·单位] 缴费基数',
+  company_amount: '[通用·单位] 应缴费额',
+  company_rate: '[通用·单位] 费率/比例',
+}
+
+const GENERIC_FIELDS = new Set(Object.keys(genericFieldLabels))
+
+function isGenericField(field) {
+  return GENERIC_FIELDS.has(field)
+}
+
+// 字段分组配置
+const fieldGroups = computed(() => {
+  const labels = fieldLabels.value
+  return {
+    basic: {
+      employee_name: labels.employee_name,
+      employee_social_insurance_no: labels.employee_social_insurance_no,
+    },
+    pension: {
+      pension_personal_base: labels.pension_personal_base,
+      pension_company_base: labels.pension_company_base,
+      pension_personal: labels.pension_personal,
+      pension_personal_rate: labels.pension_personal_rate,
+      pension_company: labels.pension_company,
+      pension_company_rate: labels.pension_company_rate,
+    },
+    unemployment: {
+      unemployment_personal_base: labels.unemployment_personal_base,
+      unemployment_company_base: labels.unemployment_company_base,
+      unemployment_personal: labels.unemployment_personal,
+      unemployment_personal_rate: labels.unemployment_personal_rate,
+      unemployment_company: labels.unemployment_company,
+      unemployment_company_rate: labels.unemployment_company_rate,
+    },
+    medical: {
+      medical_personal_base: labels.medical_personal_base,
+      medical_company_base: labels.medical_company_base,
+      medical_personal: labels.medical_personal,
+      medical_personal_rate: labels.medical_personal_rate,
+      medical_company: labels.medical_company,
+      medical_company_rate: labels.medical_company_rate,
+    },
+    injury: {
+      injury_company_base: labels.injury_company_base,
+      injury_company: labels.injury_company,
+      injury_company_rate: labels.injury_company_rate,
+    },
+    si_summary: {
+      si_personal: labels.si_personal,
+      si_company: labels.si_company,
+    },
+    hf: {
+      hf_base: labels.hf_base,
+      hf_personal: labels.hf_personal,
+      hf_personal_rate: labels.hf_personal_rate,
+      hf_company: labels.hf_company,
+      hf_company_rate: labels.hf_company_rate,
+    },
+    totals: {
+      pension_total: labels.pension_total,
+      unemployment_total: labels.unemployment_total,
+      medical_total: labels.medical_total,
+      injury_total: labels.injury_total,
+      si_grand_total: labels.si_grand_total,
+      hf_total: labels.hf_total,
+      grand_total: labels.grand_total,
+    },
+  }
+})
+
+// 检查是否有通用字段映射
+const hasGenericMappings = computed(() => {
+  return form.mapping_list.some(item => isGenericField(item.db_field))
+})
 
 const rules = {
   name: [{ required: true, message: '请输入模板名称', trigger: 'blur' }],
@@ -263,20 +563,32 @@ const rules = {
   data_start_row: [{ required: true, message: '请输入数据起始行', trigger: 'blur' }],
 }
 
+function createEmptyDefaultRates() {
+  return {
+    pension: { personal_rate_pct: null, company_rate_pct: null },
+    unemployment: { personal_rate_pct: null, company_rate_pct: null },
+    medical: { personal_rate_pct: null, company_rate_pct: null },
+    injury: { company_rate_pct: null },
+    hf: { personal_rate_pct: null, company_rate_pct: null, split_equal: true },
+  }
+}
+
 const form = reactive({
   name: '',
   source_category: 'social_insurance',
   file_type: 'excel',
   city: '',
   description: '',
+  file_keywords: [],
   file_pattern: '',
   sheet_pattern: '',
-  header_rows_str: '',
-  data_start_row: 0,
+  header_rows_str: '1',
+  data_start_row: 2,
   skip_footer_rows: 0,
   mapping_list: [],
   filter_list: [],
   remove_chars: '',
+  default_rates: createEmptyDefaultRates(),
   is_active: true,
 })
 
@@ -324,16 +636,68 @@ async function handleFileChange(e) {
     })
     const detected = res.data
     applyDetectedConfig(detected)
-    ElMessage.success(`自动识别完成，识别到 ${Object.keys(detected.column_mappings || {}).length} 个字段映射，请核对`)
+    const total = Object.keys(detected.column_mappings || {}).length
+    const matched = Object.values(detected.column_mappings || {}).filter(v => v).length
+    ElMessage.success(`文件解析完成，共识别 ${total} 个字段，${matched > 0 ? `已自动匹配 ${matched} 个` : '请在下方手动配置字段映射'}`)
   } catch (e) {
     // error handled by interceptor
   } finally {
     loading.value = false
-    // 重置文件选择器，允许重复上传同一文件
     if (fileInputRef.value) {
       fileInputRef.value.value = ''
     }
   }
+}
+
+function pctToDecimal(pct) {
+  if (pct === null || pct === undefined || pct === '') return null
+  return Math.round(parseFloat(pct) * 100) / 10000  // 8% → 0.08
+}
+
+function decimalToPct(dec) {
+  if (dec === null || dec === undefined) return null
+  return Math.round(parseFloat(dec) * 10000) / 100  // 0.08 → 8
+}
+
+function defaultRatesFromApi(apiRates) {
+  const result = createEmptyDefaultRates()
+  if (!apiRates) return result
+  for (const [insKey, rates] of Object.entries(apiRates)) {
+    if (result[insKey]) {
+      if (rates.personal_rate !== undefined && rates.personal_rate !== null) {
+        result[insKey].personal_rate_pct = decimalToPct(rates.personal_rate)
+      }
+      if (rates.company_rate !== undefined && rates.company_rate !== null) {
+        result[insKey].company_rate_pct = decimalToPct(rates.company_rate)
+      }
+      if (rates.split_equal !== undefined) {
+        result[insKey].split_equal = rates.split_equal
+      }
+    }
+  }
+  return result
+}
+
+function defaultRatesToApi(formRates) {
+  const result = {}
+  for (const [insKey, rates] of Object.entries(formRates)) {
+    const entry = {}
+    const pPct = rates.personal_rate_pct
+    const cPct = rates.company_rate_pct
+    if (pPct !== null && pPct !== undefined && pPct !== '') {
+      entry.personal_rate = pctToDecimal(pPct)
+    }
+    if (cPct !== null && cPct !== undefined && cPct !== '') {
+      entry.company_rate = pctToDecimal(cPct)
+    }
+    if (rates.split_equal !== undefined) {
+      entry.split_equal = rates.split_equal
+    }
+    if (Object.keys(entry).length > 0) {
+      result[insKey] = entry
+    }
+  }
+  return Object.keys(result).length > 0 ? result : null
 }
 
 function applyDetectedConfig(detected) {
@@ -346,18 +710,34 @@ function applyDetectedConfig(detected) {
   form.file_type = detected.file_type || 'excel'
   form.city = detected.city || ''
   form.description = detected.description || ''
-  form.file_pattern = detected.file_pattern || ''
+  if (detected.file_keywords && detected.file_keywords.length > 0) {
+    form.file_keywords = detected.file_keywords || []
+    form.file_pattern = ''
+    showAdvanced.value = false
+  } else if (detected.file_pattern) {
+    form.file_keywords = []
+    form.file_pattern = detected.file_pattern || ''
+    showAdvanced.value = true
+  } else {
+    form.file_keywords = []
+    form.file_pattern = ''
+    showAdvanced.value = false
+  }
   form.sheet_pattern = detected.sheet_pattern || ''
-  form.header_rows_str = (detected.header_rows || []).join(',')
-  form.data_start_row = detected.data_start_row || 0
+  // 后端返回0-based行号，前端显示1-based（Excel实际行号），+1转换
+  form.header_rows_str = ((detected.header_rows || []).map(r => r + 1)).join(',')
+  form.data_start_row = (detected.data_start_row || 0) + 1
   form.skip_footer_rows = detected.skip_footer_rows || 0
   form.is_active = true
+  form.default_rates = defaultRatesFromApi(detected.default_rates)
 
   // 列映射
   form.mapping_list = Object.entries(detected.column_mappings || {}).map(([k, v]) => ({
     header_name: k,
     db_field: v,
   }))
+  // 附加 flatIndex
+  form.mapping_list.forEach((item, idx) => { item.flatIndex = idx })
 
   // 行过滤
   form.filter_list = Object.entries(detected.row_filters || {}).map(([k, v]) => ({
@@ -384,18 +764,33 @@ function showDialog(row) {
     form.file_type = row.file_type
     form.city = row.city || ''
     form.description = row.description || ''
-    form.file_pattern = row.file_pattern || ''
+    if (row.file_keywords && row.file_keywords.length > 0) {
+      form.file_keywords = row.file_keywords || []
+      form.file_pattern = ''
+      showAdvanced.value = !!row.file_pattern
+    } else if (row.file_pattern) {
+      form.file_keywords = []
+      form.file_pattern = row.file_pattern || ''
+      showAdvanced.value = true
+    } else {
+      form.file_keywords = []
+      form.file_pattern = ''
+      showAdvanced.value = false
+    }
     form.sheet_pattern = row.sheet_pattern || ''
-    form.header_rows_str = (row.header_rows || []).join(',')
-    form.data_start_row = row.data_start_row
+    // 后端返回0-based行号，前端显示1-based（Excel实际行号），+1转换
+    form.header_rows_str = ((row.header_rows || []).map(r => r + 1)).join(',')
+    form.data_start_row = (row.data_start_row || 0) + 1
     form.skip_footer_rows = row.skip_footer_rows || 0
     form.is_active = row.is_active
+    form.default_rates = defaultRatesFromApi(row.default_rates)
 
     // 列映射 → mapping_list
     form.mapping_list = Object.entries(row.column_mappings || {}).map(([k, v]) => ({
       header_name: k,
       db_field: v,
     }))
+    form.mapping_list.forEach((item, idx) => { item.flatIndex = idx })
 
     // 行过滤 → filter_list
     form.filter_list = Object.entries(row.row_filters || {}).map(([k, v]) => ({
@@ -418,79 +813,52 @@ function resetForm() {
   form.file_type = 'excel'
   form.city = ''
   form.description = ''
+  form.file_keywords = []
   form.file_pattern = ''
   form.sheet_pattern = ''
-  form.header_rows_str = ''
-  form.data_start_row = 0
+  form.header_rows_str = '1'
+  form.data_start_row = 2
   form.skip_footer_rows = 0
   form.mapping_list = []
   form.filter_list = []
   form.remove_chars = ''
+  form.default_rates = createEmptyDefaultRates()
   form.is_active = true
+  showAdvanced.value = false
   isAutoDetected.value = false
   formRef.value?.resetFields()
 }
 
-// ── 两级表头分组展示 ──
-const mappingGroups = computed(() => {
-  const groups = []
-  form.mapping_list.forEach((item, idx) => {
-    groups.push({ ...item, flatIndex: idx })
-  })
-  return groups
-})
-
-// 单层字段（不含 " - " 分隔符）
-const singleLevelMappings = computed(() => {
-  return mappingGroups.value.filter(item => !item.header_name.includes(' - '))
-})
-
-// 双层字段，按一级分组
-const level2Groups = computed(() => {
-  const groupMap = {}
-  mappingGroups.value.forEach(item => {
-    const parts = item.header_name.split(' - ')
-    if (parts.length >= 2) {
-      const parent = parts[0]
-      if (!groupMap[parent]) {
-        groupMap[parent] = []
-      }
-      groupMap[parent].push(item)
+// ── 公积金比例联动 ──
+// watch split_equal for hf - 当勾选"比例相同"时，单位比例跟随个人比例
+import { watch } from 'vue'
+watch(
+  () => [form.default_rates.hf.split_equal, form.default_rates.hf.personal_rate_pct],
+  ([equal, pPct]) => {
+    if (equal && pPct !== null && pPct !== undefined) {
+      form.default_rates.hf.company_rate_pct = pPct
     }
-  })
-  const result = []
-  for (const parent of Object.keys(groupMap)) {
-    const existing = _groupExpanded[parent]
-    result.push({
-      parent,
-      expanded: existing !== undefined ? existing : true,
-      items: groupMap[parent],
-    })
   }
-  return result
-})
-
-const hasLevel2Headers = computed(() => {
-  return form.mapping_list.some(item => item.header_name.includes(' - '))
-})
-
-const _groupExpanded = reactive({})
-
-function toggleGroup(gIdx) {
-  const group = level2Groups.value[gIdx]
-  if (group) {
-    _groupExpanded[group.parent] = !group.expanded
-  }
-}
+)
 
 // ── 映射操作 ──
 function addMapping() {
   form.mapping_list.push({ header_name: '', db_field: 'employee_name' })
+  form.mapping_list.forEach((item, idx) => { item.flatIndex = idx })
 }
 
 function removeMapping(flatIndex) {
   form.mapping_list.splice(flatIndex, 1)
+  form.mapping_list.forEach((item, idx) => { item.flatIndex = idx })
 }
+
+// 自动匹配统计
+const autoMatchStats = computed(() => {
+  if (!isAutoDetected.value) return ''
+  const total = form.mapping_list.length
+  const matched = form.mapping_list.filter(item => item.db_field).length
+  return `AI 已自动匹配 ${matched}/${total} 个字段`
+})
 
 // ── 保存 ──
 async function handleSave() {
@@ -502,7 +870,7 @@ async function handleSave() {
     return
   }
 
-  // 构建 column_mappings（含 null 值，方便后续编辑时再映射）
+  // 构建 column_mappings
   const column_mappings = {}
   form.mapping_list.forEach(item => {
     if (item.header_name) {
@@ -513,7 +881,6 @@ async function handleSave() {
     ElMessage.warning('字段映射不完整，请检查')
     return
   }
-  // 至少有一个有效映射（非 null）
   const hasValidMapping = Object.values(column_mappings).some(v => v !== null)
   if (!hasValidMapping) {
     ElMessage.warning('请至少为一个字段设置系统映射')
@@ -532,8 +899,13 @@ async function handleSave() {
   const remove_chars = form.remove_chars.split(',').map(s => s.trim()).filter(Boolean)
   const number_format = remove_chars.length > 0 ? { remove_chars } : null
 
-  // 解析 header_rows
-  const header_rows = form.header_rows_str.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n))
+  // 解析 header_rows（前端显示1-based，转成后端0-based，-1转换）
+  const header_rows = form.header_rows_str.split(',')
+    .map(s => parseInt(s.trim()) - 1)
+    .filter(n => !isNaN(n) && n >= 0)
+
+  // 构建 default_rates
+  const default_rates = defaultRatesToApi(form.default_rates)
 
   const payload = {
     name: form.name,
@@ -542,13 +914,15 @@ async function handleSave() {
     city: form.city || null,
     description: form.description || null,
     file_pattern: form.file_pattern || null,
+    file_keywords: form.file_keywords.length > 0 ? form.file_keywords : null,
     sheet_pattern: form.sheet_pattern || null,
     header_rows,
-    data_start_row: form.data_start_row,
+    data_start_row: form.data_start_row - 1,
     skip_footer_rows: form.skip_footer_rows,
     column_mappings,
     row_filters: Object.keys(row_filters).length > 0 ? row_filters : null,
     number_format,
+    default_rates,
     is_active: form.is_active,
   }
 
@@ -597,5 +971,19 @@ async function handleDelete(row) {
 }
 .template-config-card :deep(.el-card__header) {
   padding: 16px 20px;
+}
+.mapping-row {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border-left: 3px solid transparent;
+  transition: background-color 0.2s, border-color 0.2s;
+}
+.mapping-matched {
+  background-color: #f0fdf4;
+  border-left-color: #22c55e;
+}
+.mapping-generic {
+  background-color: #fffbeb;
+  border-left-color: #f59e0b;
 }
 </style>

@@ -482,6 +482,17 @@ def get_calculation_results(
         PerformanceScore.period == period
     ).all()}
 
+    att_map = {a.employee_id: a for a in db.query(AttendanceRecord).filter(
+        AttendanceRecord.period == period
+    ).all()}
+
+    si_map = {s.employee_id: s for s in db.query(SocialInsurance).filter(
+        SocialInsurance.period == period
+    ).all()}
+
+    dict_items = db.query(SysDictBase).all()
+    name_map = {d.id: d.name for d in dict_items}
+
     results = []
     for emp in employees:
         c = calc_map.get(emp.id)
@@ -534,6 +545,9 @@ def get_calculation_results(
         else:
             sal = salary_map.get(emp.id)
             perf = perf_map.get(emp.id)
+            att = att_map.get(emp.id)
+            si = si_map.get(emp.id)
+
             base_salary = float(sal.base_salary) if sal else None
             perf_std = float(sal.performance_standard) if sal else None
             meal = float(sal.meal_allowance or 0) if sal else None
@@ -546,9 +560,29 @@ def get_calculation_results(
             perf_coef = float(perf.coefficient) if perf else None
             actual_perf = round((perf_std or 0) * (perf_coef or 0), 2) if sal and perf else None
 
+            contract_company_name = name_map.get(emp.contract_company_id, '')
+            department_name = name_map.get(emp.department_id, '')
+            position_name = name_map.get(emp.position_id, '')
+            status_name = name_map.get(emp.status_id, '')
+
+            total_work_days = float(att.total_work_days) if att else None
+            actual_work_days = float(att.actual_work_days) if att else None
+            attendance_rate = float(att.attendance_rate) if att else None
+
+            pension_personal = float(si.pension_personal or 0) if si else None
+            unemployment_personal = float(si.unemployment_personal or 0) if si else None
+            medical_personal = float(si.medical_personal or 0) if si else None
+            hf_personal = float(si.hf_personal or 0) if si else None
+            si_personal = (pension_personal or 0) + (unemployment_personal or 0) + (medical_personal or 0) if si else None
+            si_hf_total_val = (si_personal or 0) + (hf_personal or 0) if si else None
+
             results.append(SalaryCalcOut(
                 period=period, employee_id=emp.id,
                 employee_no=emp.employee_no, employee_name=emp.name,
+                contract_company=contract_company_name,
+                department=department_name,
+                position=position_name,
+                status=status_name,
                 entry_date=emp.entry_date.isoformat() if emp.entry_date else None,
                 base_salary=base_salary,
                 monthly_standard=monthly_standard,
@@ -561,6 +595,15 @@ def get_calculation_results(
                 computer_allowance=computer,
                 housing_allowance=housing,
                 allowance_total=allowance_total,
+                total_work_days=total_work_days,
+                actual_work_days=actual_work_days,
+                attendance_rate=attendance_rate,
+                pension_personal=pension_personal,
+                unemployment_personal=unemployment_personal,
+                medical_personal=medical_personal,
+                social_insurance_personal=si_personal,
+                housing_fund_personal=hf_personal,
+                si_hf_total=si_hf_total_val,
             ))
     return results
 

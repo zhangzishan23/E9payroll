@@ -158,6 +158,7 @@ class SiImportTemplateOut(BaseModel):
     city: Optional[str] = None
     description: Optional[str] = None
     file_pattern: Optional[str] = None
+    file_keywords: Optional[list] = None
     sheet_pattern: Optional[str] = None
     header_rows: List[int]
     data_start_row: int
@@ -165,6 +166,7 @@ class SiImportTemplateOut(BaseModel):
     column_mappings: dict
     row_filters: Optional[dict] = None
     number_format: Optional[dict] = None
+    default_rates: Optional[dict] = None
     is_active: bool = True
     sort_order: int = 0
 
@@ -179,6 +181,7 @@ class SiImportTemplateCreate(BaseModel):
     city: Optional[str] = None
     description: Optional[str] = None
     file_pattern: Optional[str] = None
+    file_keywords: Optional[list] = None
     sheet_pattern: Optional[str] = None
     header_rows: List[int]
     data_start_row: int
@@ -186,6 +189,7 @@ class SiImportTemplateCreate(BaseModel):
     column_mappings: dict
     row_filters: Optional[dict] = None
     number_format: Optional[dict] = None
+    default_rates: Optional[dict] = None
     is_active: bool = True
     sort_order: int = 0
 
@@ -197,6 +201,7 @@ class SiImportTemplateUpdate(BaseModel):
     city: Optional[str] = None
     description: Optional[str] = None
     file_pattern: Optional[str] = None
+    file_keywords: Optional[list] = None
     sheet_pattern: Optional[str] = None
     header_rows: Optional[List[int]] = None
     data_start_row: Optional[int] = None
@@ -204,6 +209,7 @@ class SiImportTemplateUpdate(BaseModel):
     column_mappings: Optional[dict] = None
     row_filters: Optional[dict] = None
     number_format: Optional[dict] = None
+    default_rates: Optional[dict] = None
     is_active: Optional[bool] = None
     sort_order: Optional[int] = None
 
@@ -345,6 +351,26 @@ def update_social_insurance(
     out.employee_no = emp.employee_no if emp else ""
     out.employee_name = emp.name if emp else ""
     return out
+
+
+@router.post("/batch-delete")
+def batch_delete_social_insurance(
+    ids: List[int],
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    valid_ids = [i for i in ids if i is not None and isinstance(i, int)]
+    if not valid_ids:
+        raise HTTPException(status_code=400, detail="请选择要删除的有效社保公积金记录")
+    records = db.query(SocialInsurance).filter(SocialInsurance.id.in_(valid_ids)).all()
+    if not records:
+        raise HTTPException(status_code=404, detail="未找到指定的社保公积金记录")
+    deleted_count = len(records)
+    for r in records:
+        db.delete(r)
+    db.commit()
+    write_log(db, "data_change", current_user.id, current_user.username, "social_insurance", "batch_delete", f"批量删除 {deleted_count} 条社保公积金记录")
+    return {"message": f"成功删除 {deleted_count} 条社保公积金记录", "deleted_count": deleted_count}
 
 
 @router.delete("/{record_id}")
@@ -573,13 +599,27 @@ def list_templates(
     return db.query(SiImportTemplate).order_by(SiImportTemplate.sort_order).all()
 
 
+DEFAULT_NUMBER_FORMAT = {"remove_chars": [",", "，"], "decimal_separator": "."}
+
+
 @router.post("/templates", response_model=SiImportTemplateOut)
 def create_template(
     data: SiImportTemplateCreate,
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
-    tpl = SiImportTemplate(**data.model_dump())
+    tpl_data = data.model_dump()
+    if not tpl_data.get("number_format"):
+        tpl_data["number_format"] = DEFAULT_NUMBER_FORMAT.copy()
+    else:
+        nf = tpl_data["number_format"]
+        if "remove_chars" not in nf:
+            nf["remove_chars"] = [",", "，"]
+        else:
+            existing = set(nf["remove_chars"])
+            existing.update([",", "，"])
+            nf["remove_chars"] = list(existing)
+    tpl = SiImportTemplate(**tpl_data)
     db.add(tpl)
     db.commit()
     db.refresh(tpl)
@@ -598,6 +638,14 @@ def update_template(
     if not tpl:
         raise HTTPException(status_code=404, detail="模板不存在")
     update_data = data.model_dump(exclude_unset=True)
+    if "number_format" in update_data and update_data["number_format"] is not None:
+        nf = update_data["number_format"]
+        if "remove_chars" not in nf:
+            nf["remove_chars"] = [",", "，"]
+        else:
+            existing = set(nf["remove_chars"])
+            existing.update([",", "，"])
+            nf["remove_chars"] = list(existing)
     for key, value in update_data.items():
         setattr(tpl, key, value)
     db.commit()

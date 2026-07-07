@@ -12,8 +12,8 @@
       <el-button :icon="Upload" size="small" @click="showImportOld">单文件导入</el-button>
       <el-button type="primary" :icon="Upload" size="small" @click="showSmartImport">智能导入</el-button>
       <el-button type="success" :icon="Download" size="small" @click="handleExport">导出</el-button>
-      <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">
-        删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
+      <el-button type="danger" :icon="Delete" size="small" :disabled="!validSelectedCount" @click="handleBatchDelete">
+        删除{{ validSelectedCount ? `(${validSelectedCount})` : '' }}
       </el-button>
       <el-divider direction="vertical" />
       <el-button size="small" :type="editMode ? 'warning' : 'default'" @click="toggleEditMode">
@@ -33,7 +33,7 @@
     </div>
 
     <el-table :data="filteredRecords" border stripe v-loading="loading" max-height="700" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
-      <el-table-column type="selection" width="55" />
+      <el-table-column type="selection" width="55" :selectable="row => row.id != null" />
       <el-table-column prop="employee_no" label="员工编号" width="100" fixed />
       <el-table-column prop="employee_name" label="员工姓名" width="80" fixed />
       <el-table-column prop="employee_social_insurance_no" label="个人社保号" width="130" />
@@ -356,8 +356,9 @@
 
     <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑社保公积金' : '录入社保公积金'" width="750px" append-to-body>
       <el-form ref="formRef" :model="form" label-width="100px">
-        <el-form-item label="核算周期" required>
-          <el-input v-model="form.period" placeholder="YYYYMM" />
+        <el-form-item label="核算周期">
+          <el-tag type="info" size="large">{{ formatPeriod(periodDate) }}</el-tag>
+          <span class="text-xs text-gray-400 ml-2">数据将录入到当前选中月份</span>
         </el-form-item>
         <el-form-item label="员工编号">
           <el-input :model-value="formEmployeeNo" disabled />
@@ -585,6 +586,12 @@
 
     <el-dialog v-model="importVisibleOld" title="单文件导入社保公积金" width="700px" append-to-body>
       <div class="mb-4">
+        <div class="bg-blue-50 rounded-lg p-3 mb-3 text-sm">
+          <div class="flex items-center gap-2">
+            <el-icon class="text-blue-600"><InfoFilled /></el-icon>
+            <span class="font-medium text-blue-700">导入月份：<span class="text-blue-900 text-base">{{ formatPeriod(periodDate) }}</span></span>
+          </div>
+        </div>
         <div class="flex gap-3 mb-3">
           <el-upload
             ref="uploadRef"
@@ -619,6 +626,13 @@
     <!-- 智能导入弹窗 -->
     <el-dialog v-model="smartImportVisible" title="智能批量导入" width="750px" append-to-body @close="resetSmartImport">
       <div class="mb-4">
+        <div class="bg-blue-50 rounded-lg p-3 mb-4 text-sm">
+          <div class="flex items-center gap-2 mb-2">
+            <el-icon class="text-blue-600"><InfoFilled /></el-icon>
+            <span class="font-medium text-blue-700">导入月份：<span class="text-blue-900 text-base">{{ formatPeriod(periodDate) }}</span></span>
+          </div>
+          <p class="text-gray-600 ml-6">数据将导入到当前页面选中的月份。如需导入其他月份，请先切换页面顶部的月份选择器。</p>
+        </div>
         <div class="bg-blue-50 rounded-lg p-3 mb-4 text-sm text-gray-600 flex items-start gap-2">
           <el-icon class="mt-0.5"><InfoFilled /></el-icon>
           <div>
@@ -756,6 +770,11 @@ function getDefaultPeriod() {
   return `${targetYear}${String(targetMonth).padStart(2, '0')}`
 }
 
+function formatPeriod(periodStr) {
+  if (!periodStr || periodStr.length < 6) return periodStr
+  return `${periodStr.substring(0, 4)}年${periodStr.substring(4, 6)}月`
+}
+
 const defaultPeriod = getDefaultPeriod()
 
 const loading = ref(false)
@@ -848,9 +867,9 @@ const form = reactive({
 
 const errorTypeLabels = {
   file_error: '文件错误', unsupported_format: '格式不支持', empty_file: '空文件',
-  unknown_format: '无法识别格式', template_error: '模板错误',
+  unknown_format: '无法识别格式', no_template: '缺少模板', template_error: '模板错误',
   name_not_found: '姓名未匹配', duplicate_name: '同名员工', empty_name: '姓名为空',
-  missing_period: '月份缺失', missing_base: '基数缺失',
+  missing_period: '月份缺失',
   amount_mismatch: '金额不匹配', duplicate_record: '重复记录'
 }
 
@@ -861,6 +880,10 @@ const filteredRecords = computed(() => {
     const val = String(r[filterField.value] || '').toLowerCase()
     return val.includes(keyword)
   })
+})
+
+const validSelectedCount = computed(() => {
+  return selectedRows.value.filter(row => row.id != null).length
 })
 
 function onPeriodChange(val) {
@@ -1012,9 +1035,13 @@ function handleSelectionChange(rows) {
 }
 
 async function handleBatchDelete() {
-  if (!selectedRows.value.length) return
+  const validRows = selectedRows.value.filter(row => row.id != null)
+  if (!validRows.length) {
+    ElMessage.warning('选中的记录中没有可删除的有效数据（空行无需删除）')
+    return
+  }
   try {
-    await ElMessageBox.confirm(`确认删除选中的 ${selectedRows.value.length} 条社保公积金记录？此操作不可恢复`, '批量删除', {
+    await ElMessageBox.confirm(`确认删除选中的 ${validRows.length} 条社保公积金记录？此操作不可恢复`, '批量删除', {
       confirmButtonText: '确认删除',
       cancelButtonText: '取消',
       type: 'warning'
@@ -1023,17 +1050,17 @@ async function handleBatchDelete() {
     return
   }
   loading.value = true
-  let successCount = 0
-  for (const row of selectedRows.value) {
-    try {
-      await api.delete(`/social-insurance/${row.id}`)
-      successCount++
-    } catch {
-      // skip
-    }
+  try {
+    const ids = validRows.map(row => row.id)
+    const res = await api.post('/social-insurance/batch-delete', ids)
+    ElMessage.success(res.data.message || `成功删除 ${ids.length} 条记录`)
+    await fetchData()
+  } catch (e) {
+    const msg = e.response?.data?.detail || '删除失败'
+    ElMessage.error(msg)
+  } finally {
+    loading.value = false
   }
-  ElMessage.success(`成功删除 ${successCount} 条记录`)
-  await fetchData()
 }
 
 function showDialog(row) {
@@ -1066,14 +1093,10 @@ function showDialogForEmployee(row) {
 }
 
 async function handleSave() {
-  if (!form.period) {
-    ElMessage.warning('请输入核算周期')
-    return
-  }
   saving.value = true
   try {
     const payload = {
-      period: form.period,
+      period: periodDate.value,
       employee_id: form.employee_id,
     }
     editFields.forEach(f => { payload[f] = form[f] })

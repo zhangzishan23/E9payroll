@@ -323,47 +323,47 @@ class SocialInsurance(Base):
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
     employee_social_insurance_no = Column(String(50), nullable=True, comment="个人社保号")
     # 各险种单独基数（综合表文件使用）
-    pension_personal_base = Column(DECIMAL(10, 2), default=0, comment="养老保险个人基数")
-    pension_company_base = Column(DECIMAL(10, 2), default=0, comment="养老保险单位基数")
-    unemployment_personal_base = Column(DECIMAL(10, 2), default=0, comment="失业保险个人基数")
-    unemployment_company_base = Column(DECIMAL(10, 2), default=0, comment="失业保险单位基数")
-    medical_personal_base = Column(DECIMAL(10, 2), default=0, comment="医疗保险个人基数")
-    medical_company_base = Column(DECIMAL(10, 2), default=0, comment="医疗保险单位基数")
-    injury_company_base = Column(DECIMAL(10, 2), default=0, comment="工伤保险单位基数")
+    pension_personal_base = Column(DECIMAL(10, 2), nullable=True, comment="养老保险个人基数")
+    pension_company_base = Column(DECIMAL(10, 2), nullable=True, comment="养老保险单位基数")
+    unemployment_personal_base = Column(DECIMAL(10, 2), nullable=True, comment="失业保险个人基数")
+    unemployment_company_base = Column(DECIMAL(10, 2), nullable=True, comment="失业保险单位基数")
+    medical_personal_base = Column(DECIMAL(10, 2), nullable=True, comment="医疗保险个人基数")
+    medical_company_base = Column(DECIMAL(10, 2), nullable=True, comment="医疗保险单位基数")
+    injury_company_base = Column(DECIMAL(10, 2), nullable=True, comment="工伤保险单位基数")
     # 社保-个人缴纳金额
-    pension_personal = Column(DECIMAL(10, 2), default=0, comment="养老保险个人金额")
-    unemployment_personal = Column(DECIMAL(10, 2), default=0, comment="失业保险个人金额")
-    medical_personal = Column(DECIMAL(10, 2), default=0, comment="医疗保险个人金额")
-    si_personal = Column(DECIMAL(10, 2), nullable=False, comment="社保个人合计")
+    pension_personal = Column(DECIMAL(10, 2), nullable=True, comment="养老保险个人金额")
+    unemployment_personal = Column(DECIMAL(10, 2), nullable=True, comment="失业保险个人金额")
+    medical_personal = Column(DECIMAL(10, 2), nullable=True, comment="医疗保险个人金额")
+    si_personal = Column(DECIMAL(10, 2), nullable=True, comment="社保个人合计")
     # 社保-单位缴纳金额
-    pension_company = Column(DECIMAL(10, 2), default=0, comment="养老保险单位金额")
-    unemployment_company = Column(DECIMAL(10, 2), default=0, comment="失业保险单位金额")
-    medical_company = Column(DECIMAL(10, 2), default=0, comment="医疗保险单位金额")
-    injury_company = Column(DECIMAL(10, 2), default=0, comment="工伤保险单位金额")
-    si_company = Column(DECIMAL(10, 2), nullable=False, comment="社保单位合计")
+    pension_company = Column(DECIMAL(10, 2), nullable=True, comment="养老保险单位金额")
+    unemployment_company = Column(DECIMAL(10, 2), nullable=True, comment="失业保险单位金额")
+    medical_company = Column(DECIMAL(10, 2), nullable=True, comment="医疗保险单位金额")
+    injury_company = Column(DECIMAL(10, 2), nullable=True, comment="工伤保险单位金额")
+    si_company = Column(DECIMAL(10, 2), nullable=True, comment="社保单位合计")
     # 社保-各险种缴纳比例
-    pension_personal_rate = Column(DECIMAL(6, 4), default=0, comment="养老保险个人比例")
-    pension_company_rate = Column(DECIMAL(6, 4), default=0, comment="养老保险单位比例")
-    unemployment_personal_rate = Column(DECIMAL(6, 4), default=0, comment="失业保险个人比例")
-    unemployment_company_rate = Column(DECIMAL(6, 4), default=0, comment="失业保险单位比例")
-    medical_personal_rate = Column(DECIMAL(6, 4), default=0, comment="医疗保险个人比例")
-    medical_company_rate = Column(DECIMAL(6, 4), default=0, comment="医疗保险单位比例")
-    injury_company_rate = Column(DECIMAL(6, 4), default=0, comment="工伤保险单位比例")
+    pension_personal_rate = Column(DECIMAL(6, 4), nullable=True, comment="养老保险个人比例")
+    pension_company_rate = Column(DECIMAL(6, 4), nullable=True, comment="养老保险单位比例")
+    unemployment_personal_rate = Column(DECIMAL(6, 4), nullable=True, comment="失业保险个人比例")
+    unemployment_company_rate = Column(DECIMAL(6, 4), nullable=True, comment="失业保险单位比例")
+    medical_personal_rate = Column(DECIMAL(6, 4), nullable=True, comment="医疗保险个人比例")
+    medical_company_rate = Column(DECIMAL(6, 4), nullable=True, comment="医疗保险单位比例")
+    injury_company_rate = Column(DECIMAL(6, 4), nullable=True, comment="工伤保险单位比例")
     # 社保-各险种合计（个人+单位）
-    pension_total = Column(DECIMAL(10, 2), default=0, comment="养老保险合计")
-    unemployment_total = Column(DECIMAL(10, 2), default=0, comment="失业保险合计")
-    medical_total = Column(DECIMAL(10, 2), default=0, comment="医疗保险合计")
-    injury_total = Column(DECIMAL(10, 2), default=0, comment="工伤保险合计")
-    si_grand_total = Column(DECIMAL(10, 2), default=0, comment="社保总合计(个人+单位)")
+    pension_total = Column(DECIMAL(10, 2), nullable=True, comment="养老保险合计")
+    unemployment_total = Column(DECIMAL(10, 2), nullable=True, comment="失业保险合计")
+    medical_total = Column(DECIMAL(10, 2), nullable=True, comment="医疗保险合计")
+    injury_total = Column(DECIMAL(10, 2), nullable=True, comment="工伤保险合计")
+    si_grand_total = Column(DECIMAL(10, 2), nullable=True, comment="社保总合计(个人+单位)")
     # 公积金
-    hf_base = Column(DECIMAL(10, 2), nullable=False, comment="公积金缴存基数")
-    hf_personal = Column(DECIMAL(10, 2), nullable=False, comment="公积金个人金额")
-    hf_company = Column(DECIMAL(10, 2), nullable=False, comment="公积金单位金额")
-    hf_personal_rate = Column(DECIMAL(6, 4), default=0, comment="公积金个人比例")
-    hf_company_rate = Column(DECIMAL(6, 4), default=0, comment="公积金单位比例")
-    hf_total = Column(DECIMAL(10, 2), default=0, comment="公积金合计")
+    hf_base = Column(DECIMAL(10, 2), nullable=True, comment="公积金缴存基数")
+    hf_personal = Column(DECIMAL(10, 2), nullable=True, comment="公积金个人金额")
+    hf_company = Column(DECIMAL(10, 2), nullable=True, comment="公积金单位金额")
+    hf_personal_rate = Column(DECIMAL(6, 4), nullable=True, comment="公积金个人比例")
+    hf_company_rate = Column(DECIMAL(6, 4), nullable=True, comment="公积金单位比例")
+    hf_total = Column(DECIMAL(10, 2), nullable=True, comment="公积金合计")
     # 总合计
-    grand_total = Column(DECIMAL(10, 2), default=0, comment="社保公积金总合计")
+    grand_total = Column(DECIMAL(10, 2), nullable=True, comment="社保公积金总合计")
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -379,6 +379,7 @@ class SiImportTemplate(Base):
     description = Column(String(500), nullable=True, comment="模板说明")
     # 文件识别
     file_pattern = Column(String(200), nullable=True, comment="文件名匹配正则，用于自动识别模板")
+    file_keywords = Column(JSON, nullable=True, comment="文件名关键词列表，正则的通俗替代，如['广州','个人明细表']，只要文件名同时包含所有关键词即匹配")
     sheet_pattern = Column(String(200), nullable=True, comment="工作表名匹配正则")
     # 解析配置
     header_rows = Column(JSON, nullable=False, comment="表头行号列表(0-based)，如[6,7]表示第7-8行为表头")
@@ -390,6 +391,16 @@ class SiImportTemplate(Base):
     row_filters = Column(JSON, nullable=True, comment="行过滤条件，只保留满足条件的行")
     # 数值解析规则: {"remove_chars":[","], "decimal_separator":"."}
     number_format = Column(JSON, nullable=True, comment="数值解析规则")
+    # 默认缴纳比例配置（用于数据源缺少比例或只有总计值时推算）
+    # 格式示例:
+    # {
+    #   "pension": {"personal_rate": 0.08, "company_rate": 0.16},
+    #   "unemployment": {"personal_rate": 0.005, "company_rate": 0.005},
+    #   "medical": {"personal_rate": 0.02, "company_rate": 0.08},
+    #   "injury": {"company_rate": 0.004},
+    #   "hf": {"personal_rate": 0.10, "company_rate": 0.10, "split_equal": true}
+    # }
+    default_rates = Column(JSON, nullable=True, comment="默认缴纳比例配置，用于数据推算")
     # 管理字段
     is_active = Column(Boolean, default=True, comment="是否启用")
     sort_order = Column(Integer, default=0, comment="排序序号")
