@@ -322,8 +322,6 @@ class SocialInsurance(Base):
     period = Column(String(7), nullable=False, comment="核算月份 YYYYMM")
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
     employee_social_insurance_no = Column(String(50), nullable=True, comment="个人社保号")
-    # 社保基数
-    si_base = Column(DECIMAL(10, 2), nullable=False, comment="社保缴存基数")
     # 各险种单独基数（综合表文件使用）
     pension_personal_base = Column(DECIMAL(10, 2), default=0, comment="养老保险个人基数")
     pension_company_base = Column(DECIMAL(10, 2), default=0, comment="养老保险单位基数")

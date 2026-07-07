@@ -793,7 +793,11 @@ const editConfirmVisible = ref(false)
 const confirmList = ref([])
 
 const fieldLabels = {
-  si_base: '社保基数', pension_personal: '养老保险个人', unemployment_personal: '失业保险个人',
+  pension_personal_base: '养老基数(个人)', pension_company_base: '养老基数(单位)',
+  unemployment_personal_base: '失业基数(个人)', unemployment_company_base: '失业基数(单位)',
+  medical_personal_base: '医疗基数(个人)', medical_company_base: '医疗基数(单位)',
+  injury_company_base: '工伤基数(单位)',
+  pension_personal: '养老保险个人', unemployment_personal: '失业保险个人',
   medical_personal: '医疗保险个人', si_personal: '社保个人合计',
   pension_company: '养老保险公司', unemployment_company: '失业保险公司', medical_company: '医疗保险公司',
   injury_company: '工伤保险公司', si_company: '社保公司合计',
@@ -809,7 +813,10 @@ const fieldLabels = {
   hf_total: '公积金合计', grand_total: '社保公积金总合计'
 }
 
-const editFields = ['si_base', 'pension_personal', 'unemployment_personal', 'medical_personal', 'si_personal',
+const editFields = ['pension_personal_base', 'pension_company_base',
+  'unemployment_personal_base', 'unemployment_company_base',
+  'medical_personal_base', 'medical_company_base', 'injury_company_base',
+  'pension_personal', 'unemployment_personal', 'medical_personal', 'si_personal',
   'pension_company', 'unemployment_company', 'medical_company', 'injury_company', 'si_company',
   'pension_personal_rate', 'pension_company_rate',
   'unemployment_personal_rate', 'unemployment_company_rate',
@@ -822,7 +829,11 @@ const editFields = ['si_base', 'pension_personal', 'unemployment_personal', 'med
 
 const form = reactive({
   period: defaultPeriod, employee_id: null,
-  si_base: 0, pension_personal: 0, unemployment_personal: 0, medical_personal: 0,
+  pension_personal_base: 0, pension_company_base: 0,
+  unemployment_personal_base: 0, unemployment_company_base: 0,
+  medical_personal_base: 0, medical_company_base: 0,
+  injury_company_base: 0,
+  pension_personal: 0, unemployment_personal: 0, medical_personal: 0,
   si_personal: 0, pension_company: 0, unemployment_company: 0, medical_company: 0,
   injury_company: 0, si_company: 0,
   pension_personal_rate: 0, pension_company_rate: 0,

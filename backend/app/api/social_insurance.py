@@ -24,16 +24,25 @@ class SocialInsuranceOut(BaseModel):
     employee_no: str = ""
     employee_name: str = ""
     employee_social_insurance_no: Optional[str] = None
-    si_base: Optional[float] = None
+    # 社保 — 各险种基数
+    pension_personal_base: Optional[float] = None
+    pension_company_base: Optional[float] = None
+    unemployment_personal_base: Optional[float] = None
+    unemployment_company_base: Optional[float] = None
+    medical_personal_base: Optional[float] = None
+    medical_company_base: Optional[float] = None
+    injury_company_base: Optional[float] = None
+    # 社保 — 各险种金额
     pension_personal: Optional[float] = None
-    unemployment_personal: Optional[float] = None
-    medical_personal: Optional[float] = None
-    si_personal: Optional[float] = None
     pension_company: Optional[float] = None
+    unemployment_personal: Optional[float] = None
     unemployment_company: Optional[float] = None
+    medical_personal: Optional[float] = None
     medical_company: Optional[float] = None
     injury_company: Optional[float] = None
+    si_personal: Optional[float] = None
     si_company: Optional[float] = None
+    # 社保 — 各险种比例
     pension_personal_rate: Optional[float] = None
     pension_company_rate: Optional[float] = None
     unemployment_personal_rate: Optional[float] = None
@@ -41,17 +50,20 @@ class SocialInsuranceOut(BaseModel):
     medical_personal_rate: Optional[float] = None
     medical_company_rate: Optional[float] = None
     injury_company_rate: Optional[float] = None
+    # 社保 — 合计
     pension_total: Optional[float] = None
     unemployment_total: Optional[float] = None
     medical_total: Optional[float] = None
     injury_total: Optional[float] = None
     si_grand_total: Optional[float] = None
+    # 公积金
     hf_base: Optional[float] = None
     hf_personal: Optional[float] = None
     hf_company: Optional[float] = None
     hf_personal_rate: Optional[float] = None
     hf_company_rate: Optional[float] = None
     hf_total: Optional[float] = None
+    # 总合计
     grand_total: Optional[float] = None
 
     class Config:
@@ -62,7 +74,13 @@ class SocialInsuranceCreate(BaseModel):
     period: str
     employee_id: int
     employee_social_insurance_no: Optional[str] = None
-    si_base: float = 0
+    pension_personal_base: float = 0
+    pension_company_base: float = 0
+    unemployment_personal_base: float = 0
+    unemployment_company_base: float = 0
+    medical_personal_base: float = 0
+    medical_company_base: float = 0
+    injury_company_base: float = 0
     pension_personal: float = 0
     unemployment_personal: float = 0
     medical_personal: float = 0
@@ -95,7 +113,13 @@ class SocialInsuranceCreate(BaseModel):
 
 class SocialInsuranceUpdate(BaseModel):
     employee_social_insurance_no: Optional[str] = None
-    si_base: Optional[float] = None
+    pension_personal_base: Optional[float] = None
+    pension_company_base: Optional[float] = None
+    unemployment_personal_base: Optional[float] = None
+    unemployment_company_base: Optional[float] = None
+    medical_personal_base: Optional[float] = None
+    medical_company_base: Optional[float] = None
+    injury_company_base: Optional[float] = None
     pension_personal: Optional[float] = None
     unemployment_personal: Optional[float] = None
     medical_personal: Optional[float] = None
@@ -362,7 +386,7 @@ def import_social_insurance(
 
     # 数值字段（值为0且旧值非0时保留旧值）
     numeric_fields = {
-        "si_base", "pension_personal", "unemployment_personal", "medical_personal",
+        "pension_personal", "unemployment_personal", "medical_personal",
         "si_personal", "pension_company", "unemployment_company", "medical_company",
         "si_company", "hf_base", "hf_personal", "hf_company",
     }
@@ -382,18 +406,17 @@ def import_social_insurance(
         ).first()
 
         si_data = {
-            "si_base": float(row[1]) if len(row) > 1 and row[1] else 0,
-            "pension_personal": float(row[2]) if len(row) > 2 and row[2] else 0,
-            "unemployment_personal": float(row[3]) if len(row) > 3 and row[3] else 0,
-            "medical_personal": float(row[4]) if len(row) > 4 and row[4] else 0,
-            "si_personal": float(row[5]) if len(row) > 5 and row[5] else 0,
-            "pension_company": float(row[6]) if len(row) > 6 and row[6] else 0,
-            "unemployment_company": float(row[7]) if len(row) > 7 and row[7] else 0,
-            "medical_company": float(row[8]) if len(row) > 8 and row[8] else 0,
-            "si_company": float(row[9]) if len(row) > 9 and row[9] else 0,
-            "hf_base": float(row[10]) if len(row) > 10 and row[10] else 0,
-            "hf_personal": float(row[11]) if len(row) > 11 and row[11] else 0,
-            "hf_company": float(row[12]) if len(row) > 12 and row[12] else 0,
+            "pension_personal": float(row[1]) if len(row) > 1 and row[1] else 0,
+            "unemployment_personal": float(row[2]) if len(row) > 2 and row[2] else 0,
+            "medical_personal": float(row[3]) if len(row) > 3 and row[3] else 0,
+            "si_personal": float(row[4]) if len(row) > 4 and row[4] else 0,
+            "pension_company": float(row[5]) if len(row) > 5 and row[5] else 0,
+            "unemployment_company": float(row[6]) if len(row) > 6 and row[6] else 0,
+            "medical_company": float(row[7]) if len(row) > 7 and row[7] else 0,
+            "si_company": float(row[8]) if len(row) > 8 and row[8] else 0,
+            "hf_base": float(row[9]) if len(row) > 9 and row[9] else 0,
+            "hf_personal": float(row[10]) if len(row) > 10 and row[10] else 0,
+            "hf_company": float(row[11]) if len(row) > 11 and row[11] else 0,
         }
 
         if existing:
@@ -441,21 +464,36 @@ def export_social_insurance(
     wb = Workbook()
     ws = wb.active
     ws.title = f"社保公积金_{period}"
-    headers = ["员工编号", "姓名", "社保基数", "养老保险个人", "失业保险个人", "医疗保险个人", "社保个人合计", "养老保险公司", "失业保险公司", "医疗保险公司", "社保公司合计", "公积金基数", "公积金个人", "公积金公司"]
+    headers = [
+        "员工编号", "姓名",
+        "养老保险基数(个人)", "养老保险基数(单位)", "养老保险个人", "养老保险公司",
+        "失业保险基数(个人)", "失业保险基数(单位)", "失业保险个人", "失业保险公司",
+        "医疗保险基数(个人)", "医疗保险基数(单位)", "医疗保险个人", "医疗保险公司",
+        "工伤保险基数(单位)", "工伤保险公司",
+        "社保个人合计", "社保公司合计",
+        "公积金基数", "公积金个人", "公积金公司",
+    ]
     ws.append(headers)
 
     for emp in employees:
         si = si_map.get(emp.id)
         ws.append([
             emp.employee_no, emp.name,
-            float(si.si_base) if si else "",
+            float(si.pension_personal_base or 0) if si else "",
+            float(si.pension_company_base or 0) if si else "",
             float(si.pension_personal or 0) if si else "",
-            float(si.unemployment_personal or 0) if si else "",
-            float(si.medical_personal or 0) if si else "",
-            float(si.si_personal) if si else "",
             float(si.pension_company or 0) if si else "",
+            float(si.unemployment_personal_base or 0) if si else "",
+            float(si.unemployment_company_base or 0) if si else "",
+            float(si.unemployment_personal or 0) if si else "",
             float(si.unemployment_company or 0) if si else "",
+            float(si.medical_personal_base or 0) if si else "",
+            float(si.medical_company_base or 0) if si else "",
+            float(si.medical_personal or 0) if si else "",
             float(si.medical_company or 0) if si else "",
+            float(si.injury_company_base or 0) if si else "",
+            float(si.injury_company or 0) if si else "",
+            float(si.si_personal) if si else "",
             float(si.si_company) if si else "",
             float(si.hf_base) if si else "",
             float(si.hf_personal) if si else "",

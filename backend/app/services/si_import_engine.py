@@ -23,7 +23,6 @@ SI_FIELD_LABELS = {
     "employee_name": "员工姓名",
     "employee_social_insurance_no": "个人社保号",
     "period": "缴费月份",
-    "si_base": "社保缴存基数",
     "pension_personal_base": "养老保险个人基数",
     "pension_company_base": "养老保险单位基数",
     "unemployment_personal_base": "失业保险个人基数",
@@ -63,7 +62,6 @@ SI_FIELD_LABELS = {
 
 # 金额类字段（需要做数值解析和校验）
 AMOUNT_FIELDS = [
-    "si_base",
     "pension_personal_base", "pension_company_base",
     "unemployment_personal_base", "unemployment_company_base",
     "medical_personal_base", "medical_company_base",
@@ -81,7 +79,7 @@ AMOUNT_FIELDS = [
     "pension_total", "unemployment_total", "medical_total", "injury_total",
     "si_grand_total", "hf_total", "grand_total",
     # 通用字段（AI/规则降级时使用，后续由 _resolve_insurance_fields 转为特定险种字段）
-    "amount", "rate",
+    "amount", "amount_base", "rate",
 ]
 
 # 必须字段（导入时至少要有姓名）
@@ -514,15 +512,24 @@ def _validate_data(
     for name, record in records.items():
         source_info = ", ".join(s["file"] for s in record.get("_sources", []))
 
-        # 1. 缴存基数检查
-        si_base = record.get("si_base")
-        if si_base is None or (isinstance(si_base, Decimal) and si_base == 0):
+        # 1. 各险种缴存基数检查（任一险种有基数即可）
+        base_fields = [
+            "pension_company_base", "pension_personal_base",
+            "medical_company_base", "medical_personal_base",
+            "unemployment_company_base", "unemployment_personal_base",
+            "injury_company_base",
+        ]
+        has_base = any(
+            record.get(f) is not None and record.get(f) != "" and record.get(f) != 0
+            for f in base_fields
+        )
+        if not has_base:
             logs.append({
                 "file_name": source_info,
                 "employee_name": name,
                 "error_level": "warning",
                 "error_type": "missing_base",
-                "error_message": f"员工「{name}」缴存基数为空或为0",
+                "error_message": f"员工「{name}」所有险种缴存基数均为空或为0",
             })
 
         # 2. 缴费月份检查
@@ -538,13 +545,13 @@ def _validate_data(
 
         # 3. 金额逻辑校验：基数 × 比例 ≈ 金额（允许1元误差）
         checks = [
-            ("pension_personal", "pension_personal_rate", "si_base"),
-            ("pension_company", "pension_company_rate", "si_base"),
-            ("unemployment_personal", "unemployment_personal_rate", "si_base"),
-            ("unemployment_company", "unemployment_company_rate", "si_base"),
-            ("medical_personal", "medical_personal_rate", "si_base"),
-            ("medical_company", "medical_company_rate", "si_base"),
-            ("injury_company", "injury_company_rate", "si_base"),
+            ("pension_personal", "pension_personal_rate", "pension_personal_base"),
+            ("pension_company", "pension_company_rate", "pension_company_base"),
+            ("unemployment_personal", "unemployment_personal_rate", "unemployment_personal_base"),
+            ("unemployment_company", "unemployment_company_rate", "unemployment_company_base"),
+            ("medical_personal", "medical_personal_rate", "medical_personal_base"),
+            ("medical_company", "medical_company_rate", "medical_company_base"),
+            ("injury_company", "injury_company_rate", "injury_company_base"),
             ("hf_personal", "hf_personal_rate", "hf_base"),
             ("hf_company", "hf_company_rate", "hf_base"),
         ]
@@ -619,7 +626,7 @@ def _save_records(
 
     # 数值型字段列表（用于判断导入值是否为0/null以决定是否保留旧值）
     numeric_fields = set([
-        "si_base", "pension_personal_base", "pension_company_base",
+        "pension_personal_base", "pension_company_base",
         "unemployment_personal_base", "unemployment_company_base",
         "medical_personal_base", "medical_company_base",
         "injury_company_base",
@@ -651,7 +658,7 @@ def _save_records(
         write_fields = [
             "employee_social_insurance_no",
             # 社保 — 各险种单独基数
-            "si_base", "pension_personal_base", "pension_company_base",
+            "pension_personal_base", "pension_company_base",
             "unemployment_personal_base", "unemployment_company_base",
             "medical_personal_base", "medical_company_base",
             "injury_company_base",
@@ -678,10 +685,6 @@ def _save_records(
                 si_data[f] = val
             else:
                 si_data[f] = val or 0
-
-        # si_base 兜底：如果模板未直接映射 si_base，用养老保险单位基数填充
-        if not si_data.get("si_base") and si_data.get("pension_company_base"):
-            si_data["si_base"] = si_data["pension_company_base"]
 
         if existing:
             for key, value in si_data.items():
@@ -860,7 +863,7 @@ def run_smart_import(
 
             # 险种字段智能解析：根据文件名将通用字段映射到指定险种字段
             # 例如："2026-06——工伤保险（单位缴纳部分）职工明细.xlsx"
-            #   → amount 映射为 injury_company，si_base 映射为 injury_company_base
+            #   → amount 映射为 injury_company，amount_base 映射为 injury_company_base
             records = _resolve_insurance_fields(records, filename)
 
             all_records.extend(records)
@@ -970,7 +973,7 @@ def _build_ai_prompt(file_rows_text: str, filename: str, field_labels: Dict[str,
    - 将"应缴费额(元)"/"应缴金额"映射到对应险种金额（如 pension_company、unemployment_personal）
    - 将"费率"映射到对应险种比例（如 medical_company_rate、injury_company_rate）
    - 示例：文件名含"养老保险（单位缴纳部分）" → "缴费基数"→pension_company_base，"应缴费额(元)"→pension_company，"费率"→pension_company_rate
-   - 如果文件名不包含险种和缴纳方信息，就使用通用字段（如 si_base、amount）
+   - 如果文件名不包含险种和缴纳方信息，就使用通用字段（如 amount_base、amount）
    
    系统字段列表：
 {fields_desc}
@@ -1068,7 +1071,7 @@ def _resolve_insurance_fields(records: List[Dict], filename: str) -> List[Dict]:
     for rec in records:
         # 将通用字段转移为特定字段
         amount = rec.pop("amount", None) or rec.pop("_amount", None)
-        base = rec.pop("si_base", None) or rec.pop("_si_base", None)
+        base = rec.pop("amount_base", None) or rec.pop("si_base", None) or rec.pop("_si_base", None)
         rate = rec.pop("rate", None) or rec.pop("_rate", None)
         
         if amount is not None and amount != "" and amount != 0:
@@ -1087,7 +1090,7 @@ def _resolve_insurance_fields(records: List[Dict], filename: str) -> List[Dict]:
 _FALLBACK_KEYWORDS = {
     "employee_name": ["姓名"],
     "employee_social_insurance_no": ["个人社保号", "社保号", "个人账号"],
-    "si_base": ["社保缴存基数", "社保基数", "缴费工资", "缴费基数"],
+    "amount_base": ["社保缴存基数", "社保基数", "缴费工资", "缴费基数"],
     "amount": ["应缴费额", "应缴金额", "缴费额", "缴纳金额"],
     "rate": ["费率", "缴存比例", "缴费比例"],
     "si_personal": ["个人部分合计", "个人合计", "社保个人合计"],
