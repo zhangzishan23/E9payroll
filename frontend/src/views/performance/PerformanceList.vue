@@ -111,7 +111,7 @@
           </el-button>
         </div>
         <div class="text-sm text-gray-500">
-          支持 .xlsx / .xls 格式，表头需包含：员工编号、初评分数、复评分数、绩效系数
+          支持 .xlsx / .xls 格式，<span class="text-blue-600 font-medium">表头需在第一行</span>，需包含：姓名、初评分数、复评分数（绩效系数可选，不填默认1.00）
         </div>
         <div v-if="importResult" class="mt-3">
           <el-alert

@@ -314,19 +314,31 @@ async def import_performances_excel(
     headers = [str(h).strip() if h else "" for h in rows[0]]
     header_map = {}
     for i, h in enumerate(headers):
-        if "员工编号" in h or "编号" in h:
-            header_map["employee_no"] = i
+        if "姓名" in h or "名字" in h:
+            header_map["employee_name"] = i
         elif "初评" in h:
             header_map["initial_score"] = i
         elif "复评" in h:
             header_map["final_score"] = i
-        elif "系数" in h or "绩效" in h:
+        elif "系数" in h:
             header_map["coefficient"] = i
 
-    if "employee_no" not in header_map:
-        raise HTTPException(status_code=400, detail="Excel 表头缺少「员工编号」列")
+    required = ["employee_name", "initial_score", "final_score"]
+    missing = [{"employee_name": "姓名", "initial_score": "初评分数", "final_score": "复评分数"}[k] for k in required if k not in header_map]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Excel 表头缺少必需列：{'、'.join(missing)}")
 
-    emp_map = {e.employee_no: e for e in db.query(Employee).all()}
+    all_employees = db.query(Employee).all()
+    name_count = {}
+    emp_name_map = {}
+    for emp in all_employees:
+        name = emp.name.strip() if emp.name else ""
+        if not name:
+            continue
+        name_count[name] = name_count.get(name, 0) + 1
+        emp_name_map[name] = emp
+
+    duplicate_names = [n for n, c in name_count.items() if c > 1]
 
     created = 0
     updated = 0
@@ -334,10 +346,18 @@ async def import_performances_excel(
 
     for row_idx, row in enumerate(rows[1:], start=2):
         try:
-            emp_no = str(row[header_map["employee_no"]]).strip() if row[header_map["employee_no"]] else ""
-            emp = emp_map.get(emp_no)
+            emp_name = str(row[header_map["employee_name"]]).strip() if row[header_map["employee_name"]] else ""
+            if not emp_name:
+                errors.append(f"第{row_idx}行：姓名为空")
+                continue
+
+            if emp_name in duplicate_names:
+                errors.append(f"第{row_idx}行：姓名「{emp_name}」存在重名，请使用员工编号或手动录入")
+                continue
+
+            emp = emp_name_map.get(emp_name)
             if not emp:
-                errors.append(f"第{row_idx}行：员工编号「{emp_no}」不存在")
+                errors.append(f"第{row_idx}行：员工姓名「{emp_name}」不存在")
                 continue
 
             def get_float(key):
@@ -350,7 +370,9 @@ async def import_performances_excel(
 
             initial = get_float("initial_score")
             final = get_float("final_score")
-            coef = get_float("coefficient") or 1.00
+            coef = get_float("coefficient")
+            if coef is None:
+                coef = 1.00
 
             existing = db.query(PerformanceScore).filter(
                 PerformanceScore.period == period,
@@ -358,9 +380,12 @@ async def import_performances_excel(
             ).first()
 
             if existing:
-                existing.initial_score = initial
-                existing.final_score = final
-                existing.coefficient = coef
+                if initial is not None:
+                    existing.initial_score = initial
+                if final is not None:
+                    existing.final_score = final
+                if coef is not None:
+                    existing.coefficient = coef
                 existing.reviewer_id = current_user.id
                 updated += 1
             else:
