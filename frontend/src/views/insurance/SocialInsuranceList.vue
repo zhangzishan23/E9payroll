@@ -741,10 +741,14 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Download, Upload, Delete, InfoFilled, UploadFilled } from '@element-plus/icons-vue'
+import { Plus, Download, Upload, Delete, InfoFilled, UploadFilled, WarningFilled } from '@element-plus/icons-vue'
 import api from '../../api'
+
+const route = useRoute()
+const router = useRouter()
 
 function getDefaultPeriod() {
   const now = new Date()
@@ -1181,9 +1185,43 @@ async function doSmartImport() {
     smartFiles.value.forEach(f => {
       formData.append('files', f)
     })
-    const res = await api.post(`/social-insurance/smart-import/${periodDate.value}`, formData, {
+
+    // 第一步：上传文件并预检查
+    const prepareRes = await api.post(`/social-insurance/smart-import-prepare/${periodDate.value}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
+    const prepareData = prepareRes.data
+
+    // 如果有未匹配模板的文件，跳转到模板配置页面
+    if (prepareData.has_unmatched && prepareData.unmatched_files.length > 0) {
+      ElMessage.warning(`检测到 ${prepareData.unmatched_files.length} 个文件未匹配模板，请先配置模板`)
+      smartImportVisible.value = false
+      resetSmartImport()
+      // 跳转到模板配置页面，传入batch_id和period
+      router.push({
+        name: 'InsuranceTemplate',
+        query: {
+          batch_id: prepareData.batch_id,
+          period: periodDate.value
+        }
+      })
+      return
+    }
+
+    // 所有文件都匹配到模板，直接执行导入
+    await executeSmartImportBatch(prepareData.batch_id)
+  } catch (e) {
+    const msg = e.response?.data?.detail || '智能导入失败'
+    ElMessage.error(msg)
+  } finally {
+    smartImporting.value = false
+  }
+}
+
+async function executeSmartImportBatch(batchId) {
+  try {
+    smartImporting.value = true
+    const res = await api.post(`/social-insurance/smart-import-batch/${batchId}/execute`)
     smartImportResult.value = res.data
     if (res.data.created > 0 || res.data.updated > 0) {
       ElMessage.success(`导入成功：新增 ${res.data.created} 条，更新 ${res.data.updated} 条`)
@@ -1191,10 +1229,15 @@ async function doSmartImport() {
     if (res.data.errors.length > 0 || res.data.warnings.length > 0) {
       ElMessage.warning(`${res.data.errors.length} 个错误，${res.data.warnings.length} 个预警，详见弹窗`)
     }
+    smartImportVisible.value = true
     await fetchData()
   } catch (e) {
-    const msg = e.response?.data?.detail || '智能导入失败'
+    const msg = e.response?.data?.detail || '批量导入执行失败'
     ElMessage.error(msg)
+    // 清理失败的batch
+    if (batchId) {
+      api.post(`/social-insurance/smart-import-batch/${batchId}/cancel`).catch(() => {})
+    }
   } finally {
     smartImporting.value = false
   }
@@ -1226,7 +1269,23 @@ async function handleExport() {
 
 onMounted(() => {
   fetchData()
+  checkBatchExecute()
 })
+
+// 检查是否从模板配置向导返回，需要执行批量导入
+async function checkBatchExecute() {
+  const batchId = route.query.execute_batch
+  const period = route.query.period
+  if (batchId) {
+    // 清理URL参数
+    router.replace({ name: 'Insurance' })
+    if (period) {
+      periodDate.value = period
+    }
+    ElMessage.info('模板配置完成，正在执行批量导入...')
+    await executeSmartImportBatch(batchId)
+  }
+}
 </script>
 
 <style scoped>

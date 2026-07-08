@@ -1,22 +1,51 @@
 <template>
   <el-card class="template-config-card">
+    <!-- 批量配置向导横幅 -->
+    <el-alert
+      v-if="batchMode"
+      :title="`批量模板配置向导（第 ${currentBatchIndex + 1}/${batchUnmatchedFiles.length} 个）`"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="mb-4"
+    >
+      <template #default>
+        <div class="flex items-center justify-between w-full">
+          <div>
+            <p class="font-medium">正在配置文件：<span class="text-blue-600">{{ currentBatchFile?.filename }}</span></p>
+            <p class="text-xs mt-1">请核对自动识别的模板配置，确认无误后点击「保存并继续」配置下一个文件</p>
+          </div>
+          <div class="flex gap-2 ml-4">
+            <el-button size="small" @click="skipBatchFile">跳过此文件</el-button>
+            <el-button size="small" type="danger" @click="cancelBatch">取消向导</el-button>
+          </div>
+        </div>
+      </template>
+    </el-alert>
+
     <template #header>
       <div class="flex justify-between items-center">
-        <span class="text-lg font-semibold">社保公积金导入模板配置</span>
-        <div class="flex gap-2">
+        <span class="text-lg font-semibold">
+          {{ batchMode ? '批量模板配置向导' : '社保公积金导入模板配置' }}
+        </span>
+        <div class="flex gap-2" v-if="!batchMode">
           <el-button type="success" :icon="Upload" size="small" @click="triggerUpload">上传文件自动识别</el-button>
           <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)">新增模板</el-button>
+        </div>
+        <div class="flex gap-2" v-else>
+          <el-tag type="info">待配置：{{ batchUnmatchedFiles.length - currentBatchIndex - skippedBatchCount }} 个</el-tag>
+          <el-tag type="success">已完成：{{ currentBatchIndex + skippedBatchCount }} 个</el-tag>
         </div>
       </div>
     </template>
 
-    <div class="bg-blue-50 rounded-lg p-3 mb-4 text-sm text-gray-600">
+    <div class="bg-blue-50 rounded-lg p-3 mb-4 text-sm text-gray-600" v-if="!batchMode">
       <el-icon class="mr-1"><InfoFilled /></el-icon>
       配置不同政务平台导出的社保/公积金文件解析规则。配置后，「智能导入」即可自动识别并解析对应格式的文件。
     <span class="text-blue-600 font-medium ml-2">推荐：上传一份样本文件，系统自动提取列名，您手动配置字段映射后保存即可。</span>
     </div>
 
-    <el-table :data="templates" border stripe v-loading="loading">
+    <el-table :data="templates" border stripe v-loading="loading" v-if="!batchMode">
       <el-table-column prop="id" label="ID" width="60" />
       <el-table-column prop="name" label="模板名称" width="160" />
       <el-table-column prop="source_category" label="数据类别" width="110">
@@ -70,14 +99,25 @@
     <!-- 新增/编辑弹窗 -->
     <el-dialog
       v-model="dialogVisible"
-      :title="isEdit ? '编辑模板' : (isAutoDetected ? '核对自动识别结果' : '新增模板')"
+      :title="getDialogTitle()"
       width="800px"
       append-to-body
-      @close="resetForm"
+      :close-on-click-modal="batchMode ? false : true"
+      :show-close="!batchMode"
+      @close="onDialogClose"
     >
+      <!-- 批量模式提示 -->
+      <el-alert
+        v-if="batchMode"
+        :title="`正在配置文件「${currentBatchFile?.filename}」的模板（第 ${currentBatchIndex + 1}/${batchUnmatchedFiles.length} 个）`"
+        type="info"
+        :closable="false"
+        show-icon
+        class="mb-4"
+      />
       <!-- 自动识别结果提示 -->
       <el-alert
-        v-if="isAutoDetected"
+        v-else-if="isAutoDetected"
         :title="`已根据上传文件自动识别配置。${autoMatchStats}，请核对以下信息是否正确，可手动调整后保存。`"
         type="success"
         :closable="false"
@@ -441,18 +481,49 @@
         </el-row>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
+        <template v-if="!batchMode">
+          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
+        </template>
+        <template v-else>
+          <el-button @click="skipBatchFile">跳过此文件</el-button>
+          <el-button type="primary" :loading="saving" @click="handleBatchSave">
+            {{ isLastBatchFile ? '保存并执行导入' : '保存并继续下一个' }}
+          </el-button>
+        </template>
+      </template>
+    </el-dialog>
+
+    <!-- 批量配置完成弹窗 -->
+    <el-dialog
+      v-model="batchCompleteVisible"
+      title="模板配置完成"
+      width="500px"
+      append-to-body
+      :close-on-click-modal="false"
+    >
+      <div class="text-center py-4">
+        <el-icon class="text-5xl text-green-500 mb-4"><CircleCheckFilled /></el-icon>
+        <p class="text-lg font-medium mb-2">所有文件模板配置完成！</p>
+        <p class="text-gray-500 text-sm">共处理 {{ batchUnmatchedFiles.length }} 个文件，已配置 {{ savedBatchCount }} 个模板，跳过 {{ skippedBatchCount }} 个文件</p>
+      </div>
+      <template #footer>
+        <el-button @click="cancelBatch">返回模板列表</el-button>
+        <el-button type="primary" @click="executeBatchImport">返回并执行导入</el-button>
       </template>
     </el-dialog>
   </el-card>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, InfoFilled, Upload, QuestionFilled, WarningFilled } from '@element-plus/icons-vue'
+import { Plus, Delete, InfoFilled, Upload, QuestionFilled, WarningFilled, CircleCheckFilled } from '@element-plus/icons-vue'
 import api from '../../api'
+
+const route = useRoute()
+const router = useRouter()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -465,6 +536,16 @@ const templates = ref([])
 const fieldLabels = ref({})
 const formRef = ref(null)
 const fileInputRef = ref(null)
+
+// 批量配置向导状态
+const batchMode = ref(false)
+const batchId = ref(null)
+const batchUnmatchedFiles = ref([])
+const currentBatchIndex = ref(0)
+const skippedBatchCount = ref(0)
+const savedBatchCount = ref(0)
+const batchCompleteVisible = ref(false)
+const autoDetecting = ref(false)
 
 // 通用字段（用于文件名险种推断，中文标签）
 // 【使用方法】当多个险种（养老/失业/医疗/工伤）的文件格式完全相同时（如邯郸社保），
@@ -555,6 +636,27 @@ const hasGenericMappings = computed(() => {
   return form.mapping_list.some(item => isGenericField(item.db_field))
 })
 
+// 批量模式计算属性
+const currentBatchFile = computed(() => {
+  if (batchMode.value && batchUnmatchedFiles.value.length > currentBatchIndex.value) {
+    return batchUnmatchedFiles.value[currentBatchIndex.value]
+  }
+  return null
+})
+
+const isLastBatchFile = computed(() => {
+  return currentBatchIndex.value >= batchUnmatchedFiles.value.length - 1
+})
+
+function getDialogTitle() {
+  if (batchMode.value) {
+    return `批量配置模板 - ${currentBatchFile.value?.filename || ''}`
+  }
+  if (isEdit.value) return '编辑模板'
+  if (isAutoDetected.value) return '核对自动识别结果'
+  return '新增模板'
+}
+
 const rules = {
   name: [{ required: true, message: '请输入模板名称', trigger: 'blur' }],
   source_category: [{ required: true, message: '请选择数据类别', trigger: 'change' }],
@@ -615,7 +717,219 @@ async function fetchFieldLabels() {
 onMounted(() => {
   fetchTemplates()
   fetchFieldLabels()
+  initBatchModeFromRoute()
 })
+
+// 监听路由变化，处理批量向导
+watch(() => route.query.batch_id, (newBatchId) => {
+  if (newBatchId) {
+    initBatchMode(newBatchId)
+  } else if (batchMode.value) {
+    exitBatchMode()
+  }
+})
+
+// ── 批量配置向导方法 ──
+async function initBatchModeFromRoute() {
+  const batchIdParam = route.query.batch_id
+  if (batchIdParam) {
+    await initBatchMode(batchIdParam)
+  }
+}
+
+async function initBatchMode(b_id) {
+  try {
+    loading.value = true
+    const res = await api.get(`/social-insurance/smart-import-batch/${b_id}`)
+    const data = res.data
+
+    batchId.value = b_id
+    batchUnmatchedFiles.value = data.unmatched_files || []
+    currentBatchIndex.value = 0
+    skippedBatchCount.value = 0
+    savedBatchCount.value = 0
+    batchCompleteVisible.value = false
+
+    if (batchUnmatchedFiles.value.length === 0) {
+      ElMessage.info('所有文件都已匹配到模板，无需配置')
+      router.replace({ name: 'InsuranceTemplate' })
+      return
+    }
+
+    batchMode.value = true
+    loading.value = false
+
+    await loadCurrentBatchFile()
+  } catch (e) {
+    console.error('初始化批量模式失败：', e)
+    ElMessage.error('批量配置向导初始化失败，可能是会话已过期')
+    router.replace({ name: 'InsuranceTemplate' })
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadCurrentBatchFile() {
+  if (!currentBatchFile.value) {
+    finishBatch()
+    return
+  }
+
+  autoDetecting.value = true
+  try {
+    const fileIdx = currentBatchFile.value.index
+    const res = await api.get(`/social-insurance/templates/auto-detect-batch/${batchId.value}/${fileIdx}`)
+    const detected = res.data
+    applyDetectedConfig(detected)
+    isEdit.value = false
+    isAutoDetected.value = true
+    editId.value = null
+    dialogVisible.value = true
+  } catch (e) {
+    console.error('自动识别失败：', e)
+    ElMessage.error(`文件「${currentBatchFile.value.filename}」自动识别失败，请手动配置`)
+    resetForm()
+    isEdit.value = false
+    isAutoDetected.value = false
+    editId.value = null
+    dialogVisible.value = true
+  } finally {
+    autoDetecting.value = false
+  }
+}
+
+async function handleBatchSave() {
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) return
+
+  if (form.mapping_list.length === 0) {
+    ElMessage.warning('请至少添加一个字段映射')
+    return
+  }
+
+  const column_mappings = {}
+  form.mapping_list.forEach(item => {
+    if (item.header_name) {
+      column_mappings[item.header_name] = item.db_field || null
+    }
+  })
+  if (Object.keys(column_mappings).length === 0) {
+    ElMessage.warning('字段映射不完整，请检查')
+    return
+  }
+  const hasValidMapping = Object.values(column_mappings).some(v => v !== null)
+  if (!hasValidMapping) {
+    ElMessage.warning('请至少为一个字段设置系统映射')
+    return
+  }
+
+  const row_filters = {}
+  form.filter_list.forEach(item => {
+    if (item.col && item.val) {
+      row_filters[item.col] = item.val
+    }
+  })
+
+  const remove_chars = form.remove_chars.split(',').map(s => s.trim()).filter(Boolean)
+  const number_format = remove_chars.length > 0 ? { remove_chars } : null
+
+  const header_rows = form.header_rows_str.split(',')
+    .map(s => parseInt(s.trim()) - 1)
+    .filter(n => !isNaN(n) && n >= 0)
+
+  const default_rates = defaultRatesToApi(form.default_rates)
+
+  const payload = {
+    name: form.name,
+    source_category: form.source_category,
+    file_type: form.file_type,
+    city: form.city || null,
+    description: form.description || null,
+    file_pattern: form.file_pattern || null,
+    file_keywords: form.file_keywords.length > 0 ? form.file_keywords : null,
+    sheet_pattern: form.sheet_pattern || null,
+    header_rows,
+    data_start_row: form.data_start_row - 1,
+    skip_footer_rows: form.skip_footer_rows,
+    column_mappings,
+    row_filters: Object.keys(row_filters).length > 0 ? row_filters : null,
+    number_format,
+    default_rates,
+    is_active: form.is_active,
+  }
+
+  saving.value = true
+  try {
+    await api.post('/social-insurance/templates', payload)
+    savedBatchCount.value++
+    ElMessage.success(`模板「${form.name}」保存成功`)
+    dialogVisible.value = false
+    await fetchTemplates()
+    nextBatchFile()
+  } catch (e) {
+    // error handled by interceptor
+  } finally {
+    saving.value = false
+  }
+}
+
+function skipBatchFile() {
+  skippedBatchCount.value++
+  dialogVisible.value = false
+  nextBatchFile()
+}
+
+function nextBatchFile() {
+  currentBatchIndex.value++
+  if (currentBatchIndex.value >= batchUnmatchedFiles.value.length) {
+    finishBatch()
+  } else {
+    loadCurrentBatchFile()
+  }
+}
+
+function finishBatch() {
+  dialogVisible.value = false
+  batchCompleteVisible.value = true
+}
+
+function exitBatchMode() {
+  batchMode.value = false
+  batchId.value = null
+  batchUnmatchedFiles.value = []
+  currentBatchIndex.value = 0
+  skippedBatchCount.value = 0
+  savedBatchCount.value = 0
+  batchCompleteVisible.value = false
+  dialogVisible.value = false
+}
+
+function cancelBatch() {
+  exitBatchMode()
+  api.post(`/social-insurance/smart-import-batch/${batchId.value}/cancel`).catch(() => {})
+  router.push({ name: 'Insurance' })
+}
+
+async function executeBatchImport() {
+  try {
+    const period = route.query.period
+    router.push({
+      name: 'Insurance',
+      query: {
+        execute_batch: batchId.value,
+        period: period
+      }
+    })
+  } catch (e) {
+    console.error('跳转失败：', e)
+  }
+}
+
+function onDialogClose() {
+  if (!batchMode.value) {
+    resetForm()
+  }
+}
 
 // ── 上传文件自动识别 ──
 function triggerUpload() {
@@ -831,7 +1145,6 @@ function resetForm() {
 
 // ── 公积金比例联动 ──
 // watch split_equal for hf - 当勾选"比例相同"时，单位比例跟随个人比例
-import { watch } from 'vue'
 watch(
   () => [form.default_rates.hf.split_equal, form.default_rates.hf.personal_rate_pct],
   ([equal, pPct]) => {

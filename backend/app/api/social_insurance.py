@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 from io import BytesIO
+import logging
 from openpyxl import Workbook
 from app.core.database import get_db
 from app.core.log_helper import write_log
@@ -12,8 +13,11 @@ from app.models.models import SocialInsurance, Employee, SiImportTemplate, SiImp
 from app.api.auth import get_current_user, UserInfo
 from app.services.si_import_engine import (
     run_smart_import, SI_FIELD_LABELS, auto_detect_template,
+    save_batch_files, precheck_batch, auto_detect_from_batch,
+    run_smart_import_from_batch, cleanup_batch,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -681,3 +685,101 @@ def get_import_logs(
     if batch_id:
         q = q.filter(SiImportLog.batch_id == batch_id)
     return q.order_by(SiImportLog.id.desc()).all()
+
+
+# ── 批量模板配置向导 ──────────────────────────────────────────────────
+@router.post("/smart-import-prepare/{period}")
+def smart_import_prepare(
+    period: str,
+    files: List[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """
+    第一步：上传文件并预检查。
+    保存文件到临时目录，返回batch_id和模板匹配结果。
+    如果有文件未匹配模板，前端引导用户进入批量模板配置流程。
+    """
+    try:
+        batch_meta = save_batch_files(period, files)
+        batch_id = batch_meta["batch_id"]
+        precheck_result = precheck_batch(db, batch_id)
+        return precheck_result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("批量导入准备失败")
+        raise HTTPException(status_code=500, detail=f"准备失败：{str(e)}")
+
+
+@router.get("/smart-import-batch/{batch_id}")
+def get_smart_import_batch(
+    batch_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """获取批次预检查结果"""
+    try:
+        return precheck_batch(db, batch_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/templates/auto-detect-batch/{batch_id}/{file_index}")
+def auto_detect_template_from_batch(
+    batch_id: str,
+    file_index: int,
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """对批次中指定索引的文件执行自动模板识别"""
+    try:
+        result = auto_detect_from_batch(batch_id, file_index)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("批量自动识别失败")
+        raise HTTPException(status_code=500, detail=f"自动识别失败：{str(e)}")
+
+
+@router.post("/smart-import-batch/{batch_id}/execute")
+def execute_smart_import_batch(
+    batch_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """执行批次导入（所有模板配置完成后调用）"""
+    try:
+        result = run_smart_import_from_batch(db, batch_id, current_user.id, current_user.username)
+        write_log(
+            db, "data_change", current_user.id, current_user.username,
+            "social_insurance", "smart_import_batch",
+            f"批量导入 (batch={batch_id}, 文件{result.total_files}个, "
+            f"解析成功{result.parsed_files}个, 新增{result.created}条, 更新{result.updated}条)"
+        )
+        return {
+            "total_files": result.total_files,
+            "parsed_files": result.parsed_files,
+            "failed_files": result.failed_files,
+            "total_rows": result.total_rows,
+            "created": result.created,
+            "updated": result.updated,
+            "errors": result.errors,
+            "warnings": result.warnings,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("批量导入执行失败")
+        cleanup_batch(batch_id)
+        raise HTTPException(status_code=500, detail=f"导入失败：{str(e)}")
+
+
+@router.post("/smart-import-batch/{batch_id}/cancel")
+def cancel_smart_import_batch(
+    batch_id: str,
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """取消批量导入，清理临时文件"""
+    cleanup_batch(batch_id)
+    return {"message": "已取消"}

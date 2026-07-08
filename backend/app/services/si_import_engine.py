@@ -1,13 +1,17 @@
 """
 社保公积金智能导入引擎
 支持：Excel(xlsx/xls) + PDF 多文件批量上传、多模板自动匹配、字段映射、
-      员工姓名匹配、多层级数据校验
+      员工姓名匹配、多层级数据校验、批量模板配置向导
 """
 import re
+import os
 import uuid
 import io
 import json
+import time
+import shutil
 import logging
+from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from decimal import Decimal, ROUND_HALF_EVEN
 
@@ -18,6 +22,11 @@ from app.models.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+TEMP_DIR = PROJECT_ROOT / "temp" / "si_import"
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
+BATCH_EXPIRE_SECONDS = 3600
 
 # ── 所有可映射字段及其中文标签 ──────────────────────────────────────────
 SI_FIELD_LABELS = {
@@ -1665,3 +1674,234 @@ def auto_detect_template(file_bytes: bytes, filename: str) -> Dict:
         "row_filters": None,
         "number_format": {"remove_chars": [",", "，"], "decimal_separator": "."},
     }
+
+
+# ── 批量模板配置向导 ──────────────────────────────────────────────────
+
+class BatchFileInfo:
+    """批量上传文件信息"""
+    def __init__(self, filename: str, original_filename: str, file_path: Path):
+        self.filename = filename
+        self.original_filename = original_filename
+        self.file_path = file_path
+
+
+def _cleanup_expired_batches():
+    """清理过期的临时批次文件"""
+    now = time.time()
+    if not TEMP_DIR.exists():
+        return
+    for batch_dir in TEMP_DIR.iterdir():
+        if not batch_dir.is_dir():
+            continue
+        try:
+            meta_path = batch_dir / "meta.json"
+            if not meta_path.exists():
+                if now - batch_dir.stat().st_mtime > BATCH_EXPIRE_SECONDS:
+                    shutil.rmtree(batch_dir, ignore_errors=True)
+                continue
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            created_at = meta.get("created_at", 0)
+            if now - created_at > BATCH_EXPIRE_SECONDS:
+                shutil.rmtree(batch_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+def save_batch_files(period: str, files: List) -> Dict:
+    """
+    保存上传的文件到临时目录，返回batch信息。
+    返回: {batch_id, period, files: [{index, filename, size}]}
+    """
+    _cleanup_expired_batches()
+
+    batch_id = str(uuid.uuid4())
+    batch_dir = TEMP_DIR / batch_id
+    batch_dir.mkdir(parents=True, exist_ok=True)
+
+    file_infos = []
+    for idx, file in enumerate(files):
+        filename = file.filename or f"unknown_{idx}"
+        safe_name = f"{idx}_{filename}"
+        file_path = batch_dir / safe_name
+        file_bytes = file.file.read()
+        file.file.seek(0)
+        with open(file_path, "wb") as f:
+            f.write(file_bytes)
+        file_infos.append({
+            "index": idx,
+            "filename": filename,
+            "size": len(file_bytes),
+        })
+
+    meta = {
+        "batch_id": batch_id,
+        "period": period,
+        "created_at": time.time(),
+        "files": file_infos,
+    }
+    with open(batch_dir / "meta.json", "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+    return meta
+
+
+def precheck_batch(db: Session, batch_id: str) -> Dict:
+    """
+    预检查批次中的文件，判断哪些能匹配模板、哪些不能。
+    返回: {batch_id, matched_files: [...], unmatched_files: [...], all_files: [...]}
+    """
+    batch_dir = TEMP_DIR / batch_id
+    meta_path = batch_dir / "meta.json"
+    if not meta_path.exists():
+        raise ValueError(f"批次 {batch_id} 不存在或已过期")
+
+    with open(meta_path, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+
+    matched_files = []
+    unmatched_files = []
+    file_results = []
+
+    for finfo in meta.get("files", []):
+        idx = finfo["index"]
+        filename = finfo["filename"]
+        safe_name = f"{idx}_{filename}"
+        file_path = batch_dir / safe_name
+
+        if not file_path.exists():
+            unmatched_files.append({**finfo, "reason": "文件不存在"})
+            file_results.append({**finfo, "matched": False, "reason": "文件不存在"})
+            continue
+
+        try:
+            with open(file_path, "rb") as f:
+                file_bytes = f.read()
+
+            ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+            if ext in ("xlsx", "xls"):
+                file_rows = _parse_excel(file_bytes, filename)
+            elif ext == "pdf":
+                file_rows = _parse_pdf(file_bytes)
+            else:
+                unmatched_files.append({**finfo, "reason": "不支持的文件格式"})
+                file_results.append({**finfo, "matched": False, "reason": "不支持的文件格式"})
+                continue
+
+            if not file_rows or len(file_rows) < 2:
+                unmatched_files.append({**finfo, "reason": "文件为空或数据行数不足"})
+                file_results.append({**finfo, "matched": False, "reason": "文件为空或数据行数不足"})
+                continue
+
+            template = _match_template(db, file_rows, filename)
+            if template:
+                matched_files.append({**finfo, "template_name": template.name, "template_id": template.id})
+                file_results.append({**finfo, "matched": True, "template_name": template.name, "template_id": template.id})
+            else:
+                unmatched_files.append({**finfo, "reason": "未匹配到模板"})
+                file_results.append({**finfo, "matched": False, "reason": "未匹配到模板"})
+        except Exception as e:
+            logger.exception(f"预检查文件失败: {filename}")
+            unmatched_files.append({**finfo, "reason": f"文件解析失败: {str(e)}"})
+            file_results.append({**finfo, "matched": False, "reason": f"文件解析失败: {str(e)}"})
+
+    return {
+        "batch_id": batch_id,
+        "period": meta.get("period", ""),
+        "total_files": len(file_results),
+        "matched_count": len(matched_files),
+        "unmatched_count": len(unmatched_files),
+        "has_unmatched": len(unmatched_files) > 0,
+        "matched_files": matched_files,
+        "unmatched_files": unmatched_files,
+        "all_files": file_results,
+    }
+
+
+def auto_detect_from_batch(batch_id: str, file_index: int) -> Dict:
+    """
+    对批次中指定索引的文件执行自动模板识别。
+    返回auto_detect_template的结果。
+    """
+    batch_dir = TEMP_DIR / batch_id
+    meta_path = batch_dir / "meta.json"
+    if not meta_path.exists():
+        raise ValueError(f"批次 {batch_id} 不存在或已过期")
+
+    with open(meta_path, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+
+    finfo = None
+    for f in meta.get("files", []):
+        if f["index"] == file_index:
+            finfo = f
+            break
+    if not finfo:
+        raise ValueError(f"批次中未找到索引为 {file_index} 的文件")
+
+    filename = finfo["filename"]
+    safe_name = f"{file_index}_{filename}"
+    file_path = batch_dir / safe_name
+    if not file_path.exists():
+        raise ValueError(f"文件不存在: {filename}")
+
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
+
+    return auto_detect_template(file_bytes, filename)
+
+
+def run_smart_import_from_batch(
+    db: Session,
+    batch_id: str,
+    user_id: int,
+    username: str,
+) -> ImportResult:
+    """从临时批次目录读取文件并执行智能导入"""
+    batch_dir = TEMP_DIR / batch_id
+    meta_path = batch_dir / "meta.json"
+    if not meta_path.exists():
+        raise ValueError(f"批次 {batch_id} 不存在或已过期")
+
+    with open(meta_path, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+
+    period = meta.get("period", "")
+
+    class TempFileWrapper:
+        """模拟UploadFile的简单包装器"""
+        def __init__(self, filename: str, file_path: Path):
+            self.filename = filename
+            self._file_path = file_path
+            self._data = None
+
+        @property
+        def file(self):
+            if self._data is None:
+                with open(self._file_path, "rb") as f:
+                    self._data = io.BytesIO(f.read())
+            self._data.seek(0)
+            return self._data
+
+    temp_files = []
+    for finfo in meta.get("files", []):
+        idx = finfo["index"]
+        filename = finfo["filename"]
+        safe_name = f"{idx}_{filename}"
+        file_path = batch_dir / safe_name
+        if file_path.exists():
+            temp_files.append(TempFileWrapper(filename, file_path))
+
+    try:
+        result = run_smart_import(db, period, temp_files, user_id, username)
+        return result
+    finally:
+        shutil.rmtree(batch_dir, ignore_errors=True)
+
+
+def cleanup_batch(batch_id: str):
+    """清理批次临时文件"""
+    batch_dir = TEMP_DIR / batch_id
+    if batch_dir.exists():
+        shutil.rmtree(batch_dir, ignore_errors=True)
