@@ -9,6 +9,7 @@ from openpyxl import Workbook
 from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.core.query_utils import filter_active_employees
+from app.services.work_calendar import get_month_salary_days
 from app.models.models import PerformanceScore, Employee, EmployeeSalary, AttendanceRecord
 from app.api.auth import get_current_user, UserInfo
 
@@ -36,6 +37,8 @@ class PerformanceOut(BaseModel):
     review_note: Optional[str] = None
     total_work_days: Optional[float] = None
     actual_work_days: Optional[float] = None
+    attendance_rate: Optional[float] = None
+    actual_paid_performance: float = 0
     reviewer_id: Optional[int] = None
 
     class Config:
@@ -79,6 +82,12 @@ def _build_performance_out(p: Optional[PerformanceScore], emp: Employee, perf_st
     diff = round(evaluated - perf_std, 2)
     score_diff = round(final - initial, 2) if (initial is not None and final is not None) else None
 
+    att_rate = None
+    actual_paid = 0.0
+    if total_work_days and actual_work_days is not None and total_work_days > 0:
+        att_rate = round(actual_work_days / total_work_days, 4)
+        actual_paid = round(evaluated * att_rate, 2)
+
     return PerformanceOut(
         id=p.id if p else None,
         period=period,
@@ -100,6 +109,8 @@ def _build_performance_out(p: Optional[PerformanceScore], emp: Employee, perf_st
         review_note=p.review_note if p else None,
         total_work_days=total_work_days,
         actual_work_days=actual_work_days,
+        attendance_rate=att_rate,
+        actual_paid_performance=actual_paid,
         reviewer_id=p.reviewer_id if p else None,
     )
 
@@ -155,6 +166,7 @@ def get_performances(
             att_map[att.employee_id] = att
 
         name_map = _batch_load_dict_names(db)
+        standard_salary_days = get_month_salary_days(db, period)
 
         result = []
         for emp in employees:
@@ -162,8 +174,13 @@ def get_performances(
             sal = sal_map.get(emp.id)
             att = att_map.get(emp.id)
             perf_std = float(sal.performance_standard) if sal else 0
-            total_days = float(att.total_work_days) if att else None
-            actual_days = float(att.actual_salary_days) if att else None
+            
+            if att:
+                total_days = float(att.total_work_days) if att.total_work_days else standard_salary_days
+                actual_days = float(att.actual_salary_days)
+            else:
+                total_days = standard_salary_days
+                actual_days = standard_salary_days
 
             out = _build_performance_out(p, emp, perf_std, total_days, actual_days, period)
             out.contract_company = _get_dict_name(db, emp.contract_company_id, name_map)
@@ -233,8 +250,19 @@ def create_performance(
     sal = db.query(EmployeeSalary).filter(
         EmployeeSalary.employee_id == perf.employee_id
     ).order_by(EmployeeSalary.effective_date.desc(), EmployeeSalary.id.desc()).first()
+    att = db.query(AttendanceRecord).filter(
+        AttendanceRecord.period == perf.period,
+        AttendanceRecord.employee_id == perf.employee_id
+    ).first()
     perf_std = float(sal.performance_standard) if sal else 0
-    out = _build_performance_out(perf, emp, perf_std, None, None, perf.period)
+    standard_salary_days = get_month_salary_days(db, perf.period)
+    if att:
+        total_days = float(att.total_work_days) if att.total_work_days else standard_salary_days
+        actual_days = float(att.actual_salary_days)
+    else:
+        total_days = standard_salary_days
+        actual_days = standard_salary_days
+    out = _build_performance_out(perf, emp, perf_std, total_days, actual_days, perf.period)
     out.contract_company = _get_dict_name(db, emp.contract_company_id)
     out.department = _get_dict_name(db, emp.department_id)
     out.position = _get_dict_name(db, emp.position_id)
@@ -265,8 +293,19 @@ def update_performance(
     sal = db.query(EmployeeSalary).filter(
         EmployeeSalary.employee_id == perf.employee_id
     ).order_by(EmployeeSalary.effective_date.desc(), EmployeeSalary.id.desc()).first()
+    att = db.query(AttendanceRecord).filter(
+        AttendanceRecord.period == perf.period,
+        AttendanceRecord.employee_id == perf.employee_id
+    ).first()
     perf_std = float(sal.performance_standard) if sal else 0
-    out = _build_performance_out(perf, emp, perf_std, None, None, perf.period)
+    standard_salary_days = get_month_salary_days(db, perf.period)
+    if att:
+        total_days = float(att.total_work_days) if att.total_work_days else standard_salary_days
+        actual_days = float(att.actual_salary_days)
+    else:
+        total_days = standard_salary_days
+        actual_days = standard_salary_days
+    out = _build_performance_out(perf, emp, perf_std, total_days, actual_days, perf.period)
     out.contract_company = _get_dict_name(db, emp.contract_company_id)
     out.department = _get_dict_name(db, emp.department_id)
     out.position = _get_dict_name(db, emp.position_id)
@@ -375,15 +414,17 @@ def export_performances(
         att_map[att.employee_id] = att
 
     name_map = _batch_load_dict_names(db)
+    standard_salary_days = get_month_salary_days(db, period)
 
     wb = Workbook()
     ws = wb.active
     ws.title = f"绩效数据_{period}"
     headers = [
         "员工编号", "员工姓名", "合同公司", "部门", "职务",
-        "当月总计薪天数", "实际计薪天数",
+        "应计薪天数", "实际计薪天数", "出勤率",
         "绩效奖金标准", "绩效类别",
         "初评", "复评", "评价后绩效标准", "差额",
+        "实发绩效金额",
         "调整差异", "评分理由", "分管领导审核后调整"
     ]
     ws.append(headers)
@@ -399,8 +440,16 @@ def export_performances(
         evaluated = round(perf_std * coef, 2)
         diff = round(evaluated - perf_std, 2)
         score_diff = round(final - initial, 2) if (initial is not None and final is not None) else None
-        total_days = float(att.total_work_days) if att else ""
-        actual_days = float(att.actual_salary_days) if att else ""
+        
+        if att:
+            total_days = float(att.total_work_days) if att.total_work_days else standard_salary_days
+            actual_days = float(att.actual_salary_days)
+        else:
+            total_days = standard_salary_days
+            actual_days = standard_salary_days
+            
+        att_rate_val = round(actual_days / total_days, 4) if total_days > 0 else 0
+        actual_paid_val = round(evaluated * att_rate_val, 2) if total_days > 0 else 0
 
         ws.append([
             emp.employee_no,
@@ -409,13 +458,15 @@ def export_performances(
             _get_dict_name(db, emp.department_id, name_map),
             _get_dict_name(db, emp.position_id, name_map),
             total_days,
-            actual_days,
+            actual_days if att else "",
+            f"{att_rate_val * 100:.1f}%" if att else "100.0%",
             perf_std,
             p.performance_category if p else "",
             initial if initial is not None else "",
             final if final is not None else "",
             evaluated,
             diff,
+            actual_paid_val,
             score_diff if score_diff is not None else "",
             p.score_reason if p else "",
             p.review_note if p else ""

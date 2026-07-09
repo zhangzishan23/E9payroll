@@ -642,3 +642,19 @@ class WorkCalendar(Base):
     is_ai_generated = Column(Boolean, default=False, comment="是否AI生成")
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class ExportTemplate(Base):
+    """导出表配置模板"""
+    __tablename__ = "export_templates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, comment="模板名称")
+    template_type = Column(String(50), nullable=False, comment="模板类型: salary_finance=财务薪资表, salary_slip=工资条, tax=报税表, roster=花名册, attendance=考勤表, custom=自定义")
+    description = Column(String(500), nullable=True, comment="模板说明")
+    fields = Column(JSON, nullable=False, comment="字段配置列表: [{key:'xxx', label:'xxx', width:100}]")
+    is_default = Column(Boolean, default=False, comment="是否为默认模板")
+    is_enabled = Column(Boolean, default=True, comment="是否启用")
+    created_by = Column(Integer, ForeignKey("sys_users.id"), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

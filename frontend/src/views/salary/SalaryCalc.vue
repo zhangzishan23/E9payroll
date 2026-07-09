@@ -13,12 +13,10 @@
         </div>
         <div class="flex items-center gap-1">
           <el-button type="primary" size="small" :loading="checking" @click="checkCompleteness">检查</el-button>
-          <el-button type="success" size="small" :loading="calculating" :disabled="!canCalculate" @click="startCalculate">核算</el-button>
-          <el-button type="warning" size="small" :disabled="!hasResults" @click="calculateNet">实发</el-button>
           <el-button
             size="small"
             :type="editMode ? 'danger' : 'primary'"
-            :disabled="!hasResults"
+            :disabled="!hasCalculatedResults"
             @click="toggleEditMode"
           >
             {{ editMode ? '退出' : '编辑' }}
@@ -27,10 +25,11 @@
             <el-button type="success" size="small" :loading="savingEdits" @click="confirmEdits">确认</el-button>
             <el-button size="small" @click="cancelEdits">取消</el-button>
           </template>
-          <el-button type="danger" size="small" :disabled="!hasResults || isSubmitting" @click="batchSubmitApproval">审核</el-button>
+          <el-button type="danger" size="small" :disabled="!hasCalculatedResults || isSubmitting" @click="batchSubmitApproval">审核</el-button>
           <el-button type="info" size="small" :disabled="!hasResults" @click="handleExport">导出</el-button>
           <el-button type="danger" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">删除</el-button>
-          <el-button type="warning" size="small" :disabled="!hasResults" @click="showTaxImport">报税</el-button>
+          <el-button type="warning" size="small" :disabled="!hasCalculatedResults" @click="showTaxImport">报税</el-button>
+          <el-button type="success" size="small" :disabled="!hasResults" @click="handleExportTaxTemplate">导出报税模板</el-button>
         </div>
       </div>
 
@@ -75,7 +74,7 @@
         <div class="grid grid-cols-2 gap-2 text-gray-600">
           <div>月薪标准 = 基本工资 + 绩效奖金标准 + 补贴合计</div>
           <div>（如有月中调薪，基本工资和绩效奖金标准使用折算后值）</div>
-          <div>折算后基本工资 = ROUND(调前天数×调前基本工资/总计薪天数 + 调后基本工资×调后天数/总计薪天数, 2)</div>
+          <div>折算后基本工资 = ROUND(调前天数×调前基本工资/应计薪天数 + 调后基本工资×调后天数/应计薪天数, 2)</div>
           <div>实发绩效奖金标准 = 绩效奖金标准 × 实发绩效奖金系数</div>
           <div>实发绩效奖金 = 实发绩效奖金标准 × 出勤率</div>
           <div>总应发工资 = (基本工资 + 补贴合计 + 提成/项目奖金/补发) × 出勤率 + 实发绩效奖金</div>
@@ -107,6 +106,13 @@
             </el-tooltip>
           </template>
         </el-table-column>
+        <el-table-column prop="contract_company" width="120">
+          <template #header>
+            <el-tooltip content="员工合同所属公司，来源于员工档案" placement="top" :show-after="400">
+              <span>合同公司</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column prop="employee_name" width="70" fixed>
           <template #header>
             <el-tooltip content="员工姓名，来源于员工档案" placement="top" :show-after="400">
@@ -121,6 +127,27 @@
             </el-tooltip>
           </template>
         </el-table-column>
+        <el-table-column prop="position" width="90">
+          <template #header>
+            <el-tooltip content="员工职务，来源于员工档案" placement="top" :show-after="400">
+              <span>职务</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column prop="cost_owner" width="90">
+          <template #header>
+            <el-tooltip content="费用负责人，来源于员工档案" placement="top" :show-after="400">
+              <span>费用负责人</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column prop="status" width="80">
+          <template #header>
+            <el-tooltip content="员工用工状态" placement="top" :show-after="400">
+              <span>状态</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column prop="entry_date" width="100">
           <template #header>
             <el-tooltip content="员工入职日期，来源于员工档案" placement="top" :show-after="400">
@@ -129,34 +156,17 @@
           </template>
           <template #default="{ row }">{{ row.entry_date || '' }}</template>
         </el-table-column>
-        <el-table-column prop="contract_company" width="95">
-          <template #header>
-            <el-tooltip content="员工合同所属公司，来源于员工档案" placement="top" :show-after="400">
-              <span>合同公司</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column prop="net_salary" width="100" class-name="col-summary">
-          <template #header>
-            <el-tooltip content="= 总应发工资 - 社保、公积金合计 - 本月应扣个税额 + 税后调整金额" placement="top" :show-after="400">
-              <span>实发工资</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <span v-if="row.net_salary != null" class="font-semibold text-green-600">{{ row.net_salary.toFixed(2) }}</span>
-          </template>
-        </el-table-column>
         <el-table-column prop="total_work_days" width="95">
           <template #header>
-            <el-tooltip content="当月应出勤天数，来源于考勤管理" placement="top" :show-after="400">
-              <span>当月总计薪天数</span>
+            <el-tooltip content="当月标准应计薪天数，根据工作日历自动计算" placement="top" :show-after="400">
+              <span>应计薪天数</span>
             </el-tooltip>
           </template>
           <template #default="{ row }">{{ row.total_work_days != null ? row.total_work_days : '' }}</template>
         </el-table-column>
         <el-table-column prop="actual_work_days" width="95">
           <template #header>
-            <el-tooltip content="当月实际出勤天数，来源于考勤管理" placement="top" :show-after="400">
+            <el-tooltip content="当月实际计薪天数，来源于考勤管理" placement="top" :show-after="400">
               <span>实际计薪天数</span>
             </el-tooltip>
           </template>
@@ -164,7 +174,7 @@
         </el-table-column>
         <el-table-column prop="attendance_rate" width="75">
           <template #header>
-            <el-tooltip content="= 实际计薪天数 ÷ 总计薪天数，来源于考勤管理" placement="top" :show-after="400">
+            <el-tooltip content="= 实际计薪天数 ÷ 应计薪天数 × 100%" placement="top" :show-after="400">
               <span>出勤率</span>
             </el-tooltip>
           </template>
@@ -177,17 +187,6 @@
             </el-tooltip>
           </template>
           <template #default="{ row }">{{ row.base_salary != null ? row.base_salary : '' }}</template>
-        </el-table-column>
-        <el-table-column prop="base_salary_prorated" width="100">
-          <template #header>
-            <el-tooltip content="月中调薪折算后的基本工资，如有调薪则使用折算值，否则等于基本工资" placement="top" :show-after="400">
-              <span>折算后基本工资</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <span v-if="row.base_salary_prorated != null && row.base_salary_prorated !== row.base_salary" class="font-semibold text-orange-600">{{ row.base_salary_prorated.toFixed(2) }}</span>
-            <span v-else>{{ row.base_salary_prorated != null ? row.base_salary_prorated : '' }}</span>
-          </template>
         </el-table-column>
         <el-table-column prop="commission_bonus" width="95">
           <template #header>
@@ -340,6 +339,16 @@
           </template>
           <template #default="{ row }">{{ row.si_hf_total != null ? row.si_hf_total : '' }}</template>
         </el-table-column>
+        <el-table-column label="扣掉社保公积金工资" width="110" class-name="col-summary">
+          <template #header>
+            <el-tooltip content="= 总应发工资 - 社保、公积金（个人）合计" placement="top" :show-after="400">
+              <span>扣掉社保公积金工资</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">
+            <span v-if="row.gross_salary != null && row.si_hf_total != null">{{ (row.gross_salary - row.si_hf_total).toFixed(2) }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="tax_deduction" width="100">
           <template #header>
             <el-tooltip content="税务局申报后计算的应缴个税额，从本月工资代扣" placement="top" :show-after="400">
@@ -379,6 +388,29 @@
             <template v-else>{{ row.posttax_adjustment_reason || '' }}</template>
           </template>
         </el-table-column>
+        <el-table-column prop="net_salary" width="100" class-name="col-summary">
+          <template #header>
+            <el-tooltip content="= 总应发工资 - 社保、公积金合计 - 本月应扣个税额 + 税后调整金额" placement="top" :show-after="400">
+              <span>实发工资</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">
+            <span v-if="row.net_salary != null" class="font-semibold text-green-600">{{ row.net_salary.toFixed(2) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="last_month_untaxed" width="100">
+          <template #header>
+            <el-tooltip content="上月未报税金额，累计到本月报税" placement="top" :show-after="400">
+              <span>上月未报税金额</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">
+            <template v-if="editMode && editCache[row.id]">
+              <el-input-number v-model="editCache[row.id].last_month_untaxed" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'last_month_untaxed')" />
+            </template>
+            <template v-else>{{ row.last_month_untaxed != null ? row.last_month_untaxed : '' }}</template>
+          </template>
+        </el-table-column>
         <el-table-column prop="travel_untaxed" width="100">
           <template #header>
             <el-tooltip content="临时性差旅补贴未报税费用，来源于差旅报销表" placement="top" :show-after="400">
@@ -390,6 +422,19 @@
               <el-input-number v-model="editCache[row.id].travel_untaxed" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'travel_untaxed')" />
             </template>
             <template v-else>{{ row.travel_untaxed != null ? row.travel_untaxed : '' }}</template>
+          </template>
+        </el-table-column>
+        <el-table-column prop="compensation_tax" width="100">
+          <template #header>
+            <el-tooltip content="补偿金报税金额" placement="top" :show-after="400">
+              <span>未报税补偿金</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">
+            <template v-if="editMode && editCache[row.id]">
+              <el-input-number v-model="editCache[row.id].compensation_tax" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'compensation_tax')" />
+            </template>
+            <template v-else>{{ row.compensation_tax != null ? row.compensation_tax : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="actual_taxable" width="100" class-name="col-summary">
@@ -425,13 +470,46 @@
     </el-dialog>
 
     <el-dialog v-model="taxImportVisible" title="报税数据导入" width="700px" append-to-body>
-      <div class="mb-4 text-sm text-gray-500">
-        请粘贴财务提供的报税数据（格式：员工编号,上月未报税,差旅未报税,补偿金报税,专项附加扣除），每行一条
-      </div>
-      <el-input v-model="taxData" type="textarea" :rows="10" placeholder="E001,0,0,0,5000&#10;E002,0,0,0,3000" />
+      <el-tabs v-model="taxImportTab" class="mb-4">
+        <el-tab-pane label="个税Excel导入" name="excel">
+          <div class="mb-3 text-sm text-gray-500">
+            上传税务局导出的「个人所得税扣缴申报表」Excel文件（支持.xls/.xlsx格式），系统将自动提取姓名和应补/退税额
+          </div>
+          <el-upload
+            ref="taxUploadRef"
+            :auto-upload="false"
+            :limit="1"
+            accept=".xls,.xlsx"
+            :on-change="handleTaxFileChange"
+            :on-exceed="() => ElMessage.warning('只能上传一个文件')"
+            drag
+          >
+            <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+            <div class="el-upload__text">
+              将Excel文件拖到此处，或<em>点击上传</em>
+            </div>
+            <template #tip>
+              <div class="el-upload__tip text-left">
+                仅支持从个税系统导出的「个人所得税扣缴申报表」格式
+              </div>
+            </template>
+          </el-upload>
+          <div v-if="taxFile" class="mt-2 text-sm text-green-600">
+            已选择文件：{{ taxFile.name }}
+          </div>
+        </el-tab-pane>
+        <el-tab-pane label="手动粘贴数据" name="manual">
+          <div class="mb-3 text-sm text-gray-500">
+            请粘贴财务提供的报税数据（格式：员工编号,上月未报税,差旅未报税,补偿金报税,专项附加扣除），每行一条
+          </div>
+          <el-input v-model="taxData" type="textarea" :rows="8" placeholder="E001,0,0,0,5000&#10;E002,0,0,0,3000" />
+        </el-tab-pane>
+      </el-tabs>
       <template #footer>
         <el-button @click="taxImportVisible = false">取消</el-button>
-        <el-button type="primary" :loading="taxImporting" @click="doTaxImport">导入</el-button>
+        <el-button type="primary" :loading="taxImporting" @click="doTaxImport">
+          {{ taxImportTab === 'excel' ? '解析并导入Excel' : '导入数据' }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -440,7 +518,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, Delete } from '@element-plus/icons-vue'
+import { Download, Delete, UploadFilled } from '@element-plus/icons-vue'
 import api from '../../api'
 
 function getDefaultPeriod() {
@@ -504,8 +582,9 @@ const fieldLabels = {
   travel_untaxed: '临时性差旅补贴未报税费用', compensation_tax: '补偿金报税'
 }
 
-const canCalculate = computed(() => completeness.value && completeness.value.missing_count === 0)
-const hasResults = computed(() => results.value.some(r => r.id != null))
+const canCalculate = computed(() => true)
+const hasResults = computed(() => results.value.length > 0)
+const hasCalculatedResults = computed(() => results.value.some(r => r.id != null))
 
 function tableRowClassName({ row }) {
   if (editMode.value && row.id && changedSet[row.id]) return 'row-changed'
@@ -703,7 +782,7 @@ async function startCalculate() {
   }
 }
 
-async function fetchResults() {
+async function fetchResults(autoCalc = true) {
   loading.value = true
   try {
     const params = {}
@@ -711,8 +790,28 @@ async function fetchResults() {
     if (hideStatusId) {
       params.hide_status_id = Number(hideStatusId)
     }
-    const res = await api.get(`/salary/results/${periodDate.value}`, { params })
+    let res = await api.get(`/salary/results/${periodDate.value}`, { params })
     let data = res.data
+    
+    if (autoCalc && data.length > 0) {
+      const hasCalculated = data.some(r => r.id != null)
+      if (!hasCalculated) {
+        loading.value = false
+        calculating.value = true
+        try {
+          await api.post(`/salary/calculate/${periodDate.value}`, null, { params })
+          try {
+            await api.post(`/salary/calculate-net/${periodDate.value}`)
+          } catch {}
+          res = await api.get(`/salary/results/${periodDate.value}`, { params })
+          data = res.data
+        } finally {
+          calculating.value = false
+          loading.value = true
+        }
+      }
+    }
+    
     if (filterField.value && filterValue.value) {
       const fv = filterValue.value.toLowerCase()
       data = data.filter(r => {
@@ -841,44 +940,106 @@ onMounted(() => {
 const taxImportVisible = ref(false)
 const taxImporting = ref(false)
 const taxData = ref('')
+const taxImportTab = ref('excel')
+const taxFile = ref(null)
+const taxUploadRef = ref(null)
 
 function showTaxImport() {
   taxData.value = ''
+  taxFile.value = null
+  taxImportTab.value = 'excel'
+  if (taxUploadRef.value) {
+    taxUploadRef.value.clearFiles()
+  }
   taxImportVisible.value = true
 }
 
-async function doTaxImport() {
-  if (!taxData.value.trim()) {
-    ElMessage.warning('请输入报税数据')
-    return
-  }
-  const lines = taxData.value.trim().split('\n').filter(l => l.trim())
-  const items = []
-  for (const line of lines) {
-    const parts = line.split(',').map(s => s.trim())
-    if (parts.length < 2) continue
-    items.push({
-      employee_no: parts[0],
-      last_month_untaxed: parseFloat(parts[1]) || 0,
-      travel_untaxed: parseFloat(parts[2]) || 0,
-      compensation_tax: parseFloat(parts[3]) || 0,
-      special_deduction: parseFloat(parts[4]) || 0
-    })
-  }
-  if (!items.length) {
-    ElMessage.warning('未能解析到有效数据')
-    return
-  }
-  taxImporting.value = true
+function handleTaxFileChange(file) {
+  taxFile.value = file.raw
+}
+
+async function handleExportTaxTemplate() {
   try {
-    const res = await api.post(`/salary/import-tax/${periodDate.value}`, items)
-    ElMessage.success(res.data.message)
-    taxImportVisible.value = false
-    await fetchResults()
+    const params = {}
+    const hideStatusId = localStorage.getItem('employee_hide_status_id')
+    if (hideStatusId) {
+      params.hide_status_id = Number(hideStatusId)
+    }
+    const res = await api.get(`/salary/export-tax-template/${periodDate.value}`, { params, responseType: 'blob' })
+    const url = window.URL.createObjectURL(new Blob([res.data]))
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `报税导入模板_${periodDate.value}.xlsx`)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('导出成功')
   } catch (e) {
-    ElMessage.error('导入失败')
-  } finally {
-    taxImporting.value = false
+    ElMessage.error('导出失败')
+  }
+}
+
+async function doTaxImport() {
+  if (taxImportTab.value === 'excel') {
+    if (!taxFile.value) {
+      ElMessage.warning('请先选择要上传的Excel文件')
+      return
+    }
+    const formData = new FormData()
+    formData.append('file', taxFile.value)
+    taxImporting.value = true
+    try {
+      const res = await api.post(`/salary/upload-tax-excel/${periodDate.value}`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      ElMessage.success(res.data.message)
+      taxImportVisible.value = false
+      try {
+        await api.post(`/salary/calculate-net/${periodDate.value}`)
+      } catch {}
+      await fetchResults(false)
+    } catch (e) {
+      ElMessage.error(e.response?.data?.detail || '导入失败，请确认文件格式正确')
+    } finally {
+      taxImporting.value = false
+    }
+  } else {
+    if (!taxData.value.trim()) {
+      ElMessage.warning('请输入报税数据')
+      return
+    }
+    const lines = taxData.value.trim().split('\n').filter(l => l.trim())
+    const items = []
+    for (const line of lines) {
+      const parts = line.split(',').map(s => s.trim())
+      if (parts.length < 2) continue
+      items.push({
+        employee_no: parts[0],
+        last_month_untaxed: parseFloat(parts[1]) || 0,
+        travel_untaxed: parseFloat(parts[2]) || 0,
+        compensation_tax: parseFloat(parts[3]) || 0,
+        special_deduction: parseFloat(parts[4]) || 0
+      })
+    }
+    if (!items.length) {
+      ElMessage.warning('未能解析到有效数据')
+      return
+    }
+    taxImporting.value = true
+    try {
+      const res = await api.post(`/salary/import-tax/${periodDate.value}`, items)
+      ElMessage.success(res.data.message)
+      taxImportVisible.value = false
+      try {
+        await api.post(`/salary/calculate-net/${periodDate.value}`)
+      } catch {}
+      await fetchResults(false)
+    } catch (e) {
+      ElMessage.error('导入失败')
+    } finally {
+      taxImporting.value = false
+    }
   }
 }
 </script>

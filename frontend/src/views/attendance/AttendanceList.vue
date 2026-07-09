@@ -270,8 +270,8 @@
     </el-table>
 
     <!-- 录入/编辑弹窗 -->
-    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑考勤' : '录入考勤'" width="650px" append-to-body>
-      <el-form ref="formRef" :model="form" label-width="120px">
+    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑考勤' : '录入考勤'" width="820px" append-to-body class="attendance-dialog">
+      <el-form ref="formRef" :model="form" label-width="125px" class="attendance-form">
         <el-row :gutter="16">
           <el-col :span="12">
             <el-form-item label="核算周期" required>
@@ -1320,5 +1320,111 @@ onMounted(() => { fetchData() })
   border-radius: 50%;
   background: currentColor;
   opacity: 0.6;
+}
+
+/* 考勤编辑弹窗样式优化 */
+.attendance-dialog :deep(.el-dialog__body) {
+  padding: 20px 24px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.attendance-form :deep(.el-form-item) {
+  margin-bottom: 14px;
+}
+.attendance-form :deep(.el-form-item__label) {
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+}
+.attendance-form :deep(.el-input-number) {
+  width: 100%;
+}
+.attendance-form :deep(.el-input-number .el-input__wrapper) {
+  padding: 0 8px;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  box-shadow: none;
+}
+.attendance-form :deep(.el-input-number .el-input__wrapper:hover) {
+  border-color: #60a5fa;
+}
+.attendance-form :deep(.el-input-number .el-input__wrapper.is-focus) {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+.attendance-form :deep(.el-input-number .el-input__inner) {
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+  height: 36px;
+  line-height: 36px;
+}
+.attendance-form :deep(.el-input-number .el-input-number__decrease),
+.attendance-form :deep(.el-input-number .el-input-number__increase) {
+  width: 36px;
+  height: 36px;
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  color: #374151;
+  font-size: 16px;
+  font-weight: 600;
+}
+.attendance-form :deep(.el-input-number .el-input-number__decrease:hover),
+.attendance-form :deep(.el-input-number .el-input-number__increase:hover) {
+  background: #2563eb;
+  color: #ffffff;
+  border-color: #2563eb;
+}
+.attendance-form :deep(.el-input .el-input__wrapper) {
+  padding: 0 10px;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  box-shadow: none;
+}
+.attendance-form :deep(.el-input .el-input__wrapper:hover) {
+  border-color: #60a5fa;
+}
+.attendance-form :deep(.el-input .el-input__wrapper.is-focus) {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+.attendance-form :deep(.el-input .el-input__inner) {
+  font-size: 14px;
+  color: #1f2937;
+  height: 36px;
+  line-height: 36px;
+}
+.attendance-form :deep(.el-textarea .el-textarea__inner) {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #1f2937;
+  padding: 8px 10px;
+}
+.attendance-form :deep(.el-divider) {
+  margin: 12px 0 16px 0;
+}
+.attendance-form :deep(.el-divider__text) {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e40af;
+  background: linear-gradient(90deg, #eff6ff 0%, #dbeafe 100%);
+  padding: 4px 16px;
+  border-radius: 4px;
+}
+.attendance-dialog :deep(.el-dialog__footer) {
+  padding: 16px 24px;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+.attendance-dialog :deep(.el-dialog__footer .el-button) {
+  min-width: 80px;
+  height: 38px;
+  font-size: 14px;
+  border-radius: 6px;
 }
 </style>

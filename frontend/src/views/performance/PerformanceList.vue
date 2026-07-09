@@ -33,11 +33,16 @@
       <el-table-column prop="contract_company" label="合同公司" width="120" show-overflow-tooltip />
       <el-table-column prop="department" label="部门" width="120" show-overflow-tooltip />
       <el-table-column prop="position" label="职务" width="120" show-overflow-tooltip />
-      <el-table-column prop="total_work_days" label="当月总计薪天数" width="120" align="center">
+      <el-table-column prop="total_work_days" label="应计薪天数" width="120" align="center">
         <template #default="{ row }">{{ row.total_work_days != null ? row.total_work_days : '' }}</template>
       </el-table-column>
       <el-table-column prop="actual_work_days" label="实际计薪天数" width="120" align="center">
         <template #default="{ row }">{{ row.actual_work_days != null ? row.actual_work_days : '' }}</template>
+      </el-table-column>
+      <el-table-column label="出勤率" width="90" align="center">
+        <template #default="{ row }">
+          <span v-if="row.attendance_rate != null">{{ (row.attendance_rate * 100).toFixed(1) }}%</span>
+        </template>
       </el-table-column>
       <el-table-column prop="performance_standard" label="绩效奖金标准" width="120" align="right">
         <template #default="{ row }">{{ (getRowPerfStd(row) || 0).toFixed(2) }}</template>
@@ -80,6 +85,11 @@
           <span :class="getRowDiff(row) > 0 ? 'text-green-500' : getRowDiff(row) < 0 ? 'text-red-500' : ''">
             {{ getRowDiff(row).toFixed(2) }}
           </span>
+        </template>
+      </el-table-column>
+      <el-table-column label="实发绩效金额" width="120" align="right">
+        <template #default="{ row }">
+          <span class="font-semibold text-purple-600">{{ getRowActualPaid(row).toFixed(2) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="调整差异" width="100" align="center">
@@ -145,6 +155,12 @@
         </el-form-item>
         <el-form-item label="差额">
           <el-input :model-value="((((formRow?.performance_standard || 0) * (form.final_score || 1)) - (formRow?.performance_standard || 0))).toFixed(2)" disabled />
+        </el-form-item>
+        <el-form-item label="出勤率">
+          <el-input :model-value="formRow?.attendance_rate != null ? ((formRow.attendance_rate * 100).toFixed(1) + '%') : '暂无考勤数据'" disabled />
+        </el-form-item>
+        <el-form-item label="实发绩效金额">
+          <el-input :model-value="getFormActualPaid().toFixed(2)" disabled />
         </el-form-item>
         <el-form-item v-if="form.initial_score != null" label="调整差异">
           <el-input :model-value="((form.final_score || 1) - (form.initial_score || 0)).toFixed(2)" disabled />
@@ -349,6 +365,26 @@ function getRowScoreDiff(row) {
   const { initial, final } = getCurrentVals(row)
   if (initial == null) return null
   return final - Number(initial)
+}
+
+function getRowAttendanceRate(row) {
+  const total = Number(row.total_work_days) || 0
+  const actual = Number(row.actual_work_days) || 0
+  if (total <= 0) return row.attendance_rate != null ? Number(row.attendance_rate) : 0
+  return actual / total
+}
+
+function getRowActualPaid(row) {
+  const evaluated = getRowEvaluated(row)
+  const attRate = getRowAttendanceRate(row)
+  return evaluated * attRate
+}
+
+function getFormActualPaid() {
+  const perfStd = Number(formRow.value?.performance_standard) || 0
+  const coef = Number(form.final_score) || 1
+  const attRate = formRow.value?.attendance_rate != null ? Number(formRow.value.attendance_rate) : 0
+  return perfStd * coef * attRate
 }
 
 function initEditCache() {
