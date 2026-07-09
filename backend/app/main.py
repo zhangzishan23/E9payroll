@@ -17,7 +17,14 @@ async def lifespan(app: FastAPI):
     yield
     stop_scheduler()
 
-app = FastAPI(title="E9 Payroll", version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="E9 Payroll",
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url="/e9salary/docs",
+    openapi_url="/e9salary/openapi.json",
+    redoc_url="/e9salary/redoc",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,18 +34,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
-app.include_router(employees.router, prefix="/api/employees", tags=["人事信息"])
-app.include_router(attendance.router, prefix="/api/attendance", tags=["考勤管理"])
-app.include_router(salary.router, prefix="/api/salary", tags=["薪资核算"])
-app.include_router(approval.router, prefix="/api/approval", tags=["审批流程"])
-app.include_router(reports.router, prefix="/api/reports", tags=["报表导出"])
-app.include_router(performance.router, prefix="/api/performance", tags=["绩效管理"])
-app.include_router(social_insurance.router, prefix="/api/social-insurance", tags=["社保公积金"])
-app.include_router(dingtalk.router, prefix="/api/dingtalk", tags=["钉钉同步"])
-app.include_router(system.router, prefix="/api/system", tags=["系统管理"])
+app.include_router(auth.router, prefix="/e9salary/api/auth", tags=["认证"])
+app.include_router(employees.router, prefix="/e9salary/api/employees", tags=["人事信息"])
+app.include_router(attendance.router, prefix="/e9salary/api/attendance", tags=["考勤管理"])
+app.include_router(salary.router, prefix="/e9salary/api/salary", tags=["薪资核算"])
+app.include_router(approval.router, prefix="/e9salary/api/approval", tags=["审批流程"])
+app.include_router(reports.router, prefix="/e9salary/api/reports", tags=["报表导出"])
+app.include_router(performance.router, prefix="/e9salary/api/performance", tags=["绩效管理"])
+app.include_router(social_insurance.router, prefix="/e9salary/api/social-insurance", tags=["社保公积金"])
+app.include_router(dingtalk.router, prefix="/e9salary/api/dingtalk", tags=["钉钉同步"])
+app.include_router(system.router, prefix="/e9salary/api/system", tags=["系统管理"])
 
 
-@app.get("/api/health")
+@app.get("/e9salary/api/health")
 def health_check():
     return {"status": "ok", "message": "E9 Payroll 运行正常"}

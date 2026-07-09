@@ -159,6 +159,7 @@ class EmployeeSalary(Base):
     housing_allowance = Column(DECIMAL(10, 2), default=0)
     effective_date = Column(Date, nullable=False)
     change_reason = Column(String(100), nullable=True)
+    operator_id = Column(Integer, ForeignKey("sys_users.id"), nullable=True, comment="操作人ID")
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -308,11 +309,14 @@ class PerformanceScore(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     period = Column(String(7), nullable=False)
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
-    initial_score = Column(DECIMAL(5, 2), nullable=True)
-    final_score = Column(DECIMAL(5, 2), nullable=True)
-    coefficient = Column(DECIMAL(4, 2), nullable=False, default=1.00)
+    initial_score = Column(DECIMAL(5, 2), nullable=True, comment="初评（绩效系数）")
+    final_score = Column(DECIMAL(5, 2), nullable=True, comment="复评（绩效系数，工资核算使用此值）")
+    performance_category = Column(String(50), nullable=True, comment="绩效类别")
+    score_reason = Column(String(500), nullable=True, comment="评分理由")
+    review_note = Column(String(500), nullable=True, comment="分管领导审核后调整说明")
     reviewer_id = Column(Integer, ForeignKey("sys_users.id"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 class SocialInsurance(Base):
@@ -611,7 +615,7 @@ class AttendanceDaily(Base):
 
 
 class SalaryCalendarOverride(Base):
-    """计薪日历覆盖表 — 记录用户手动覆盖的计薪日（排除工作日 或 纳入休息日）"""
+    """计薪日历覆盖表（已废弃，保留兼容）— 记录用户手动覆盖的计薪日"""
     __tablename__ = "salary_calendar_override"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -620,3 +624,21 @@ class SalaryCalendarOverride(Base):
     is_salary_day = Column(Boolean, nullable=False, default=False, comment="Ture=纳入计薪日(调休补班), False=排除计薪日(请假)")
     reason = Column(String(200), nullable=True, comment="覆盖原因")
     created_at = Column(DateTime, server_default=func.now())
+
+
+class WorkCalendar(Base):
+    """年度工作日历表 — 存储每一天的计薪状态，用于准确计算应计薪天数"""
+    __tablename__ = "work_calendar"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cal_date = Column(Date, nullable=False, unique=True, comment="日期")
+    year = Column(Integer, nullable=False, index=True, comment="年份")
+    month = Column(Integer, nullable=False, comment="月份")
+    day = Column(Integer, nullable=False, comment="日")
+    weekday = Column(Integer, nullable=False, comment="星期几 0=周一 6=周日")
+    day_type = Column(String(20), nullable=False, default="workday", comment="日期类型: workday=工作日 weekend=周末 holiday=法定节假日 makeup_work=调休补班")
+    is_salary_day = Column(Boolean, nullable=False, default=True, comment="是否计薪日")
+    remark = Column(String(100), nullable=True, comment="备注（如节日名称）")
+    is_ai_generated = Column(Boolean, default=False, comment="是否AI生成")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

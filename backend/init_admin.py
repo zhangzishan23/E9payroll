@@ -13,13 +13,7 @@ def init_admin():
     try:
         admin = db.query(SysUser).filter(SysUser.username == "admin").first()
         if admin:
-            print("管理员账号 admin 已存在，重置密码为 admin123")
-            admin.password_hash = get_password_hash("admin123")
-            admin.is_active = True
-            admin.is_admin = True
-            admin.display_name = "系统管理员"
-            db.commit()
-            print("密码重置成功！")
+            print("管理员账号 admin 已存在，跳过初始化")
             return
 
         print("正在创建初始管理员账号...")

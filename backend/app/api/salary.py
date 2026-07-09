@@ -353,7 +353,7 @@ def calculate_salary(period: str, hide_status_id: Optional[int] = Query(None, de
                 adjustment_id = None
                 monthly_standard = round(base_salary + perf_std + allowance_total, 2)
 
-            perf_coef = float(perf.coefficient) if perf else 1.00
+            perf_coef = float(perf.final_score) if perf and perf.final_score is not None else 1.00
             actual_perf = round(perf_std_prorated * perf_coef, 2)
             effective_performance = round(actual_perf * att_rate, 2)
 
@@ -557,8 +557,8 @@ def get_calculation_results(
             housing = float(sal.housing_allowance or 0) if sal else None
             allowance_total = round((meal or 0) + (transport or 0) + (comm or 0) + (computer or 0) + (housing or 0), 2) if sal else None
             monthly_standard = round((base_salary or 0) + (perf_std or 0) + (allowance_total or 0), 2) if sal else None
-            perf_coef = float(perf.coefficient) if perf else None
-            actual_perf = round((perf_std or 0) * (perf_coef or 0), 2) if sal and perf else None
+            perf_coef = float(perf.final_score) if perf and perf.final_score is not None else None
+            actual_perf = round((perf_std or 0) * (perf_coef or 0), 2) if sal and perf and perf.final_score is not None else None
 
             contract_company_name = name_map.get(emp.contract_company_id, '')
             department_name = name_map.get(emp.department_id, '')

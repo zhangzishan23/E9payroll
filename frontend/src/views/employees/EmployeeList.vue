@@ -523,18 +523,43 @@
       </div>
     </template>
 
-    <el-dialog v-model="salaryHistoryVisible" :title="'薪资历史 - ' + salaryHistoryName" width="800px" append-to-body>
+    <el-dialog v-model="salaryHistoryVisible" :title="'薪资历史 - ' + salaryHistoryName" width="900px" append-to-body>
       <el-table :data="salaryHistory" border stripe max-height="400" v-loading="salaryHistoryLoading">
-        <el-table-column prop="base_salary" label="基本工资" width="100" />
-        <el-table-column prop="performance_standard" label="绩效标准" width="100" />
-        <el-table-column prop="meal_allowance" label="餐补" width="80" />
-        <el-table-column prop="transport_allowance" label="交通补贴" width="90" />
-        <el-table-column prop="communication_allowance" label="通讯补贴" width="90" />
-        <el-table-column prop="computer_allowance" label="电脑补贴" width="90" />
-        <el-table-column prop="housing_allowance" label="住房补贴" width="90" />
         <el-table-column prop="effective_date" label="生效日期" width="110" />
-        <el-table-column prop="change_reason" label="变更原因" min-width="120">
+        <el-table-column prop="base_salary" label="基本工资" width="100" align="right">
+          <template #default="{ row }">{{ Number(row.base_salary || 0).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column prop="performance_standard" label="绩效标准" width="100" align="right">
+          <template #default="{ row }">{{ Number(row.performance_standard || 0).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column prop="meal_allowance" label="餐补" width="80" align="right">
+          <template #default="{ row }">{{ Number(row.meal_allowance || 0).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column prop="transport_allowance" label="交通补贴" width="90" align="right">
+          <template #default="{ row }">{{ Number(row.transport_allowance || 0).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column prop="communication_allowance" label="通讯补贴" width="90" align="right">
+          <template #default="{ row }">{{ Number(row.communication_allowance || 0).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column prop="computer_allowance" label="电脑补贴" width="90" align="right">
+          <template #default="{ row }">{{ Number(row.computer_allowance || 0).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column prop="housing_allowance" label="住房补贴" width="90" align="right">
+          <template #default="{ row }">{{ Number(row.housing_allowance || 0).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column prop="change_reason" label="变更原因" min-width="100">
           <template #default="{ row }">{{ row.change_reason || '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="created_at" label="调整时间" width="140">
+          <template #default="{ row }">{{ row.created_at || '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="operator_name" label="操作人" width="90">
+          <template #default="{ row }">{{ row.operator_name || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="70" fixed="right">
+          <template #default="{ row }">
+            <el-button type="danger" link size="small" @click="handleDeleteSalary(row)">删除</el-button>
+          </template>
         </el-table-column>
       </el-table>
       <template #footer>
@@ -633,6 +658,7 @@ const editId = ref(null)
 const salaryHistoryVisible = ref(false)
 const salaryHistory = ref([])
 const salaryHistoryName = ref('')
+const salaryHistoryEmpId = ref(null)
 const salaryHistoryLoading = ref(false)
 
 const editMode = ref(false)
@@ -1104,6 +1130,7 @@ function closeDialog() {
 }
 
 async function showSalaryHistory(row) {
+  salaryHistoryEmpId.value = row.id
   salaryHistoryName.value = row.name
   salaryHistoryVisible.value = true
   salaryHistoryLoading.value = true
@@ -1115,6 +1142,27 @@ async function showSalaryHistory(row) {
     salaryHistory.value = []
   } finally {
     salaryHistoryLoading.value = false
+  }
+}
+
+async function handleDeleteSalary(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除生效日期为 ${row.effective_date} 的这条薪资记录吗？`,
+      '删除确认',
+      { type: 'warning', confirmButtonType: 'danger' }
+    )
+  } catch {
+    return
+  }
+  try {
+    await api.delete(`/employees/salaries/${row.id}`)
+    ElMessage.success('删除成功')
+    const res = await api.get(`/employees/${salaryHistoryEmpId.value}/salaries`)
+    salaryHistory.value = res.data
+    await fetchData()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '删除失败')
   }
 }
 

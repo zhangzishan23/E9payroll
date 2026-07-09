@@ -27,35 +27,82 @@
     </div>
 
     <el-table :data="filteredRecords" border stripe v-loading="loading" max-height="600" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
-      <el-table-column type="selection" width="55" />
-      <el-table-column prop="employee_no" label="员工编号" width="100" fixed />
-      <el-table-column prop="employee_name" label="员工姓名" width="80" fixed />
-      <el-table-column prop="initial_score" label="初评分数" width="100">
+      <el-table-column type="selection" width="55" fixed="left" />
+      <el-table-column prop="employee_no" label="员工编号" width="100" fixed="left" />
+      <el-table-column prop="employee_name" label="姓名" width="80" fixed="left" />
+      <el-table-column prop="contract_company" label="合同公司" width="120" show-overflow-tooltip />
+      <el-table-column prop="department" label="部门" width="120" show-overflow-tooltip />
+      <el-table-column prop="position" label="职务" width="120" show-overflow-tooltip />
+      <el-table-column prop="total_work_days" label="当月总计薪天数" width="120" align="center">
+        <template #default="{ row }">{{ row.total_work_days != null ? row.total_work_days : '' }}</template>
+      </el-table-column>
+      <el-table-column prop="actual_work_days" label="实际计薪天数" width="120" align="center">
+        <template #default="{ row }">{{ row.actual_work_days != null ? row.actual_work_days : '' }}</template>
+      </el-table-column>
+      <el-table-column prop="performance_standard" label="绩效奖金标准" width="120" align="right">
+        <template #default="{ row }">{{ (getRowPerfStd(row) || 0).toFixed(2) }}</template>
+      </el-table-column>
+      <el-table-column prop="performance_category" label="绩效类别" width="100">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.employee_id]">
-            <el-input-number v-model="editCache[row.employee_id].initial_score" :min="0" :max="100" :precision="1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.employee_id)" />
+            <el-input v-model="editCache[row.employee_id].performance_category" size="small" placeholder="类别" @change="markChanged(row.employee_id)" />
+          </template>
+          <template v-else>{{ row.performance_category || '' }}</template>
+        </template>
+      </el-table-column>
+      <el-table-column prop="initial_score" label="初评" width="90" align="center">
+        <template #default="{ row }">
+          <template v-if="editMode && editCache[row.employee_id]">
+            <el-input-number v-model="editCache[row.employee_id].initial_score" :min="0" :max="3" :precision="2" :step="0.1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.employee_id)" />
           </template>
           <template v-else>{{ row.initial_score != null ? row.initial_score : '' }}</template>
         </template>
       </el-table-column>
-      <el-table-column prop="final_score" label="复评分数" width="100">
+      <el-table-column prop="final_score" label="复评（绩效系数）" width="130" align="center">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.employee_id]">
-            <el-input-number v-model="editCache[row.employee_id].final_score" :min="0" :max="100" :precision="1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.employee_id)" />
-          </template>
-          <template v-else>{{ row.final_score != null ? row.final_score : '' }}</template>
-        </template>
-      </el-table-column>
-      <el-table-column prop="coefficient" label="绩效系数" width="100">
-        <template #default="{ row }">
-          <template v-if="editMode && editCache[row.employee_id]">
-            <el-input-number v-model="editCache[row.employee_id].coefficient" :min="0" :max="3" :precision="2" :step="0.1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.employee_id)" />
+            <el-input-number v-model="editCache[row.employee_id].final_score" :min="0" :max="3" :precision="2" :step="0.1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.employee_id)" />
           </template>
           <template v-else>
-            <span :class="row.coefficient >= 1 ? 'text-green-600' : 'text-red-600'" class="font-semibold">
-              {{ row.coefficient != null ? row.coefficient.toFixed(2) : '1.00' }}
+            <span :class="(getRowCoefficient(row)) >= 1 ? 'text-green-600' : 'text-red-600'" class="font-semibold">
+              {{ getRowCoefficient(row).toFixed(2) }}
             </span>
           </template>
+        </template>
+      </el-table-column>
+      <el-table-column label="评价后绩效标准" width="130" align="right">
+        <template #default="{ row }">
+          <span class="font-medium">{{ getRowEvaluated(row).toFixed(2) }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="差额" width="100" align="right">
+        <template #default="{ row }">
+          <span :class="getRowDiff(row) > 0 ? 'text-green-500' : getRowDiff(row) < 0 ? 'text-red-500' : ''">
+            {{ getRowDiff(row).toFixed(2) }}
+          </span>
+        </template>
+      </el-table-column>
+      <el-table-column label="调整差异" width="100" align="center">
+        <template #default="{ row }">
+          <span :class="getRowScoreDiff(row) != null && getRowScoreDiff(row) !== 0 ? (getRowScoreDiff(row) > 0 ? 'text-green-500' : 'text-red-500') : ''">
+            {{ getRowScoreDiff(row) != null ? getRowScoreDiff(row).toFixed(2) : '' }}
+          </span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="score_reason" label="评分理由" width="180" show-overflow-tooltip>
+        <template #default="{ row }">
+          <template v-if="editMode && editCache[row.employee_id]">
+            <el-input v-model="editCache[row.employee_id].score_reason" size="small" placeholder="理由" @change="markChanged(row.employee_id)" />
+          </template>
+          <template v-else>{{ row.score_reason || '' }}</template>
+        </template>
+      </el-table-column>
+      <el-table-column prop="review_note" label="分管领导审核后调整" width="200" show-overflow-tooltip>
+        <template #default="{ row }">
+          <template v-if="editMode && editCache[row.employee_id]">
+            <el-input v-model="editCache[row.employee_id].review_note" size="small" placeholder="调整说明" @change="markChanged(row.employee_id)" />
+          </template>
+          <template v-else>{{ row.review_note || '' }}</template>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="130" fixed="right">
@@ -69,22 +116,44 @@
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑绩效' : '录入绩效'" width="550px" append-to-body>
-      <el-form ref="formRef" :model="form" label-width="100px">
+    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑绩效' : '录入绩效'" width="600px" append-to-body>
+      <el-form ref="formRef" :model="form" label-width="140px">
         <el-form-item label="核算周期" required>
           <el-input :model-value="form.period" disabled />
         </el-form-item>
         <el-form-item label="员工编号">
           <el-input :model-value="formEmployeeNo" disabled />
         </el-form-item>
-        <el-form-item label="初评分数">
-          <el-input-number v-model="form.initial_score" :min="0" :max="100" :precision="1" class="w-full" />
+        <el-form-item label="员工姓名">
+          <el-input :model-value="formEmployeeName" disabled />
         </el-form-item>
-        <el-form-item label="复评分数">
-          <el-input-number v-model="form.final_score" :min="0" :max="100" :precision="1" class="w-full" />
+        <el-form-item label="绩效类别">
+          <el-input v-model="form.performance_category" placeholder="如：A/B/C等" />
         </el-form-item>
-        <el-form-item label="绩效系数" required>
-          <el-input-number v-model="form.coefficient" :min="0" :max="3" :precision="2" :step="0.1" class="w-full" />
+        <el-form-item label="初评">
+          <el-input-number v-model="form.initial_score" :min="0" :max="3" :precision="2" :step="0.1" class="w-full" />
+        </el-form-item>
+        <el-form-item label="复评（绩效系数）" required>
+          <el-input-number v-model="form.final_score" :min="0" :max="3" :precision="2" :step="0.1" class="w-full" />
+          <div class="text-xs text-gray-400 mt-1">工资核算将使用此值作为绩效系数，默认为1.00</div>
+        </el-form-item>
+        <el-form-item label="绩效奖金标准">
+          <el-input :model-value="(formRow?.performance_standard || 0).toFixed(2)" disabled />
+        </el-form-item>
+        <el-form-item label="评价后绩效标准">
+          <el-input :model-value="((formRow?.performance_standard || 0) * (form.final_score || 1)).toFixed(2)" disabled />
+        </el-form-item>
+        <el-form-item label="差额">
+          <el-input :model-value="((((formRow?.performance_standard || 0) * (form.final_score || 1)) - (formRow?.performance_standard || 0))).toFixed(2)" disabled />
+        </el-form-item>
+        <el-form-item v-if="form.initial_score != null" label="调整差异">
+          <el-input :model-value="((form.final_score || 1) - (form.initial_score || 0)).toFixed(2)" disabled />
+        </el-form-item>
+        <el-form-item label="评分理由">
+          <el-input v-model="form.score_reason" type="textarea" :rows="2" placeholder="请输入评分理由" />
+        </el-form-item>
+        <el-form-item label="分管领导审核后调整">
+          <el-input v-model="form.review_note" type="textarea" :rows="2" placeholder="审核调整说明（可选）" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -111,7 +180,7 @@
           </el-button>
         </div>
         <div class="text-sm text-gray-500">
-          支持 .xlsx / .xls 格式，<span class="text-blue-600 font-medium">表头需在第一行</span>，需包含：姓名、初评分数、复评分数（绩效系数可选，不填默认1.00）
+          支持 .xlsx / .xls 格式，<span class="text-blue-600 font-medium">表头需在第一行</span>，需包含：姓名、复评（绩效系数）；可选列：初评、绩效类别、评分理由、分管领导审核后调整。
         </div>
         <div v-if="importResult" class="mt-3">
           <el-alert
@@ -129,11 +198,11 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editConfirmVisible" title="确认保存修改" width="600px" append-to-body>
+    <el-dialog v-model="editConfirmVisible" title="确认保存修改" width="650px" append-to-body>
       <div class="mb-2 text-gray-600">以下绩效数据将被更新，请确认：</div>
       <el-table :data="confirmList" border stripe max-height="400">
         <el-table-column prop="employee_name" label="姓名" width="80" />
-        <el-table-column label="修改字段" min-width="200">
+        <el-table-column label="修改字段" min-width="300">
           <template #default="{ row }">
             <div v-for="(change, idx) in row.changes" :key="idx" class="text-sm">
               <span class="text-gray-500">{{ change.label }}：</span>
@@ -203,6 +272,8 @@ const formRef = ref(null)
 const editId = ref(null)
 const formEmployeeId = ref(null)
 const formEmployeeNo = ref('')
+const formEmployeeName = ref('')
+const formRow = ref(null)
 
 const editMode = ref(false)
 const editCache = reactive({})
@@ -211,14 +282,17 @@ const editConfirmVisible = ref(false)
 const confirmList = ref([])
 
 const fieldLabels = {
-  initial_score: '初评分数',
-  final_score: '复评分数',
-  coefficient: '绩效系数'
+  initial_score: '初评',
+  final_score: '复评（绩效系数）',
+  performance_category: '绩效类别',
+  score_reason: '评分理由',
+  review_note: '分管领导审核后调整'
 }
 
 const form = reactive({
   period: defaultPeriod, employee_id: null,
-  initial_score: null, final_score: null, coefficient: 1.00
+  initial_score: null, final_score: 1.00,
+  performance_category: '', score_reason: '', review_note: ''
 })
 
 const filteredRecords = computed(() => {
@@ -244,13 +318,48 @@ function tableRowClassName({ row }) {
   return ''
 }
 
+function getCurrentVals(row) {
+  const cache = editMode.value && editCache[row.employee_id] ? editCache[row.employee_id] : null
+  const initial = cache ? cache.initial_score : row.initial_score
+  const final = cache ? (cache.final_score != null ? cache.final_score : 1) : (row.final_score != null ? Number(row.final_score) : 1)
+  const perfStd = Number(row.performance_standard) || 0
+  return { initial: initial != null ? Number(initial) : null, final: Number(final) || 1, perfStd }
+}
+
+function getRowPerfStd(row) {
+  return Number(row.performance_standard) || 0
+}
+
+function getRowCoefficient(row) {
+  const { final } = getCurrentVals(row)
+  return final
+}
+
+function getRowEvaluated(row) {
+  const { final, perfStd } = getCurrentVals(row)
+  return perfStd * final
+}
+
+function getRowDiff(row) {
+  const { final, perfStd } = getCurrentVals(row)
+  return perfStd * final - perfStd
+}
+
+function getRowScoreDiff(row) {
+  const { initial, final } = getCurrentVals(row)
+  if (initial == null) return null
+  return final - Number(initial)
+}
+
 function initEditCache() {
   records.value.forEach(row => {
     if (!row || !row.employee_id) return
     editCache[row.employee_id] = reactive({
       initial_score: row.initial_score ?? null,
-      final_score: row.final_score ?? null,
-      coefficient: row.coefficient ?? 0
+      final_score: row.final_score ?? 1.00,
+      performance_category: row.performance_category ?? '',
+      score_reason: row.score_reason ?? '',
+      review_note: row.review_note ?? ''
     })
   })
 }
@@ -301,12 +410,14 @@ function confirmEdits() {
     Object.keys(fieldLabels).forEach(field => {
       const oldVal = row[field]
       const newVal = editCache[empId]?.[field]
-      if (oldVal !== newVal) {
+      const oldStr = oldVal != null && oldVal !== '' ? String(oldVal) : '(空)'
+      const newStr = newVal != null && newVal !== '' ? String(newVal) : '(空)'
+      if (oldStr !== newStr) {
         changes.push({
           field,
           label: fieldLabels[field],
-          old: oldVal != null ? String(oldVal) : '(空)',
-          new: newVal != null ? String(newVal) : '(空)'
+          old: oldStr,
+          new: newStr
         })
       }
     })
@@ -336,7 +447,8 @@ async function saveAllEdits() {
       if (!cache) continue
       const payload = {}
       Object.keys(fieldLabels).forEach(field => {
-        if (cache[field] != null) payload[field] = cache[field]
+        if (cache[field] !== '' && cache[field] != null) payload[field] = cache[field]
+        else if (field === 'final_score') payload[field] = cache[field]
       })
       try {
         if (row.id) {
@@ -394,16 +506,22 @@ function showDialog(row) {
   editId.value = row?.id || null
   formEmployeeId.value = row?.employee_id || null
   formEmployeeNo.value = row?.employee_no || ''
+  formEmployeeName.value = row?.employee_name || ''
+  formRow.value = row
   if (row) {
     Object.assign(form, {
       period: row.period, employee_id: row.employee_id,
-      initial_score: row.initial_score, final_score: row.final_score,
-      coefficient: row.coefficient ?? 1.00
+      initial_score: row.initial_score,
+      final_score: row.final_score ?? 1.00,
+      performance_category: row.performance_category || '',
+      score_reason: row.score_reason || '',
+      review_note: row.review_note || ''
     })
   } else {
     Object.assign(form, {
       period: periodDate.value, employee_id: null,
-      initial_score: null, final_score: null, coefficient: 1.00
+      initial_score: null, final_score: 1.00,
+      performance_category: '', score_reason: '', review_note: ''
     })
   }
   dialogVisible.value = true
@@ -414,30 +532,38 @@ function showDialogForEmployee(row) {
   editId.value = null
   formEmployeeId.value = row.employee_id
   formEmployeeNo.value = row.employee_no
+  formEmployeeName.value = row.employee_name
+  formRow.value = row
   Object.assign(form, {
     period: periodDate.value, employee_id: row.employee_id,
-    initial_score: null, final_score: null, coefficient: 1.00
+    initial_score: null, final_score: 1.00,
+    performance_category: '', score_reason: '', review_note: ''
   })
   dialogVisible.value = true
 }
 
 async function handleSave() {
+  if (form.final_score == null) {
+    ElMessage.warning('请填写复评（绩效系数）')
+    return
+  }
   saving.value = true
   try {
+    const payload = {
+      initial_score: form.initial_score,
+      final_score: form.final_score,
+      performance_category: form.performance_category || null,
+      score_reason: form.score_reason || null,
+      review_note: form.review_note || null
+    }
     if (isEdit.value) {
-      await api.put(`/performance/${editId.value}`, {
-        initial_score: form.initial_score,
-        final_score: form.final_score,
-        coefficient: form.coefficient
-      })
+      await api.put(`/performance/${editId.value}`, payload)
       ElMessage.success('编辑成功')
     } else {
       await api.post('/performance/', {
         period: form.period,
         employee_id: form.employee_id,
-        initial_score: form.initial_score,
-        final_score: form.final_score,
-        coefficient: form.coefficient
+        ...payload
       })
       ElMessage.success('录入成功')
     }

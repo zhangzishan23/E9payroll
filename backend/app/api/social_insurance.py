@@ -14,7 +14,7 @@ from app.api.auth import get_current_user, UserInfo
 from app.services.si_import_engine import (
     run_smart_import, SI_FIELD_LABELS, auto_detect_template,
     save_batch_files, precheck_batch, auto_detect_from_batch,
-    run_smart_import_from_batch, cleanup_batch,
+    run_smart_import_from_batch, cleanup_batch, create_batch_from_unmatched,
 )
 
 logger = logging.getLogger(__name__)
@@ -729,11 +729,12 @@ def get_smart_import_batch(
 def auto_detect_template_from_batch(
     batch_id: str,
     file_index: int,
+    sheet_name: Optional[str] = Query(None, description="Excel工作表名称，指定解析哪个工作表"),
     current_user: UserInfo = Depends(get_current_user)
 ):
-    """对批次中指定索引的文件执行自动模板识别"""
+    """对批次中指定索引的文件（可指定工作表）执行自动模板识别"""
     try:
-        result = auto_detect_from_batch(batch_id, file_index)
+        result = auto_detect_from_batch(batch_id, file_index, sheet_name=sheet_name)
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -750,6 +751,17 @@ def execute_smart_import_batch(
 ):
     """执行批次导入（所有模板配置完成后调用）"""
     try:
+        # 执行前再次预检查，确保所有文件都能匹配到模板
+        precheck = precheck_batch(db, batch_id)
+        if precheck["has_unmatched"]:
+            # 仍有未匹配文件，返回需要配置模板的信息，不删除临时文件
+            return {
+                "needs_config": True,
+                "partial_success": False,
+                "config_batch_id": batch_id,
+                **precheck
+            }
+
         result = run_smart_import_from_batch(db, batch_id, current_user.id, current_user.username)
         write_log(
             db, "data_change", current_user.id, current_user.username,
@@ -757,7 +769,37 @@ def execute_smart_import_batch(
             f"批量导入 (batch={batch_id}, 文件{result.total_files}个, "
             f"解析成功{result.parsed_files}个, 新增{result.created}条, 更新{result.updated}条)"
         )
+
+        # 执行后检查是否有未匹配模板的文件（预检查通过但实际提取失败）
+        no_template_files = getattr(result, "no_template_filenames", [])
+        if no_template_files:
+            try:
+                new_batch = create_batch_from_unmatched(batch_id, no_template_files)
+                cleanup_batch(batch_id)
+                # 对新批次做预检查，获取未匹配文件列表
+                new_precheck = precheck_batch(db, new_batch["batch_id"])
+                return {
+                    "needs_config": True,
+                    "partial_success": True,
+                    "config_batch_id": new_batch["batch_id"],
+                    "total_files": result.total_files,
+                    "parsed_files": result.parsed_files,
+                    "failed_files": result.failed_files,
+                    "total_rows": result.total_rows,
+                    "created": result.created,
+                    "updated": result.updated,
+                    "errors": result.errors,
+                    "warnings": result.warnings,
+                    "unmatched_count": new_precheck["unmatched_count"],
+                    "unmatched_files": new_precheck["unmatched_files"],
+                    "has_unmatched": True,
+                }
+            except ValueError:
+                pass
+
+        cleanup_batch(batch_id)
         return {
+            "needs_config": False,
             "total_files": result.total_files,
             "parsed_files": result.parsed_files,
             "failed_files": result.failed_files,
@@ -768,6 +810,7 @@ def execute_smart_import_batch(
             "warnings": result.warnings,
         }
     except ValueError as e:
+        cleanup_batch(batch_id)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.exception("批量导入执行失败")

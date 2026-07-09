@@ -9,25 +9,28 @@ from datetime import date
 import calendar
 from app.core.database import get_db
 from app.core.log_helper import write_log
-from app.models.models import AttendanceRecord, Employee, SysDictBase, SalaryCalendarOverride
+from app.models.models import AttendanceRecord, Employee, SysDictBase
 from app.api.auth import get_current_user, UserInfo
 from app.core.query_utils import filter_active_employees
+from app.services import work_calendar as work_cal
 
 router = APIRouter()
 
-DAILY_WORK_HOURS = 7  # 每日工作时长（小时）
+DAILY_WORK_HOURS = 7
 
 
-def _get_dict_name(db: Session, dict_id: Optional[int]) -> str:
-    """从数据字典获取名称"""
+def _get_dict_name_cached(dict_id: Optional[int], name_map: dict) -> str:
     if not dict_id:
         return ""
-    item = db.query(SysDictBase).filter(SysDictBase.id == dict_id).first()
-    return item.name if item else ""
+    return name_map.get(dict_id, "")
+
+
+def _batch_load_dict_names(db: Session) -> dict:
+    dict_items = db.query(SysDictBase).all()
+    return {d.id: d.name for d in dict_items}
 
 
 def _calc_salary_dates(period: str) -> tuple:
-    """根据核算周期计算计薪起止日期"""
     year = int(period[:4])
     month = int(period[4:6])
     first_day = date(year, month, 1)
@@ -35,42 +38,61 @@ def _calc_salary_dates(period: str) -> tuple:
     return first_day, last_day
 
 
-def _calc_adjusted_salary_days(db: Session, period: str, total_work_days: float) -> float:
-    """计算应计薪天数：含调休补班、节假日排除和用户覆盖"""
-    year = int(period[:4])
-    month = int(period[4:6])
-    _, last_day = _calc_salary_dates(period)
+def _get_adjusted_salary_days(db: Session, period: str) -> float:
+    return work_cal.get_month_salary_days(db, period)
 
-    overrides = db.query(SalaryCalendarOverride).filter(
-        SalaryCalendarOverride.period == period
-    ).all()
-    override_map = {o.override_date.isoformat(): o.is_salary_day for o in overrides}
-    preset_holidays = set(_get_preset_holidays(db, year, month))
 
-    salary_days = 0
-    for d in range(1, last_day.day + 1):
-        day_date = date(year, month, d)
-        date_str = day_date.isoformat()
-        is_weekday = day_date.weekday() < 5
+def _recalculate_attendance_fields(db: Session, att: AttendanceRecord) -> None:
+    """根据当前工作日历和请假数据，重算应计薪天数、计薪天数、出勤率"""
+    adjusted = _get_adjusted_salary_days(db, att.period)
+    late_leave = float(att.late_to_personal_leave_days) if att.late_to_personal_leave_days else _calc_late_to_personal_leave(
+        att.late_count or 0, att.late_duration or 0
+    )
+    leave_total = _calc_leave_total(
+        late_leave,
+        float(att.personal_leave_days or 0),
+        float(att.full_pay_sick_days or 0),
+        float(att.reduced_pay_sick_days or 0),
+        float(att.statutory_sick_days or 0),
+        float(att.compensatory_leave_days or 0),
+        float(att.annual_leave_days or 0),
+        float(att.prenatal_checkup_days or 0),
+        float(att.maternity_leave_days or 0),
+        float(att.paternity_leave_days or 0),
+        float(att.marriage_leave_days or 0),
+        float(att.funeral_leave_days or 0),
+        float(att.engineering_compensatory_days or 0),
+    )
+    actual_salary = _calc_actual_salary_days(adjusted, leave_total)
+    att_rate = round(actual_salary / adjusted, 4) if adjusted > 0 else 0
 
-        if date_str in override_map:
-            if override_map[date_str]:
-                salary_days += 1
-        elif is_weekday and date_str not in preset_holidays:
-            salary_days += 1
+    att.adjusted_salary_days = adjusted
+    att.actual_salary_days = actual_salary
+    att.actual_work_days = actual_salary
+    att.late_to_personal_leave_days = late_leave
+    att.leave_total_days = leave_total
+    att.attendance_rate = att_rate
 
-    return float(salary_days)
+
+def _recalculate_month_attendance(db: Session, period: str) -> int:
+    """重算指定月份所有考勤记录的应计薪天数、计薪天数、出勤率"""
+    records = db.query(AttendanceRecord).filter(AttendanceRecord.period == period).all()
+    updated_count = 0
+    for att in records:
+        _recalculate_attendance_fields(db, att)
+        updated_count += 1
+    if updated_count > 0:
+        db.commit()
+    return updated_count
 
 
 def _calc_late_to_personal_leave(late_count: int, late_duration: int) -> float:
-    """迟到转事假：当月迟到次数>3次时，累计迟到时长换算为事假天数"""
     if late_count <= 3 or late_duration <= 0:
         return 0.0
     return round(late_duration / 60 / DAILY_WORK_HOURS, 2)
 
 
 def _calc_actual_salary_days(adjusted_days: float, leave_total: float) -> float:
-    """计薪天数 = 应计薪天数 - 请假合计"""
     return max(round(adjusted_days - leave_total, 2), 0)
 
 
@@ -81,7 +103,6 @@ def _calc_leave_total(
     prenatal: float, maternity: float, paternity: float,
     marriage: float, funeral: float, engineering: float
 ) -> float:
-    """扣薪请假合计（天）：全薪病假、年假、调休为带薪假，不计入扣减"""
     return round(
         late_to_personal + personal_leave + reduced_pay_sick +
         statutory_sick + prenatal + maternity +
@@ -97,32 +118,24 @@ class AttendanceOut(BaseModel):
     employee_id: int
     employee_no: str = ""
     employee_name: str = ""
-    contract_company: str = ""   # 合同主体
-    department: str = ""         # 部门
-    # 计薪日期
+    contract_company: str = ""
+    department: str = ""
     salary_start_date: Optional[str] = None
     salary_end_date: Optional[str] = None
-    # 计薪天数
-    total_work_days: Optional[float] = None      # 当月总计薪天数
-    adjusted_salary_days: Optional[float] = None  # 应计薪天数
-    actual_salary_days: Optional[float] = None    # 计薪天数
-    attendance_rate: Optional[float] = None       # 出勤率
-    # 缺卡
-    half_day_missed_punch: Optional[int] = None   # 半天缺卡(次数)
-    absenteeism_days: Optional[float] = None       # 全天缺卡(天数)
-    # 迟到
+    total_work_days: Optional[float] = None
+    adjusted_salary_days: Optional[float] = None
+    actual_salary_days: Optional[float] = None
+    attendance_rate: Optional[float] = None
+    half_day_missed_punch: Optional[int] = None
+    absenteeism_days: Optional[float] = None
     late_count: Optional[int] = None
     late_duration: Optional[int] = None
     severe_late_count: Optional[int] = None
     severe_late_duration: Optional[int] = None
-    # 早退
     early_count: Optional[int] = None
     early_duration: Optional[int] = None
-    # 加班
     total_overtime: Optional[float] = None
-    # 迟到转事假
     late_to_personal_leave_days: Optional[float] = None
-    # 请假明细
     personal_leave_days: Optional[float] = None
     full_pay_sick_days: Optional[float] = None
     reduced_pay_sick_days: Optional[float] = None
@@ -135,25 +148,50 @@ class AttendanceOut(BaseModel):
     marriage_leave_days: Optional[float] = None
     funeral_leave_days: Optional[float] = None
     engineering_compensatory_days: Optional[float] = None
-    # 合计
     leave_total_days: Optional[float] = None
-    # 备注
     remark: Optional[str] = None
 
     class Config:
         from_attributes = True
 
     @classmethod
-    def from_record(cls, att, emp, db: Session = None, fallback_period: str = "") -> "AttendanceOut":
+    def from_record(cls, att, emp, db: Session = None, fallback_period: str = "",
+                    name_map: dict = None, adjusted_from_calendar: float = None) -> "AttendanceOut":
+        period = att.period if att else fallback_period
+        start_date = None
+        end_date = None
+
+        if period:
+            start_date, end_date = _calc_salary_dates(period)
+
+        if db is not None and name_map is None:
+            name_map = _batch_load_dict_names(db)
+        if name_map is None:
+            name_map = {}
+
+        if db is not None and adjusted_from_calendar is None and period:
+            adjusted_from_calendar = _get_adjusted_salary_days(db, period)
+
         if att:
             contract_company = ""
             department = ""
-            if emp and db:
-                contract_company = _get_dict_name(db, emp.contract_company_id)
-                department = _get_dict_name(db, emp.department_id)
+            if emp:
+                contract_company = _get_dict_name_cached(emp.contract_company_id, name_map)
+                department = _get_dict_name_cached(emp.department_id, name_map)
 
-            start_date = att.salary_start_date.isoformat() if att.salary_start_date else None
-            end_date = att.salary_end_date.isoformat() if att.salary_end_date else None
+            leave_total = float(att.leave_total_days) if att.leave_total_days else 0
+            total_work = float(att.total_work_days) if att.total_work_days is not None else None
+            if adjusted_from_calendar is not None:
+                adjusted = adjusted_from_calendar
+                actual = max(round(adjusted - leave_total, 2), 0)
+                att_rate = round(actual / adjusted, 4) if adjusted > 0 else 0
+            else:
+                adjusted = float(att.adjusted_salary_days) if att.adjusted_salary_days else total_work
+                actual = float(att.actual_salary_days) if att.actual_salary_days else None
+                att_rate = float(att.attendance_rate)
+
+            start_str = start_date.isoformat() if start_date else (att.salary_start_date.isoformat() if att.salary_start_date else None)
+            end_str = end_date.isoformat() if end_date else (att.salary_end_date.isoformat() if att.salary_end_date else None)
 
             return cls(
                 id=att.id, period=att.period, employee_id=att.employee_id,
@@ -161,12 +199,12 @@ class AttendanceOut(BaseModel):
                 employee_name=emp.name if emp else "",
                 contract_company=contract_company,
                 department=department,
-                salary_start_date=start_date,
-                salary_end_date=end_date,
-                total_work_days=float(att.total_work_days),
-                adjusted_salary_days=float(att.adjusted_salary_days) if att.adjusted_salary_days else float(att.total_work_days),
-                actual_salary_days=float(att.actual_salary_days) if att.actual_salary_days else None,
-                attendance_rate=float(att.attendance_rate),
+                salary_start_date=start_str,
+                salary_end_date=end_str,
+                total_work_days=total_work,
+                adjusted_salary_days=adjusted,
+                actual_salary_days=actual,
+                attendance_rate=att_rate,
                 half_day_missed_punch=att.half_day_missed_punch,
                 absenteeism_days=float(att.absenteeism_days),
                 late_count=att.late_count,
@@ -189,15 +227,40 @@ class AttendanceOut(BaseModel):
                 marriage_leave_days=float(att.marriage_leave_days),
                 funeral_leave_days=float(att.funeral_leave_days),
                 engineering_compensatory_days=float(att.engineering_compensatory_days),
-                leave_total_days=float(att.leave_total_days) if att.leave_total_days else 0,
+                leave_total_days=leave_total,
                 remark=att.remark,
             )
         else:
+            contract_company = ""
+            department = ""
+            if emp:
+                contract_company = _get_dict_name_cached(emp.contract_company_id, name_map)
+                department = _get_dict_name_cached(emp.department_id, name_map)
+
+            if adjusted_from_calendar is not None:
+                total_work = None
+                adjusted = adjusted_from_calendar
+                actual = adjusted_from_calendar
+                att_rate = 1.0 if adjusted_from_calendar > 0 else 0
+            else:
+                total_work = None
+                adjusted = None
+                actual = None
+                att_rate = None
+
             return cls(
                 period=fallback_period,
                 employee_id=emp.id if emp else 0,
                 employee_no=emp.employee_no if emp else "",
                 employee_name=emp.name if emp else "",
+                contract_company=contract_company,
+                department=department,
+                salary_start_date=start_date.isoformat() if start_date else None,
+                salary_end_date=end_date.isoformat() if end_date else None,
+                total_work_days=total_work,
+                adjusted_salary_days=adjusted,
+                actual_salary_days=actual,
+                attendance_rate=att_rate,
             )
 
 
@@ -235,8 +298,6 @@ class AttendanceCreate(BaseModel):
 
 class AttendanceUpdate(BaseModel):
     total_work_days: Optional[float] = None
-    adjusted_salary_days: Optional[float] = None
-    actual_salary_days: Optional[float] = None
     late_count: Optional[int] = None
     late_duration: Optional[int] = None
     severe_late_count: Optional[int] = None
@@ -259,7 +320,6 @@ class AttendanceUpdate(BaseModel):
     marriage_leave_days: Optional[float] = None
     funeral_leave_days: Optional[float] = None
     engineering_compensatory_days: Optional[float] = None
-    leave_total_days: Optional[float] = None
     remark: Optional[str] = None
 
 
@@ -289,10 +349,14 @@ def get_attendance(
         for r in records:
             attendance_map[r.employee_id] = r
 
+        name_map = _batch_load_dict_names(db)
+        adjusted_days = _get_adjusted_salary_days(db, period)
+
         result = []
         for emp in employees:
             att = attendance_map.get(emp.id)
-            result.append(AttendanceOut.from_record(att, emp, db=db, fallback_period=period))
+            result.append(AttendanceOut.from_record(att, emp, db=db, fallback_period=period,
+                                                   name_map=name_map, adjusted_from_calendar=adjusted_days))
         return result
 
     query = db.query(AttendanceRecord)
@@ -300,9 +364,10 @@ def get_attendance(
         query = query.filter(AttendanceRecord.employee_id == employee_id)
     records = query.order_by(AttendanceRecord.period.desc(), AttendanceRecord.employee_id).all()
     result = []
+    name_map = _batch_load_dict_names(db)
     for r in records:
         emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
-        result.append(AttendanceOut.from_record(r, emp, db=db))
+        result.append(AttendanceOut.from_record(r, emp, db=db, name_map=name_map))
     return result
 
 
@@ -325,18 +390,21 @@ def export_attendance(
         for r in records:
             attendance_map[r.employee_id] = r
         data = []
+        name_map = _batch_load_dict_names(db)
+        adjusted_days = _get_adjusted_salary_days(db, period)
         for emp in employees:
             att = attendance_map.get(emp.id)
-            data.append((emp, att))
+            data.append((emp, att, name_map, adjusted_days))
     else:
         query = db.query(AttendanceRecord)
         if employee_id:
             query = query.filter(AttendanceRecord.employee_id == employee_id)
         records = query.order_by(AttendanceRecord.period.desc(), AttendanceRecord.employee_id).all()
         data = []
+        name_map = _batch_load_dict_names(db)
         for r in records:
             emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
-            data.append((emp, r))
+            data.append((emp, r, name_map, None))
 
     wb = Workbook()
     ws = wb.active
@@ -353,35 +421,32 @@ def export_attendance(
         "调休-工程交付(天)", "合计", "备注",
     ]
     ws.append(headers)
-    for emp, r in data:
-        if r:
-            contract_company = _get_dict_name(db, emp.contract_company_id) if emp else ""
-            department = _get_dict_name(db, emp.department_id) if emp else ""
-            ws.append([
-                r.period, emp.employee_no if emp else "", emp.name if emp else "",
-                contract_company, department,
-                r.salary_start_date.isoformat() if r.salary_start_date else "",
-                r.salary_end_date.isoformat() if r.salary_end_date else "",
-                float(r.total_work_days),
-                float(r.adjusted_salary_days) if r.adjusted_salary_days else float(r.total_work_days),
-                float(r.actual_salary_days) if r.actual_salary_days else "",
-                float(r.attendance_rate),
-                r.half_day_missed_punch, float(r.absenteeism_days),
-                r.late_count, r.late_duration, r.severe_late_count, r.severe_late_duration,
-                r.early_count, r.early_duration, float(r.total_overtime),
-                float(r.late_to_personal_leave_days) if r.late_to_personal_leave_days else 0,
-                float(r.personal_leave_days), float(r.full_pay_sick_days),
-                float(r.reduced_pay_sick_days), float(r.statutory_sick_days),
-                float(r.compensatory_leave_days), float(r.annual_leave_days),
-                float(r.prenatal_checkup_days), float(r.maternity_leave_days),
-                float(r.paternity_leave_days), float(r.marriage_leave_days),
-                float(r.funeral_leave_days), float(r.engineering_compensatory_days),
-                float(r.leave_total_days) if r.leave_total_days else 0,
-                r.remark or "",
-            ])
-        else:
-            empty_count = len(headers) - 3
-            ws.append([period, emp.employee_no, emp.name] + [""] * empty_count)
+    for emp, r, nm, adj_days in data:
+        out = AttendanceOut.from_record(r, emp, db=db, fallback_period=period if period else (r.period if r else ""),
+                                        name_map=nm, adjusted_from_calendar=adj_days)
+        ws.append([
+            out.period, out.employee_no, out.employee_name,
+            out.contract_company or "", out.department or "",
+            out.salary_start_date or "", out.salary_end_date or "",
+            out.total_work_days if out.total_work_days is not None else "",
+            out.adjusted_salary_days if out.adjusted_salary_days is not None else "",
+            out.actual_salary_days if out.actual_salary_days is not None else "",
+            out.attendance_rate if out.attendance_rate is not None else "",
+            out.half_day_missed_punch or 0, out.absenteeism_days or 0,
+            out.late_count or 0, out.late_duration or 0,
+            out.severe_late_count or 0, out.severe_late_duration or 0,
+            out.early_count or 0, out.early_duration or 0,
+            out.total_overtime or 0,
+            out.late_to_personal_leave_days or 0,
+            out.personal_leave_days or 0, out.full_pay_sick_days or 0,
+            out.reduced_pay_sick_days or 0, out.statutory_sick_days or 0,
+            out.compensatory_leave_days or 0, out.annual_leave_days or 0,
+            out.prenatal_checkup_days or 0, out.maternity_leave_days or 0,
+            out.paternity_leave_days or 0, out.marriage_leave_days or 0,
+            out.funeral_leave_days or 0, out.engineering_compensatory_days or 0,
+            out.leave_total_days or 0,
+            out.remark or "",
+        ])
 
     output = BytesIO()
     wb.save(output)
@@ -404,16 +469,11 @@ def create_attendance(att: AttendanceCreate, db: Session = Depends(get_db), curr
     if existing:
         raise HTTPException(status_code=400, detail=f"员工 [{att.employee_id}] 在周期 [{att.period}] 的考勤记录已存在")
 
-    # 计算计薪日期
     start_date, end_date = _calc_salary_dates(att.period)
+    adjusted = _get_adjusted_salary_days(db, att.period)
 
-    # 计算应计薪天数（如果未指定）
-    adjusted = att.adjusted_salary_days if att.adjusted_salary_days > 0 else _calc_adjusted_salary_days(db, att.period, att.total_work_days)
-
-    # 计算迟到转事假
     late_leave = att.late_to_personal_leave_days if att.late_to_personal_leave_days > 0 else _calc_late_to_personal_leave(att.late_count, att.late_duration)
 
-    # 计算请假合计
     leave_total = att.leave_total_days if att.leave_total_days > 0 else _calc_leave_total(
         late_leave, att.personal_leave_days, att.full_pay_sick_days,
         att.reduced_pay_sick_days, att.statutory_sick_days,
@@ -423,16 +483,13 @@ def create_attendance(att: AttendanceCreate, db: Session = Depends(get_db), curr
         att.funeral_leave_days, att.engineering_compensatory_days
     )
 
-    # 计算计薪天数
-    actual_salary = att.actual_salary_days if att.actual_salary_days > 0 else _calc_actual_salary_days(adjusted, leave_total)
-
-    # 出勤率 = 计薪天数 / 应计薪天数 × 100%
+    actual_salary = _calc_actual_salary_days(adjusted, leave_total)
     attendance_rate = round(actual_salary / adjusted, 4) if adjusted > 0 else 0
 
     db_att = AttendanceRecord(
         period=att.period, employee_id=att.employee_id,
         total_work_days=att.total_work_days,
-        actual_work_days=actual_salary,  # 兼容旧字段
+        actual_work_days=actual_salary,
         attendance_rate=attendance_rate,
         salary_start_date=start_date, salary_end_date=end_date,
         adjusted_salary_days=adjusted,
@@ -464,7 +521,8 @@ def create_attendance(att: AttendanceCreate, db: Session = Depends(get_db), curr
     db.refresh(db_att)
     write_log(db, "data_change", current_user.id, current_user.username, "attendance", "create", f"新增考勤记录 (employee_id={att.employee_id}, period={att.period})")
     emp = db.query(Employee).filter(Employee.id == att.employee_id).first()
-    return AttendanceOut.from_record(db_att, emp, db=db)
+    name_map = _batch_load_dict_names(db)
+    return AttendanceOut.from_record(db_att, emp, db=db, name_map=name_map)
 
 
 # ==================== 编辑 ====================
@@ -479,36 +537,15 @@ def update_attendance(record_id: int, data: AttendanceUpdate, db: Session = Depe
     for key, value in update_data.items():
         setattr(att, key, value)
 
-    # 重新计算派生字段
-    total_work = float(att.total_work_days)
-    adjusted = float(att.adjusted_salary_days) if att.adjusted_salary_days else total_work
-    late_leave = float(att.late_to_personal_leave_days) if att.late_to_personal_leave_days else _calc_late_to_personal_leave(att.late_count or 0, att.late_duration or 0)
-
-    leave_total = _calc_leave_total(
-        late_leave,
-        float(att.personal_leave_days), float(att.full_pay_sick_days),
-        float(att.reduced_pay_sick_days), float(att.statutory_sick_days),
-        float(att.compensatory_leave_days), float(att.annual_leave_days),
-        float(att.prenatal_checkup_days), float(att.maternity_leave_days),
-        float(att.paternity_leave_days), float(att.marriage_leave_days),
-        float(att.funeral_leave_days), float(att.engineering_compensatory_days)
-    )
-    actual_salary = _calc_actual_salary_days(adjusted, leave_total)
-    att_rate = round(actual_salary / adjusted, 4) if adjusted > 0 else 0
-
-    att.adjusted_salary_days = adjusted
-    att.actual_salary_days = actual_salary
-    att.late_to_personal_leave_days = late_leave
-    att.leave_total_days = leave_total
-    att.attendance_rate = att_rate
-    att.actual_work_days = actual_salary  # 兼容旧字段
+    _recalculate_attendance_fields(db, att)
 
     db.commit()
     db.refresh(att)
     write_log(db, "data_change", current_user.id, current_user.username, "attendance", "edit", f"编辑考勤记录 (id={record_id})")
 
     emp = db.query(Employee).filter(Employee.id == att.employee_id).first()
-    return AttendanceOut.from_record(att, emp, db=db)
+    name_map = _batch_load_dict_names(db)
+    return AttendanceOut.from_record(att, emp, db=db, name_map=name_map)
 
 
 # ==================== 批量删除 ====================
@@ -558,10 +595,6 @@ async def import_attendance(
             header_map["employee_no"] = i
         elif "总计薪" in h or "应出勤" in h:
             header_map["total_work_days"] = i
-        elif "应计薪" in h:
-            header_map["adjusted_salary_days"] = i
-        elif "实际计薪" in h or "计薪天数" in h:
-            header_map["actual_salary_days"] = i
         elif "迟到" in h and "转事假" in h:
             header_map["late_to_personal_leave"] = i
         elif "迟到" in h:
@@ -608,7 +641,7 @@ async def import_attendance(
 
     emp_map = {e.employee_no: e for e in db.query(Employee).all()}
     start_date, end_date = _calc_salary_dates(period)
-    exclusions_count = db.query(SalaryCalendarOverride).filter(SalaryCalendarOverride.period == period).count()
+    calendar_adjusted = _get_adjusted_salary_days(db, period)
 
     created = 0
     updated = 0
@@ -665,8 +698,8 @@ async def import_attendance(
                 late_leave, personal, full_sick, reduced_sick, stat_sick,
                 comp, annual, prenatal, maternity, paternity, marriage, funeral, eng
             )
-            adjusted = get_float("adjusted_salary_days", 0) or max(total_work - exclusions_count, 0)
-            actual_salary = get_float("actual_salary_days", 0) or _calc_actual_salary_days(adjusted, leave_total)
+            adjusted = calendar_adjusted
+            actual_salary = _calc_actual_salary_days(adjusted, leave_total)
             att_rate = round(actual_salary / adjusted, 4) if adjusted > 0 else 0
 
             existing = db.query(AttendanceRecord).filter(
@@ -758,27 +791,172 @@ async def import_attendance(
     }
 
 
-def _get_preset_holidays(db: Session, year: int, month: int) -> list:
-    """从数据字典读取法定节假日（仅返回周一至周五的日期）"""
-    from app.models.models import SysDictBase
-    from datetime import date as dt_date
-    items = db.query(SysDictBase).filter(
-        SysDictBase.category == "holiday",
-        SysDictBase.is_enabled == True
-    ).all()
-    result = []
-    for item in items:
-        d_str = item.code
-        try:
-            d = dt_date.fromisoformat(d_str)
-        except ValueError:
-            continue
-        if d.year == year and d.month == month and d.weekday() < 5:
-            result.append(d_str)
-    return result
+# ==================== 年度工作日历 API ====================
+
+class WorkCalendarDayUpdate(BaseModel):
+    date: str
+    day_type: Optional[str] = None
+    is_salary_day: Optional[bool] = None
+    remark: Optional[str] = None
 
 
-# ==================== 计薪日历 API ====================
+class WorkCalendarBatchUpdate(BaseModel):
+    updates: List[WorkCalendarDayUpdate]
+
+
+@router.get("/work-calendar/{year}")
+def get_work_calendar(
+    year: int,
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """获取指定年份的工作日历数据"""
+    days = work_cal.get_year_calendar(db, year)
+    summary = work_cal.get_calendar_status_summary(db, year)
+    return {
+        "year": year,
+        "days": days,
+        "summary": summary,
+    }
+
+
+@router.put("/work-calendar/{year}")
+def update_work_calendar(
+    year: int,
+    data: WorkCalendarBatchUpdate,
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """批量更新工作日历"""
+    updates = [u.model_dump(exclude_none=True) for u in data.updates]
+    updated = work_cal.update_calendar_days(db, updates)
+    write_log(db, "data_change", current_user.id, current_user.username, "attendance", "calendar_edit", f"更新工作日历 {year}年，共{updated}天")
+    summary = work_cal.get_calendar_status_summary(db, year)
+    return {
+        "message": f"已更新 {updated} 天",
+        "updated_count": updated,
+        "summary": summary,
+    }
+
+
+@router.post("/work-calendar/{year}/toggle-day")
+def toggle_work_calendar_day(
+    year: int,
+    date_str: str = Form(..., alias="date"),
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """点击切换单日状态：工作日→节假日→调休补班→工作日"""
+    from datetime import datetime as dt
+    cal_date = dt.strptime(date_str, "%Y-%m-%d").date()
+    month_period = f"{year}{cal_date.month:02d}"
+
+    work_cal.init_year_calendar(db, year)
+    from app.models.models import WorkCalendar
+    record = db.query(WorkCalendar).filter(WorkCalendar.cal_date == cal_date).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="日期记录不存在")
+
+    weekday = record.weekday
+    is_weekend = weekday >= 5
+
+    if record.day_type == "workday":
+        record.day_type = "holiday"
+        record.is_salary_day = False
+        record.remark = "节假日"
+    elif record.day_type == "holiday":
+        record.day_type = "makeup_work"
+        record.is_salary_day = True
+        record.remark = "调休补班"
+    elif record.day_type == "makeup_work":
+        record.day_type = "weekend" if is_weekend else "workday"
+        record.is_salary_day = not is_weekend
+        record.remark = None
+    else:
+        record.day_type = "workday"
+        record.is_salary_day = True
+        record.remark = None
+
+    record.is_ai_generated = False
+    db.commit()
+
+    summary = work_cal.get_calendar_status_summary(db, year)
+    return {
+        "message": "切换成功",
+        "date": date_str,
+        "day_type": record.day_type,
+        "is_salary_day": record.is_salary_day,
+        "summary": summary,
+        "period": month_period,
+    }
+
+
+@router.post("/work-calendar/{year}/ai-generate")
+def ai_generate_work_calendar(
+    year: int,
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """调用AI生成指定年份的法定节假日和调休补班安排"""
+    try:
+        result = work_cal.generate_holidays_by_ai(year)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI生成失败：{str(e)}")
+
+    holiday_count, workday_count = work_cal.apply_ai_holidays(
+        db, year,
+        result.get("holidays", []),
+        result.get("workdays", [])
+    )
+
+    summary = work_cal.get_calendar_status_summary(db, year)
+    write_log(db, "data_change", current_user.id, current_user.username, "attendance", "ai_calendar", f"AI预填{year}年工作日历：节假日{holiday_count}天，补班{workday_count}天")
+    return {
+        "message": f"AI预填完成：标记节假日 {holiday_count} 天，调休补班 {workday_count} 天",
+        "holiday_count": holiday_count,
+        "workday_count": workday_count,
+        "summary": summary,
+    }
+
+
+@router.post("/work-calendar/recalculate")
+def recalculate_attendance_days(
+    period: Optional[str] = Form(None, description="指定月份重算，支持逗号分隔多个月份(如202606,202607)，为空则重算所有月份"),
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """根据当前工作日历重算考勤记录的应计薪天数、计薪天数、出勤率"""
+    periods = []
+    if period:
+        periods = [p.strip() for p in period.split(',') if p.strip()]
+
+    updated_count = 0
+    updated_periods = []
+
+    if periods:
+        for p in periods:
+            count = _recalculate_month_attendance(db, p)
+            if count > 0:
+                updated_count += count
+                updated_periods.append(p)
+        period_desc = ','.join(updated_periods) if updated_periods else '无'
+    else:
+        records = db.query(AttendanceRecord).all()
+        for att in records:
+            _recalculate_attendance_fields(db, att)
+            updated_count += 1
+        db.commit()
+        period_desc = '全部'
+
+    write_log(db, "data_change", current_user.id, current_user.username, "attendance", "recalc", f"根据工作日历重算考勤：{updated_count}条记录 (period={period_desc})")
+    return {"message": f"重算完成，共更新 {updated_count} 条考勤记录（月份：{period_desc}）", "updated_count": updated_count}
+
+
+# ==================== 兼容旧版月度计薪日历API ====================
 
 @router.get("/salary-calendar")
 def get_salary_calendar(
@@ -786,117 +964,38 @@ def get_salary_calendar(
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
-    """获取指定月份的计薪日历数据（支持调休补班和节假日排除）"""
+    """兼容旧版API：获取指定月份的计薪日历（从年度工作日历读取）"""
     year = int(period[:4])
     month = int(period[4:6])
     _, last_day = _calc_salary_dates(period)
 
-    # 读取用户覆盖记录
-    overrides = db.query(SalaryCalendarOverride).filter(
-        SalaryCalendarOverride.period == period
-    ).all()
-    override_map = {o.override_date.isoformat(): o.is_salary_day for o in overrides}
-
-    # 从数据字典读取法定节假日
-    preset_holidays = set(_get_preset_holidays(db, year, month))
+    work_cal.init_year_calendar(db, year)
+    from app.models.models import WorkCalendar
+    records = db.query(WorkCalendar).filter(
+        WorkCalendar.year == year,
+        WorkCalendar.month == month
+    ).order_by(WorkCalendar.day).all()
 
     days = []
-    for d in range(1, last_day.day + 1):
-        day_date = date(year, month, d)
-        date_str = day_date.isoformat()
-        is_weekday = day_date.weekday() < 5
-
-        if date_str in override_map:
-            # 用户覆盖优先级最高
-            is_salary_day = override_map[date_str]
-            is_overridden = True
-        elif is_weekday and date_str in preset_holidays:
-            # 工作日遇到法定节假日 → 自动排除
-            is_salary_day = False
-            is_overridden = False
-        else:
-            # 默认：工作日计薪，周末不计薪
-            is_salary_day = is_weekday
-            is_overridden = False
-
+    for r in records:
+        is_workday = r.weekday < 5
+        is_overridden = r.day_type not in ("workday", "weekend") or (is_workday and not r.is_salary_day) or (not is_workday and r.is_salary_day)
         days.append({
-            "date": date_str,
-            "day": d,
-            "weekday": day_date.weekday(),
-            "is_workday": is_weekday,
-            "is_salary_day": is_salary_day,
+            "date": r.cal_date.isoformat(),
+            "day": r.day,
+            "weekday": r.weekday,
+            "is_workday": is_workday,
+            "is_salary_day": r.is_salary_day,
             "is_overridden": is_overridden,
+            "day_type": r.day_type,
+            "remark": r.remark,
         })
 
     total_salary_days = sum(1 for d in days if d["is_salary_day"])
-    override_count = db.query(SalaryCalendarOverride).filter(
-        SalaryCalendarOverride.period == period
-    ).count()
 
     return {
         "period": period,
         "days": days,
         "total_salary_days": total_salary_days,
-        "override_count": override_count,
+        "override_count": sum(1 for d in days if d["is_overridden"]),
     }
-
-
-@router.post("/salary-calendar/toggle")
-def toggle_salary_day(
-    period: str = Form(...),
-    date_str: str = Form(..., alias="date"),
-    action: str = Form("exclude", description="操作类型: exclude排除工作日/include纳入周末/restore恢复默认"),
-    reason: str = Form(None),
-    db: Session = Depends(get_db),
-    current_user: UserInfo = Depends(get_current_user)
-):
-    """切换计薪日状态：排除工作日 / 纳入休息日 / 恢复默认"""
-    from datetime import datetime
-    override_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-
-    if action == "restore":
-        # 恢复默认：删除覆盖记录
-        db.query(SalaryCalendarOverride).filter(
-            SalaryCalendarOverride.period == period,
-            SalaryCalendarOverride.override_date == override_date
-        ).delete()
-        db.commit()
-        return {"message": f"已恢复 {date_str} 为默认状态", "action": "restore"}
-
-    elif action == "include":
-        # 纳入休息日为计薪日（调休补班场景）
-        existing = db.query(SalaryCalendarOverride).filter(
-            SalaryCalendarOverride.period == period,
-            SalaryCalendarOverride.override_date == override_date
-        ).first()
-        if existing:
-            existing.is_salary_day = True
-            existing.reason = reason or "调休补班"
-        else:
-            db.add(SalaryCalendarOverride(
-                period=period,
-                override_date=override_date,
-                is_salary_day=True,
-                reason=reason or "调休补班"
-            ))
-        db.commit()
-        return {"message": f"已将 {date_str} 纳入计薪日", "action": "include"}
-
-    else:
-        # exclude: 排除工作日（节假日/请假场景）
-        existing = db.query(SalaryCalendarOverride).filter(
-            SalaryCalendarOverride.period == period,
-            SalaryCalendarOverride.override_date == override_date
-        ).first()
-        if existing:
-            existing.is_salary_day = False
-            existing.reason = reason or "用户手动排除"
-        else:
-            db.add(SalaryCalendarOverride(
-                period=period,
-                override_date=override_date,
-                is_salary_day=False,
-                reason=reason or "用户手动排除"
-            ))
-        db.commit()
-        return {"message": f"已排除 {date_str}", "action": "exclude"}

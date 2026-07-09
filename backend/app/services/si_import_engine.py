@@ -146,8 +146,8 @@ def _parse_number(value, number_format: Optional[Dict] = None) -> Optional[Decim
     s = str(value).strip()
     if not s or s in ("-", "--", "——", "/"):
         return None
-    # 根据模板配置去除不需要的字符，默认同时移除中英文逗号（千分位分隔符）
-    default_remove = [",", "，"]
+    # 根据模板配置去除不需要的字符，默认同时移除中英文逗号（千分位分隔符）和货币符号
+    default_remove = [",", "，", "¥", "￥", "$"]
     custom_remove = (number_format or {}).get("remove_chars", [])
     remove_chars = list(set(default_remove + custom_remove))
     for ch in remove_chars:
@@ -155,6 +155,14 @@ def _parse_number(value, number_format: Optional[Dict] = None) -> Optional[Decim
     # 去除中文单位
     s = re.sub(r"[元圆]", "", s)
     s = s.strip()
+    # 处理特殊格式：2%+3 → 只取百分比部分（2%），+3元作为固定附加额单独处理
+    # 这种格式常见于北京医疗保险（个人2%+3元大病统筹）
+    rate_plus_match = re.match(r"^([\d.]+)%\s*\+\s*[\d.]+", s)
+    if rate_plus_match:
+        try:
+            return (Decimal(rate_plus_match.group(1)) / Decimal("100")).quantize(Decimal("0.0001"))
+        except Exception:
+            pass
     # 处理百分比：10% → 0.10，费率精度保留4位小数（如 0.5000% → 0.0050）
     if s.endswith("%"):
         try:
@@ -167,20 +175,49 @@ def _parse_number(value, number_format: Optional[Dict] = None) -> Optional[Decim
         return None
 
 
-def _parse_excel(file_bytes: bytes, filename: str) -> List[List]:
-    """解析 Excel 文件，返回二维列表（每行是一个列表），支持合并单元格填充"""
+def _get_excel_sheet_names(file_bytes: bytes, filename: str) -> List[str]:
+    """获取 Excel 文件中所有工作表名称"""
+    ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+    sheet_names = []
+    if ext == "xls":
+        try:
+            import xlrd
+            wb = xlrd.open_workbook(file_contents=file_bytes)
+            sheet_names = wb.sheet_names()
+        except Exception:
+            pass
+    if not sheet_names:
+        try:
+            from openpyxl import load_workbook
+            wb = load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+            sheet_names = wb.sheetnames
+        except Exception:
+            pass
+    return sheet_names
+
+
+def _parse_excel(file_bytes: bytes, filename: str, sheet_name: Optional[str] = None, sheet_index: Optional[int] = None) -> List[List]:
+    """解析 Excel 文件，返回二维列表（每行是一个列表），支持合并单元格填充
+    
+    Args:
+        sheet_name: 按名称选择工作表（优先于sheet_index）
+        sheet_index: 按索引选择工作表（默认0，即第一个工作表）
+    """
     if filename.lower().endswith(".xls"):
         try:
             import xlrd
             wb = xlrd.open_workbook(file_contents=file_bytes, formatting_info=True)
-            ws = wb.sheet_by_index(0)
+            if sheet_name and sheet_name in wb.sheet_names():
+                ws = wb.sheet_by_name(sheet_name)
+            elif sheet_index is not None and sheet_index < len(wb.sheets()):
+                ws = wb.sheet_by_index(sheet_index)
+            else:
+                ws = wb.sheet_by_index(0)
             
             # 构建合并单元格映射：(row, col) -> value
             merged_values = {}
             for (rlo, rhi, clo, chi) in ws.merged_cells:
-                # 获取合并区域左上角的值
                 parent_value = ws.cell(rlo, clo).value
-                # 填充整个合并区域
                 for r in range(rlo, rhi):
                     for c in range(clo, chi):
                         merged_values[(r, c)] = parent_value
@@ -189,7 +226,6 @@ def _parse_excel(file_bytes: bytes, filename: str) -> List[List]:
             for r in range(ws.nrows):
                 row = []
                 for c in range(ws.ncols):
-                    # 优先使用合并单元格的值
                     if (r, c) in merged_values:
                         row.append(merged_values[(r, c)])
                     else:
@@ -198,21 +234,22 @@ def _parse_excel(file_bytes: bytes, filename: str) -> List[List]:
                 rows.append(row)
             return rows
         except Exception:
-            # xlrd 2.0+ 不支持 .xlsx 格式，但有些 .xls 文件实际是 xlsx 格式
-            # 降级用 openpyxl 重试
             pass
     # 默认用 openpyxl（支持 .xlsx 和伪装的 .xls）
     from openpyxl import load_workbook
     wb = load_workbook(io.BytesIO(file_bytes), data_only=True)
-    ws = wb.active
+    if sheet_name and sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+    elif sheet_index is not None and sheet_index < len(wb.worksheets):
+        ws = wb.worksheets[sheet_index]
+    else:
+        ws = wb.active
     
     # 构建合并单元格映射
     merged_values = {}
     for merged_range in ws.merged_cells.ranges:
-        # 获取合并区域左上角的值
-        min_row, min_col = merged_range.min_row - 1, merged_range.min_col - 1  # openpyxl 是 1-based
+        min_row, min_col = merged_range.min_row - 1, merged_range.min_col - 1
         parent_value = ws.cell(merged_range.min_row, merged_range.min_col).value
-        # 填充整个合并区域（转为 0-based）
         for row in range(merged_range.min_row, merged_range.max_row + 1):
             for col in range(merged_range.min_col, merged_range.max_col + 1):
                 merged_values[(row - 1, col - 1)] = parent_value
@@ -221,7 +258,6 @@ def _parse_excel(file_bytes: bytes, filename: str) -> List[List]:
     for row_idx, row in enumerate(ws.iter_rows(values_only=True)):
         row_data = []
         for col_idx, cell_value in enumerate(row):
-            # 优先使用合并单元格的值
             if (row_idx, col_idx) in merged_values:
                 row_data.append(merged_values[(row_idx, col_idx)])
             else:
@@ -244,12 +280,55 @@ def _parse_pdf(file_bytes: bytes) -> List[List]:
     return all_rows
 
 
+def _sheet_has_data(file_rows: List[List], min_data_rows: int = 2) -> bool:
+    """
+    判断工作表是否包含有效数据行（不是空表、说明页、目录页）。
+    判定标准：
+    1. 至少有 min_data_rows 行数据
+    2. 数据区域有一定数量的非空单元格（排除全空行、标题行）
+    3. 包含姓名相关关键词（"姓名"）或看起来像数据表格
+    """
+    if not file_rows or len(file_rows) < min_data_rows:
+        return False
+
+    non_empty_rows = 0
+    has_name_column = False
+    data_cells = 0
+
+    for i, row in enumerate(file_rows):
+        if not row:
+            continue
+        non_empty_cells = sum(1 for c in row if c is not None and str(c).strip() != "")
+        if non_empty_cells >= 2:
+            non_empty_rows += 1
+            data_cells += non_empty_cells
+            for c in row:
+                if c and "姓名" in str(c):
+                    has_name_column = True
+                    break
+
+    if has_name_column and non_empty_rows >= min_data_rows:
+        return True
+
+    if non_empty_rows >= 5 and data_cells >= 15:
+        return True
+
+    return False
+
+
 def _match_template(
     db: Session,
     file_rows: List[List],
     filename: str,
+    sheet_name: Optional[str] = None,
+    validate_columns: bool = True,
 ) -> Optional[SiImportTemplate]:
-    """为文件匹配最合适的导入模板"""
+    """为文件匹配最合适的导入模板
+    
+    Args:
+        sheet_name: 当前工作表名称，用于匹配模板的sheet_pattern
+        validate_columns: 是否验证模板能建立有效的字段映射（默认True）
+    """
     templates = (
         db.query(SiImportTemplate)
         .filter(SiImportTemplate.is_active == True)
@@ -264,22 +343,34 @@ def _match_template(
 
     for tpl in templates:
         score = 0
+        has_filename_match = False
+        has_header_match = False
+        header_match_ratio = 0.0
+
+        # 0. 工作表匹配（如果模板配置了sheet_pattern）
+        if tpl.sheet_pattern and sheet_name:
+            if tpl.sheet_pattern in sheet_name or sheet_name in tpl.sheet_pattern:
+                score += 80  # 工作表名称匹配权重很高
+        elif tpl.sheet_pattern and not sheet_name:
+            # 模板要求特定工作表但当前没有工作表信息，降低得分
+            score -= 30
 
         # 1. 文件名正则匹配
         if tpl.file_pattern:
             try:
                 if re.search(tpl.file_pattern, filename, re.IGNORECASE):
                     score += 50
+                    has_filename_match = True
             except re.error:
                 pass
 
-        # 1b. 文件名关键词匹配（正则的通俗替代方案）
-        # 用户只需配置关键词列表，如 ["广州", "个人明细表"]，无需了解正则
+        # 1b. 文件名关键词匹配
         if tpl.file_keywords and isinstance(tpl.file_keywords, list) and len(tpl.file_keywords) > 0:
             kw_lower = [kw.lower() for kw in tpl.file_keywords if kw]
             fname_lower = filename.lower()
             if all(kw in fname_lower for kw in kw_lower):
-                score += 50  # 与正则匹配同等权重
+                score += 50
+                has_filename_match = True
 
         # 2. 文件类型匹配
         ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
@@ -295,18 +386,45 @@ def _match_template(
                 if hr < len(file_rows):
                     header_row = file_rows[hr]
                     header_texts = [str(c).strip() if c else "" for c in header_row]
-                    mapping_keys = list(tpl.column_mappings.keys())
+                    mapping_keys = [k for k in tpl.column_mappings.keys() if k]
                     matched = sum(1 for k in mapping_keys if k in header_texts)
                     if mapping_keys:
-                        score += int(matched / len(mapping_keys) * 40)
+                        ratio = matched / len(mapping_keys)
+                        header_match_ratio = max(header_match_ratio, ratio)
+                        score += int(ratio * 40)
+                        if ratio >= 0.3:  # 至少匹配30%的列才算有意义的表头匹配
+                            has_header_match = True
 
-        if score > best_score:
+        # 【关键修复】提高匹配阈值，避免误匹配：
+        # 必须满足以下条件之一才算有效匹配：
+        # 1. 文件名匹配（50分）+ 一些其他得分 ≥ 50
+        # 2. 工作表名称匹配（80分）
+        # 3. 表头列名匹配比例≥50%（得分≥20）+ 文件类型匹配（10分）≥ 30
+        # 4. 总分 ≥ 50（防止仅靠文件类型10分就误匹配）
+        is_valid = False
+        if score >= 80 and (tpl.sheet_pattern and sheet_name):
+            is_valid = True  # 工作表精确匹配
+        elif has_filename_match and score >= 50:
+            is_valid = True  # 文件名匹配且有一定置信度
+        elif header_match_ratio >= 0.5 and score >= 30:
+            is_valid = True  # 表头匹配超过一半
+        elif score >= 50:
+            is_valid = True  # 总分足够高
+
+        if validate_columns and is_valid:
+            # 额外验证：模板必须能建立有效的字段映射，至少能匹配到员工姓名
+            try:
+                col_idx = _build_column_index(file_rows, tpl)
+                if "employee_name" not in col_idx:
+                    is_valid = False
+            except Exception:
+                is_valid = False
+
+        if is_valid and score > best_score:
             best_score = score
             best_template = tpl
 
-    if best_score >= 10:
-        return best_template
-    return None
+    return best_template
 
 
 def _infer_insurance_from_filename(filename: str) -> Dict[str, Optional[str]]:
@@ -354,12 +472,25 @@ def _build_column_index(
     file_rows: List[List],
     template: SiImportTemplate,
 ) -> Dict[str, int]:
-    """根据模板的表头配置，建立「数据库字段名 → 文件列序号」的映射"""
+    """根据模板的表头配置，建立「数据库字段名 → 文件列序号」的映射
+    
+    匹配策略（按得分从高到低）：
+    1. 完全相等 → 100分
+    2. 紧凑格式（去除空格、"-"、全角空格）完全相等 → 90分
+    3. header_name 是 header_text 紧凑格式的后缀（如"缴费基数"匹配"XX - 缴费基数"）→ 80分
+    4. 所有词组都在header_text中，且长度占比≥80% → 70分
+    5. header_name紧凑格式是header_text紧凑格式的子串，且长度占比≥70% → 60分
+    （删除了前两个字符匹配的危险兜底策略）
+    """
+    import re as _re
+    
     column_index = {}
+    used_columns = set()  # 记录已被映射的列，避免重复映射
     header_indices = template.header_rows if isinstance(template.header_rows, list) else [template.header_rows]
 
     # 合并多层表头为一行，用 " - " 分隔不同层级
     merged_header = []
+    merged_header_compact = []  # 预计算紧凑格式，提高性能
     if header_indices:
         max_cols = max(len(file_rows[hr]) if hr < len(file_rows) else 0 for hr in header_indices)
         for col_idx in range(max_cols):
@@ -372,59 +503,74 @@ def _build_column_index(
                         if not parts or val != parts[-1]:
                             parts.append(val)
             # 多层用 " - " 连接，单层直接用
-            merged_header.append(" - ".join(parts) if len(parts) > 1 else (parts[0] if parts else ""))
+            hdr_text = " - ".join(parts) if len(parts) > 1 else (parts[0] if parts else "")
+            merged_header.append(hdr_text)
+            merged_header_compact.append(hdr_text.replace(" - ", "").replace(" ", "").replace("\u3000", ""))
 
-    # 按 column_mappings 匹配（多级策略，从精确到模糊）
+    def _calc_match_score(header_name: str, header_text: str, text_compact: str) -> int:
+        """计算header_name与某个header_text的匹配得分，0表示不匹配"""
+        if not header_name or not header_text:
+            return 0
+        
+        name_compact = header_name.replace(" - ", "").replace(" ", "").replace("\u3000", "")
+        name_len = len(name_compact)
+        text_len = len(text_compact)
+        
+        # 策略1：完全相等
+        if header_name == header_text:
+            return 100
+        
+        # 策略2：紧凑格式完全相等
+        if name_compact == text_compact:
+            return 90
+        
+        # 策略3：header_name是header_text的后缀（要求header_name长度至少4个字符，避免短词误匹配）
+        if name_len >= 4 and text_compact.endswith(name_compact):
+            return 80
+        
+        # 策略4：所有词组都在header_text中（拆分"-"和空格）
+        tokens = [t for t in _re.split(r"\s*[-]\s*|\s+|（|）|\(|\)", header_name) if t]
+        tokens = [t for t in tokens if len(t) >= 2]  # 过滤掉单字token如"的"
+        if tokens and all(t in header_text for t in tokens):
+            # 要求长度占比至少80%，避免"单位"匹配到"工伤保险(单位缴纳)"这种情况
+            if name_len >= text_len * 0.8:
+                return 70
+        
+        # 策略5：header_name紧凑格式是header_text紧凑格式的子串
+        if name_len >= 4 and name_compact in text_compact:
+            # 要求长度占比至少70%
+            if name_len >= text_len * 0.7:
+                return 60
+        
+        return 0
+
+    # 按 column_mappings 匹配，计算每个字段的最佳匹配列
     mappings = template.column_mappings or {}
+    
+    # 先收集所有(字段, 列, 得分)的候选
+    candidates = []
     for header_name, db_field in mappings.items():
         if not db_field:  # 跳过未映射的列
             continue
-
+        
+        best_score = 0
         best_idx = None
-
-        # 策略1：精确包含匹配
         for idx, header_text in enumerate(merged_header):
-            if header_text and header_name and (
-                header_name in header_text or header_text in header_name
-            ):
+            score = _calc_match_score(header_name, header_text, merged_header_compact[idx] if idx < len(merged_header_compact) else "")
+            if score > best_score:
+                best_score = score
                 best_idx = idx
-                break
-
-        # 策略2：去除 " - " 分隔符后再匹配
-        # 场景：模板 key="基本养老保险(单位缴纳)缴费基数"，合并表头="基本养老保险(单位缴纳) - 缴费基数"
-        if best_idx is None:
-            hdr_compact = header_name.replace(" - ", "").replace(" ", "").replace("\u3000", "")
-            for idx, header_text in enumerate(merged_header):
-                if not header_text:
-                    continue
-                text_compact = header_text.replace(" - ", "").replace(" ", "").replace("\u3000", "")
-                if hdr_compact in text_compact or text_compact in hdr_compact:
-                    best_idx = idx
-                    break
-
-        # 策略3：将模板 key 按 "-" 或空格拆成词组，检查所有词组是否都在 header_text 中
-        # 场景：模板 key="工伤保险缴费基数"，合并表头="工伤保险 - 缴费基数"
-        if best_idx is None:
-            import re as _re
-            tokens = [t for t in _re.split(r"\s*[-]\s*|\s+", header_name) if t]
-            for idx, header_text in enumerate(merged_header):
-                if not header_text:
-                    continue
-                if all(t in header_text for t in tokens):
-                    best_idx = idx
-                    break
-
-        # 策略4：前两个字符模糊匹配（兜底）
-        if best_idx is None:
-            for idx, header_text in enumerate(merged_header):
-                if header_name and header_text and len(header_name) >= 2 and (
-                    header_name[:2] in header_text or header_text[:2] in header_name
-                ):
-                    best_idx = idx
-                    break
-
-        if best_idx is not None:
-            column_index[db_field] = best_idx
+        
+        if best_idx is not None and best_score >= 60:
+            candidates.append((best_score, db_field, best_idx, header_name))
+    
+    # 按得分降序排列，得分高的优先选择列，避免被得分低的抢占
+    candidates.sort(reverse=True, key=lambda x: x[0])
+    
+    for score, db_field, col_idx, header_name in candidates:
+        if col_idx not in used_columns:
+            column_index[db_field] = col_idx
+            used_columns.add(col_idx)
 
     return column_index
 
@@ -661,6 +807,34 @@ def _aggregate_by_name(all_records: List[Dict]) -> Dict[str, Dict]:
     return aggregated
 
 
+def _auto_fill_shared_bases(aggregated: Dict[str, Dict]):
+    """
+    共用基数自动填充：
+    横向格式文件（如北京社保）中，同一个险种的个人基数和单位基数通常是相同的，
+    但模板可能只映射了其中一个。如果只有个人基数没有单位基数（或反之），
+    自动复制填充，确保后续金额计算正确。
+    """
+    # 各险种的(个人基数字段, 单位基数字段)对
+    base_pairs = [
+        ("pension_personal_base", "pension_company_base"),
+        ("unemployment_personal_base", "unemployment_company_base"),
+        ("medical_personal_base", "medical_company_base"),
+    ]
+    # 工伤保险只有单位基数，无需配对
+
+    for name, record in aggregated.items():
+        for personal_base_field, company_base_field in base_pairs:
+            p_base = record.get(personal_base_field)
+            c_base = record.get(company_base_field)
+            
+            # 如果个人基数有值但单位基数没有，自动填充单位基数
+            if p_base is not None and p_base != 0 and (c_base is None or c_base == 0):
+                record[company_base_field] = p_base
+            # 如果单位基数有值但个人基数没有，自动填充个人基数
+            elif c_base is not None and c_base != 0 and (p_base is None or p_base == 0):
+                record[personal_base_field] = c_base
+
+
 def _match_employees(
     db: Session,
     aggregated: Dict[str, Dict],
@@ -728,7 +902,7 @@ def _validate_data(
                 "error_message": f"员工「{name}」缴费月份缺失或格式错误",
             })
 
-        # 2. 金额逻辑校验：基数 × 比例 ≈ 金额（允许1元误差）
+        # 2. 金额逻辑校验：基数 × 比例 ≈ 金额（允许5元误差，适应北京医保"+3元"等固定附加额情况）
         checks = [
             ("pension_personal", "pension_personal_rate", "pension_personal_base"),
             ("pension_company", "pension_company_rate", "pension_company_base"),
@@ -749,7 +923,7 @@ def _validate_data(
                     and base and isinstance(base, Decimal) and base > 0):
                 expected = (base * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
                 diff = abs(amount - expected)
-                if diff > Decimal("1.00"):
+                if diff > Decimal("5.00"):
                     field_label = SI_FIELD_LABELS.get(amount_field, amount_field)
                     logs.append({
                         "file_name": source_info,
@@ -1114,9 +1288,9 @@ def run_smart_import(
 ) -> ImportResult:
     """
     智能导入主流程：
-    1. 逐个解析文件（Excel/PDF）
-    2. 匹配模板并提取字段
-    3. 按姓名聚合多文件数据
+    1. 逐个解析文件（Excel/PDF），Excel自动遍历所有工作表
+    2. 每个工作表匹配模板并提取字段
+    3. 按姓名聚合多文件/多工作表数据
     4. 姓名匹配员工
     5. 数据校验
     6. 保存入库
@@ -1137,10 +1311,85 @@ def run_smart_import(
 
             ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
 
+            file_matched = False
+            sheets_processed = 0
+
             if ext in ("xlsx", "xls"):
-                file_rows = _parse_excel(file_bytes, filename)
+                # Excel文件：遍历所有工作表，每个工作表尝试匹配模板
+                sheet_names = _get_excel_sheet_names(file_bytes, filename)
+                if not sheet_names:
+                    # 无法获取工作表列表，回退到默认方式（第一个工作表）
+                    sheet_names = [None]  # None表示用默认sheet
+                
+                data_sheets_without_template = 0
+                for sheet_name in sheet_names:
+                    try:
+                        file_rows = _parse_excel(file_bytes, filename, sheet_name=sheet_name)
+                    except Exception as e:
+                        logger.warning(f"解析工作表 {sheet_name} 失败: {e}")
+                        continue
+
+                    if not file_rows or len(file_rows) < 2:
+                        continue
+
+                    # 判断是否是有效数据工作表
+                    if not _sheet_has_data(file_rows):
+                        continue
+
+                    # 匹配模板（传入工作表名称）
+                    template = _match_template(db, file_rows, filename, sheet_name=sheet_name)
+                    if not template:
+                        # 有数据但无匹配模板，记录警告
+                        sheet_display = sheet_name if sheet_name else "(默认工作表)"
+                        data_sheets_without_template += 1
+                        logs.append({
+                            "file_name": f"{filename}（工作表：{sheet_display}）",
+                            "error_level": "warning",
+                            "error_type": "no_template",
+                            "error_message": f"工作表「{sheet_display}」包含数据但未匹配到模板，该工作表数据已跳过",
+                        })
+                        continue
+
+                    # 提取数据
+                    display_name = f"{filename}（工作表：{sheet_name}）" if sheet_name else filename
+                    records = _extract_data(file_rows, template, display_name, period, logs, batch_id)
+                    
+                    if records:
+                        all_records.extend(records)
+                        file_matched = True
+                        sheets_processed += 1
+                        logger.info(f"成功从工作表「{sheet_name}」提取 {len(records)} 条记录（模板：{template.name}）")
+
             elif ext == "pdf":
                 file_rows = _parse_pdf(file_bytes)
+                
+                if not file_rows or len(file_rows) < 2:
+                    logs.append({
+                        "file_name": filename,
+                        "error_level": "error",
+                        "error_type": "empty_file",
+                        "error_message": "文件为空或数据行数不足",
+                    })
+                    result.failed_files += 1
+                    continue
+
+                # 匹配模板
+                template = _match_template(db, file_rows, filename)
+                if not template:
+                    logs.append({
+                        "file_name": filename,
+                        "error_level": "error",
+                        "error_type": "no_template",
+                        "error_message": f"未匹配到适合文件「{filename}」的导入模板，请在「社保公积金导入模板配置」页面中为该文件创建对应的解析模板后再导入",
+                    })
+                    result.failed_files += 1
+                    continue
+
+                records = _extract_data(file_rows, template, filename, period, logs, batch_id)
+                if records:
+                    all_records.extend(records)
+                    file_matched = True
+                    sheets_processed = 1
             else:
                 logs.append({
                     "file_name": filename,
@@ -1151,35 +1400,17 @@ def run_smart_import(
                 result.failed_files += 1
                 continue
 
-            if not file_rows or len(file_rows) < 2:
-                logs.append({
-                    "file_name": filename,
-                    "error_level": "error",
-                    "error_type": "empty_file",
-                    "error_message": "文件为空或数据行数不足",
-                })
-                result.failed_files += 1
-                continue
-
-            # 匹配模板（仅使用已配置的模板，不做自动识别）
-            template = _match_template(db, file_rows, filename)
-
-            if not template:
-                # 模板匹配失败 → 返回明确提示，引导用户先配置模板
+            if file_matched:
+                result.parsed_files += 1
+            else:
+                # 所有工作表都没匹配到模板或没提取到数据
                 logs.append({
                     "file_name": filename,
                     "error_level": "error",
                     "error_type": "no_template",
-                    "error_message": f"未匹配到适合文件「{filename}」的导入模板，请在「社保公积金导入模板配置」页面中为该文件创建对应的解析模板后再导入",
+                    "error_message": f"未匹配到适合文件「{filename}」的导入模板（已检查所有工作表），请在「社保公积金导入模板配置」页面中为该文件创建对应的解析模板后再导入",
                 })
                 result.failed_files += 1
-                continue
-
-            # 提取数据
-            records = _extract_data(file_rows, template, filename, period, logs, batch_id)
-
-            all_records.extend(records)
-            result.parsed_files += 1
 
         except Exception as e:
             logger.exception(f"解析文件失败: {filename}")
@@ -1200,6 +1431,10 @@ def run_smart_import(
 
     # ── 第2步：按姓名聚合 ──
     aggregated = _aggregate_by_name(all_records)
+
+    # ── 第2.5步：共用基数自动填充 ──
+    # 如果只有个人基数没有单位基数（或反之），自动复制（绝大多数情况下基数相同）
+    _auto_fill_shared_bases(aggregated)
 
     # ── 第3步：姓名匹配员工 ──
     valid_data, skipped = _match_employees(db, aggregated, logs, batch_id)
@@ -1256,59 +1491,61 @@ def _keyword_match_columns(column_names: List[str], source_category: str) -> Dic
     """
     基于关键词规则的兜底匹配（AI 不可用时使用）。
     按优先级从高到低逐字段匹配，已匹配的系统字段不再重复匹配。
+    【重要】宁可不匹配，也不要错配。只使用高置信度的精确关键词。
     """
     # 关键词匹配规则：(关键词列表, 系统字段名) 按优先级排序
+    # 注意：不要使用过于宽泛的词（如单独的"基数"、"金额"、"合计"），避免误匹配
     RULES = [
         # ── 姓名 ──
                 (["姓名", "员工姓名", "人员姓名", "名字"], "employee_name"),
         # ── 社保号 ──
                 (["社保号", "社会保障号", "个人社保号", "社保卡号", "电脑序号", "个人编号"], "employee_social_insurance_no"),
         # ── 养老保险 ──
-                (["养老个人基数", "养老保险基数", "养老保险缴费基数", "基本养老保险缴费基数"], "pension_personal_base"),
-                (["养老单位基数"], "pension_company_base"),
-                (["养老个人金额", "养老个人", "养老个人缴费", "养老保险个人", "养老保险个人缴纳"], "pension_personal"),
-                (["养老个人比例", "养老个人费率", "养老保险个人比例", "个人比例"], "pension_personal_rate"),
-                (["养老单位金额", "养老单位", "养老单位缴费", "养老保险单位", "养老保险单位缴纳", "单位缴纳基本养老保险"], "pension_company"),
-                (["养老单位比例", "养老单位费率", "养老保险单位比例", "单位比例"], "pension_company_rate"),
+                (["养老个人基数", "养老保险个人缴费基数", "基本养老保险个人缴费基数"], "pension_personal_base"),
+                (["养老单位基数", "养老保险单位缴费基数", "基本养老保险单位缴费基数"], "pension_company_base"),
+                (["养老个人金额", "养老个人缴费", "养老保险个人缴纳", "基本养老保险个人缴纳金额"], "pension_personal"),
+                (["养老个人比例", "养老个人费率", "养老保险个人比例", "基本养老保险个人比例"], "pension_personal_rate"),
+                (["养老单位金额", "养老单位缴费", "养老保险单位缴纳", "基本养老保险单位缴纳金额", "单位缴纳基本养老保险"], "pension_company"),
+                (["养老单位比例", "养老单位费率", "养老保险单位比例", "基本养老保险单位比例"], "pension_company_rate"),
         # ── 失业保险 ──
-                (["失业个人基数", "失业保险基数", "失业保险缴费基数"], "unemployment_personal_base"),
-                (["失业单位基数"], "unemployment_company_base"),
-                (["失业个人金额", "失业个人", "失业个人缴费", "失业保险个人", "失业保险个人缴纳"], "unemployment_personal"),
+                (["失业个人基数", "失业保险个人缴费基数"], "unemployment_personal_base"),
+                (["失业单位基数", "失业保险单位缴费基数"], "unemployment_company_base"),
+                (["失业个人金额", "失业个人缴费", "失业保险个人缴纳", "失业保险个人缴纳金额"], "unemployment_personal"),
                 (["失业个人比例", "失业个人费率", "失业保险个人比例"], "unemployment_personal_rate"),
-                (["失业单位金额", "失业单位", "失业单位缴费", "失业保险单位", "失业保险单位缴纳", "单位缴纳失业保险"], "unemployment_company"),
+                (["失业单位金额", "失业单位缴费", "失业保险单位缴纳", "失业保险单位缴纳金额", "单位缴纳失业保险"], "unemployment_company"),
                 (["失业单位比例", "失业单位费率", "失业保险单位比例"], "unemployment_company_rate"),
         # ── 医疗保险 ──
-                (["医疗个人基数", "医疗保险基数", "医疗保险缴费基数", "基本医疗保险缴费基数"], "medical_personal_base"),
-                (["医疗单位基数"], "medical_company_base"),
-                (["医疗个人金额", "医疗个人", "医疗个人缴费", "医疗保险个人", "医疗保险个人缴纳"], "medical_personal"),
+                (["医疗个人基数", "医疗保险个人缴费基数", "基本医疗保险个人缴费基数"], "medical_personal_base"),
+                (["医疗单位基数", "医疗保险单位缴费基数", "基本医疗保险单位缴费基数"], "medical_company_base"),
+                (["医疗个人金额", "医疗个人缴费", "医疗保险个人缴纳", "医疗保险个人缴纳金额"], "medical_personal"),
                 (["医疗个人比例", "医疗个人费率", "医疗保险个人比例"], "medical_personal_rate"),
-                (["医疗单位金额", "医疗单位", "医疗单位缴费", "医疗保险单位", "医疗保险单位缴纳", "单位缴纳基本医疗保险"], "medical_company"),
+                (["医疗单位金额", "医疗单位缴费", "医疗保险单位缴纳", "医疗保险单位缴纳金额", "单位缴纳基本医疗保险"], "medical_company"),
                 (["医疗单位比例", "医疗单位费率", "医疗保险单位比例"], "medical_company_rate"),
         # ── 工伤保险 ──
-                (["工伤单位基数", "工伤保险基数", "工伤保险缴费基数"], "injury_company_base"),
-                (["工伤单位金额", "工伤单位", "工伤保险单位", "工伤保险单位缴费", "工伤保险", "单位缴纳工伤保险"], "injury_company"),
+                (["工伤单位基数", "工伤保险单位缴费基数", "工伤保险缴费基数"], "injury_company_base"),
+                (["工伤单位金额", "工伤单位缴费", "工伤保险单位缴纳", "工伤保险单位缴纳金额", "单位缴纳工伤保险"], "injury_company"),
                 (["工伤单位比例", "工伤单位费率", "工伤保险单位比例", "工伤保险比例"], "injury_company_rate"),
         # ── 生育保险 ──
-                (["生育单位基数", "生育保险基数", "生育保险缴费基数"], "maternity_company_base"),
-                (["生育单位金额", "生育单位", "生育保险单位", "生育保险", "单位缴纳生育保险"], "maternity_company"),
+                (["生育单位基数", "生育保险单位缴费基数", "生育保险缴费基数"], "maternity_company_base"),
+                (["生育单位金额", "生育单位缴费", "生育保险单位缴纳", "生育保险单位缴纳金额", "单位缴纳生育保险"], "maternity_company"),
                 (["生育单位比例", "生育单位费率", "生育保险单位比例"], "maternity_company_rate"),
         # ── 公积金 ──
-                (["公积金基数", "公积金缴存基数", "公积金缴费基数", "住房公积金基数", "缴存基数", "基数"], "hf_base"),
-                (["公积金个人金额", "公积金个人", "公积金个人缴费", "公积金个人缴存", "公积金个人部分", "个人缴存额", "住房公积金个人"], "hf_personal"),
-                (["公积金个人比例", "公积金个人费率", "公积金个人缴存比例", "个人比例", "个人缴存比例"], "hf_personal_rate"),
-                (["公积金单位金额", "公积金单位", "公积金单位缴费", "公积金单位缴存", "公积金单位部分", "单位缴存额", "住房公积金单位"], "hf_company"),
-                (["公积金单位比例", "公积金单位费率", "公积金单位缴存比例", "单位比例", "单位缴存比例"], "hf_company_rate"),
+                (["公积金缴存基数", "公积金缴费基数", "住房公积金缴存基数", "住房公积金缴费基数"], "hf_base"),
+                (["公积金个人金额", "公积金个人缴费", "公积金个人缴存", "公积金个人部分", "个人缴存额", "住房公积金个人缴纳", "住房公积金个人金额"], "hf_personal"),
+                (["公积金个人比例", "公积金个人费率", "公积金个人缴存比例", "个人缴存比例"], "hf_personal_rate"),
+                (["公积金单位金额", "公积金单位缴费", "公积金单位缴存", "公积金单位部分", "单位缴存额", "住房公积金单位缴纳", "住房公积金单位金额"], "hf_company"),
+                (["公积金单位比例", "公积金单位费率", "公积金单位缴存比例", "单位缴存比例"], "hf_company_rate"),
         # ── 社保汇总 ──
-                (["社保个人合计", "社保个人小计", "个人社保合计", "社保个人"], "si_personal"),
-                (["社保单位合计", "社保单位小计", "单位社保合计", "社保单位"], "si_company"),
+                (["社保个人合计", "社保个人小计", "个人社保合计", "社保个人总额"], "si_personal"),
+                (["社保单位合计", "社保单位小计", "单位社保合计", "社保单位总额"], "si_company"),
         # ── 合计 ──
-                (["养老合计", "养老保险合计"], "pension_total"),
-                (["失业合计", "失业保险合计"], "unemployment_total"),
-                (["医疗合计", "医疗保险合计"], "medical_total"),
-                (["工伤合计", "工伤保险合计"], "injury_total"),
-                (["社保总合计", "社保合计", "社保汇总"], "si_grand_total"),
-                (["公积金合计", "公积金汇总"], "hf_total"),
-                (["总合计", "合计", "社保公积金总合计", "应缴合计", "汇总"], "grand_total"),
+                (["养老保险合计", "养老小计", "养老保险小计"], "pension_total"),
+                (["失业保险合计", "失业小计", "失业保险小计"], "unemployment_total"),
+                (["医疗保险合计", "医疗小计", "医疗保险小计"], "medical_total"),
+                (["工伤保险合计", "工伤小计", "工伤保险小计"], "injury_total"),
+                (["社保总合计", "社保合计", "社保汇总", "社保总额"], "si_grand_total"),
+                (["公积金合计", "公积金汇总", "公积金总额", "住房公积金合计"], "hf_total"),
+                (["总合计", "应缴合计", "社保公积金总合计", "总计", "缴费合计"], "grand_total"),
     ]
 
     # 对列名做标准化处理（去空格、去括号、统一全角半角）
@@ -1320,31 +1557,34 @@ def _keyword_match_columns(column_names: List[str], source_category: str) -> Dic
 
     for col in column_names:
         norm_col = _normalize(col)
-        # 收集所有可能的匹配：(关键词, 系统字段, 匹配得分)
-        # 得分规则：精确匹配=3, 关键词包含于列名=2, 列名包含于关键词=1
+        # 收集所有可能的匹配：(关键词, 系统字段, 匹配得分, 关键词长度)
+        # 得分规则：精确匹配=3, 关键词完整包含于列名=2（要求关键词长度≥4，避免短词误匹配）
         candidates = []
         for keywords, field in RULES:
             if field in used_fields:
                 continue
             for kw in keywords:
                 norm_kw = _normalize(kw)
+                kw_len = len(norm_kw)
                 score = 0
                 if norm_col == norm_kw:
                     score = 3
-                elif norm_kw in norm_col:
+                elif kw_len >= 4 and norm_kw in norm_col:
+                    # 对于包含匹配，要求关键词长度至少4个字符，避免"基数"、"金额"等短词误匹配
                     score = 2
-                elif norm_col in norm_kw:
-                    score = 1
                 if score > 0:
-                    candidates.append((kw, field, score, len(norm_kw)))
-            # 不 break，继续检查下一个 field
+                    candidates.append((kw, field, score, kw_len))
 
         # 按得分降序，同分按关键词长度降序（越长越精准）
         if candidates:
             candidates.sort(key=lambda x: (x[2], x[3]), reverse=True)
             best = candidates[0]
-            mappings[col] = best[1]
-            used_fields.add(best[1])
+            # 只有得分≥2才匹配，得分=1（列名包含于关键词但关键词不包含列名）不再使用
+            if best[2] >= 2:
+                mappings[col] = best[1]
+                used_fields.add(best[1])
+            else:
+                mappings[col] = None
         else:
             mappings[col] = None
 
@@ -1371,17 +1611,22 @@ def _ai_match_columns(column_names: List[str], source_category: str, city: Optio
         field_desc_lines.append(f"  - {field_key}: {field_label}")
 
     system_prompt = (
-        "你是一个社保公积金数据字段匹配专家。\n"
+        "你是一个社保公积金数据字段匹配专家，要求极度严谨、精准。\n"
         "你的任务是根据文件中的列名，判断它对应哪个系统数据库字段。\n\n"
+        "【核心原则：宁可不匹配，也不要错配！】\n"
+        "- 只有当你100%确定列名对应某个系统字段时才填写，否则一律填null\n"
+        "- 不要因为列名包含某个词就强行映射，避免过度匹配\n"
+        "- 如果列名已经明确包含险种名称（如'基本养老保险'、'失业保险'），必须映射到对应险种的具体字段，不要使用通用字段\n\n"
         "规则：\n"
         "1. 如果列名明确对应某个系统字段，填入字段名\n"
-        "2. 如果列名无法确定对应哪个系统字段，填入 null\n"
-        "3. 注意区分「个人」和「单位」、「基数」和「金额」和「比例」\n"
-        "4. 注意区分不同险种：养老、失业、医疗、工伤、生育\n"
-        "5. 注意区分社保和公积金\n"
-        "6. 每个系统字段只能匹配一次，不要重复匹配\n"
-        f"7. 数据来源类别是「{'社保' if source_category == 'social_insurance' else '公积金'}」，"
-        f"请优先匹配{'社保' if source_category == 'social_insurance' else '公积金'}相关字段\n\n"
+        "2. 如果不确定、模糊或有歧义，填入null\n"
+        "3. 严格区分「个人」和「单位」、「基数」和「金额」和「比例」\n"
+        "4. 严格区分不同险种：养老、失业、医疗、工伤、生育、公积金\n"
+        "5. 每个系统字段只能匹配一次，不要重复匹配\n"
+        f"6. 数据来源类别是「{'社保' if source_category == 'social_insurance' else '公积金'}」，"
+        f"请优先匹配{'社保' if source_category == 'social_insurance' else '公积金'}相关字段\n"
+        "7. 对于包含明确险种+方向的列名（如'基本养老保险(单位缴纳) - 缴费基数'），必须映射到对应的具体字段（如pension_company_base），不要映射到通用字段\n"
+        "8. 只有当列名确实是纯通用名称（不包含任何具体险种名）时，才考虑映射，但如果不确定还是填null\n\n"
         "请直接返回 JSON，格式为：\n"
         '{"mappings": {"文件列名A": "系统字段名", "文件列名B": null, ...}}\n'
         "确保每个文件列名都出现在 mappings 中。"
@@ -1419,16 +1664,23 @@ def _ai_match_columns(column_names: List[str], source_category: str, city: Optio
         return {}
 
 
-def auto_detect_template(file_bytes: bytes, filename: str) -> Dict:
+def auto_detect_template(
+    file_bytes: bytes,
+    filename: str,
+    sheet_name: Optional[str] = None,
+) -> Dict:
     """
     文件结构自动检测（含 AI 智能字段匹配）。
     提取文件中的列名，调用 AI 自动匹配系统字段映射，
     AI 不可用时降级为关键词规则匹配。
     用户在前端核对确认后保存即可。
+    
+    Args:
+        sheet_name: Excel工作表名称，指定解析哪个工作表；None则使用默认工作表
     """
     ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
     if ext in ("xlsx", "xls"):
-        file_rows = _parse_excel(file_bytes, filename)
+        file_rows = _parse_excel(file_bytes, filename, sheet_name=sheet_name)
         file_type = "excel"
     elif ext == "pdf":
         file_rows = _parse_pdf(file_bytes)
@@ -1551,40 +1803,244 @@ def auto_detect_template(file_bytes: bytes, filename: str) -> Dict:
 
     basename = filename.rsplit(".", 1)[0] if "." in filename else filename
 
-    # ── 通用列名检测与映射 ──
-    # 当表头列名是通用名称（缴费基数/费率/应缴费额）时，说明这是多险种共用格式，
-    # 默认生成「通用模板」：映射到 [通用] 字段，导入时再根据文件名自动识别具体险种。
-    # 不再自动转换成具体险种字段，避免模板被限定为单一险种。
+    # ── 险种感知的列名解析与修正 ──
+    # 核心改进：
+    # 1. 如果列名已包含明确险种关键词（养老/失业/医疗/工伤/生育/公积金），优先解析为具体险种字段
+    # 2. 只有当列名是纯通用名称（不包含任何险种名）时，才使用通用字段映射
+    # 3. 不再覆盖AI/关键词已经正确匹配的具体险种字段
+
+    # 险种关键词（按长度降序，避免短词误匹配）
+    INSURANCE_KEYWORDS = [
+        ("基本养老保险", "pension"), ("养老保险", "pension"), ("养老", "pension"),
+        ("失业保险", "unemployment"), ("失业", "unemployment"),
+        ("基本医疗保险", "medical"), ("医疗保险", "medical"), ("医疗", "medical"),
+        ("工伤保险", "injury"), ("工伤", "injury"),
+        ("生育保险", "maternity"), ("生育", "maternity"),
+        ("住房公积金", "hf"), ("公积金", "hf"),
+    ]
+
+    # 缴费方向关键词（按长度降序）
+    PAYER_KEYWORDS = [
+        ("个人缴纳", "personal"), ("单位缴纳", "company"),
+        ("个人缴存", "personal"), ("单位缴存", "company"),
+        ("个人部分", "personal"), ("单位部分", "company"),
+        ("(个人)", "personal"), ("(单位)", "company"),
+        ("（个人）", "personal"), ("（单位）", "company"),
+        ("个人", "personal"), ("单位", "company"), ("企业", "company"),
+    ]
+
+    # 字段类型关键词
+    TYPE_KEYWORDS = {
+        "base": ["缴费基数", "缴费工资", "缴存基数", "基数"],
+        "rate": ["费率", "缴费比例", "缴存比例", "比例"],
+        "amount": ["应缴金额", "应缴费额", "缴费金额", "应缴", "缴存额", "金额"],
+    }
+
+    def _parse_column_insurance(col_name: str) -> Optional[Tuple[str, str, str]]:
+        """
+        从列名中解析 (险种, 缴费方向, 字段类型)。
+        如果列名不包含明确险种信息，返回None。
+        特殊处理：
+        1. 工伤保险、生育保险只有单位部分，列名可能不标注(单位缴纳)
+        2. 横向格式共用基数（如"缴费基数_养老保险"）未标注个人/单位，默认personal_base（后续自动补全company_base）
+        3. 公积金基数不分个人/单位，统一返回hf_base
+        """
+        col_lower = col_name
+        ins_type = None
+        payer = None
+        ftype = None
+
+        # 1. 识别险种
+        for kw, itype in INSURANCE_KEYWORDS:
+            if kw in col_lower:
+                ins_type = itype
+                break
+
+        # 如果没有识别到险种，返回None（说明是纯通用列名）
+        if not ins_type:
+            # 额外检查：合计类字段
+            if "合计" in col_lower or "总计" in col_lower:
+                # 先尝试识别具体险种合计
+                for kw, itype in INSURANCE_KEYWORDS:
+                    if kw in col_lower:
+                        if itype == "pension":
+                            return ("pension", "total", "total")
+                        elif itype == "unemployment":
+                            return ("unemployment", "total", "total")
+                        elif itype == "medical":
+                            return ("medical", "total", "total")
+                        elif itype == "injury":
+                            return ("injury", "total", "total")
+                # 社保合计/公积金合计/总合计
+                if "社保" in col_lower and "公积金" not in col_lower:
+                    return ("si", "total", "total")
+                if "公积金" in col_lower:
+                    return ("hf", "total", "total")
+                if "总合计" in col_lower or "应缴合计" in col_lower:
+                    return ("grand", "total", "total")
+            return None
+
+        # 2. 识别缴费方向
+        for kw, ptype in PAYER_KEYWORDS:
+            if kw in col_lower:
+                payer = ptype
+                break
+
+        # 3. 识别字段类型
+        for ftype_name, kw_list in TYPE_KEYWORDS.items():
+            for kw in kw_list:
+                if kw in col_lower:
+                    ftype = ftype_name
+                    break
+            if ftype:
+                break
+
+        # 特殊处理1：工伤保险、生育保险只有单位部分，如果列名没标注方向，默认是单位
+        if not payer and ins_type in ("injury", "maternity"):
+            payer = "company"
+        
+        # 特殊处理2：公积金基数不分个人/单位，直接返回base（_build_specific_field会处理为hf_base）
+        if ins_type == "hf" and ftype == "base":
+            payer = "personal"  # 任意值，hf_base不区分
+        
+        # 特殊处理3：共用基数（识别到险种和base类型，但没有明确个人/单位方向）
+        # 例如"缴费基数_养老保险"这种横向格式，默认按personal_base映射，
+        # 后续由_auto_fill_shared_bases自动填充company_base
+        if not payer and ftype == "base" and ins_type not in ("hf",):
+            payer = "personal"
+
+        if ins_type and payer and ftype:
+            return (ins_type, payer, ftype)
+        # 合计类特殊处理
+        if "合计" in col_lower or "小计" in col_lower:
+            return (ins_type, "total", "total")
+        return None
+
+    def _build_specific_field(ins_type: str, payer: str, ftype: str) -> Optional[str]:
+        """根据险种、方向、类型构建具体系统字段名"""
+        # 合计字段
+        if ftype == "total":
+            total_map = {
+                "pension": "pension_total",
+                "unemployment": "unemployment_total",
+                "medical": "medical_total",
+                "injury": "injury_total",
+                "si": "si_grand_total",
+                "hf": "hf_total",
+                "grand": "grand_total",
+            }
+            return total_map.get(ins_type)
+
+        if ins_type == "hf":
+            # 公积金特殊处理
+            if ftype == "base":
+                return "hf_base"
+            elif ftype == "rate":
+                return f"hf_{payer}_rate"
+            elif ftype == "amount":
+                return f"hf_{payer}"
+        else:
+            # 社保险种
+            if ftype == "base":
+                return f"{ins_type}_{payer}_base"
+            elif ftype == "rate":
+                return f"{ins_type}_{payer}_rate"
+            elif ftype == "amount":
+                return f"{ins_type}_{payer}"
+        return None
+
+    # ── 第一步：基于列名内容，尝试解析为具体险种字段 ──
+    # 这是高置信度匹配，优先于通用字段处理
+    parsed_mappings = {}
+    parsed_count = 0
+    for col_name in column_mappings.keys():
+        parsed = _parse_column_insurance(col_name)
+        if parsed:
+            ins_type, payer, ftype = parsed
+            specific_field = _build_specific_field(ins_type, payer, ftype)
+            if specific_field and specific_field in SI_FIELD_LABELS:
+                parsed_mappings[col_name] = specific_field
+                parsed_count += 1
+
+    # ── 第二步：处理纯通用列名（列名中不包含任何险种信息）──
     generic_col_patterns = {
         "缴费基数": "amount_base",
         "缴费工资": "amount_base",
         "费率": "rate",
-        "比例": "rate",
+        "缴费比例": "rate",
         "应缴费额": "amount",
         "缴费金额": "amount",
         "应缴金额": "amount",
         "单位应缴": "company_amount",
         "个人应缴": "personal_amount",
-        "个人部分": "personal_amount",
-        "单位部分": "company_amount",
     }
-    # 个人/单位方向关键词（列名级别）
     personal_col_keywords = ["个人", "个人缴纳", "个人部分", "个人应缴"]
     company_col_keywords = ["单位", "企业", "公司", "单位缴纳", "单位部分", "单位应缴"]
 
-    has_generic_cols = False
-    generic_fix_count = 0
+    # 合计类通用列名（根据数据来源类别判断）
+    total_col_patterns = {}
+    if source_category == "social_insurance":
+        total_col_patterns = {
+            "单位部分合计": "si_company",
+            "个人部分合计": "si_personal",
+            "应缴金额合计": "si_grand_total",
+            "单位合计": "si_company",
+            "个人合计": "si_personal",
+            "社保合计": "si_grand_total",
+        }
+    elif source_category == "housing_fund":
+        total_col_patterns = {
+            "单位部分合计": "hf_company",
+            "个人部分合计": "hf_personal",
+            "应缴金额合计": "hf_total",
+            "单位合计": "hf_company",
+            "个人合计": "hf_personal",
+            "公积金合计": "hf_total",
+        }
+
     fixed_mappings = {}
+    generic_fix_count = 0
 
     for col_name, db_field in column_mappings.items():
+        # 如果列名能解析为具体险种字段，优先使用解析结果
+        if col_name in parsed_mappings:
+            fixed_mappings[col_name] = parsed_mappings[col_name]
+            continue
+
+        # 检查列名是否包含险种关键词
+        has_insurance = any(kw in col_name for kw, _ in INSURANCE_KEYWORDS)
+
+        # 如果列名包含险种关键词，但我们没能成功解析（缺少方向或类型），
+        # 保留原有匹配结果（可能AI已经正确匹配），不要强制改成通用字段
+        if has_insurance:
+            fixed_mappings[col_name] = db_field
+            continue
+
+        # 列名不包含险种关键词，才检查是否是纯通用列名
         matched_generic = None
+        matched_total = None
+
+        # 优先匹配合计类列名
+        for pattern, total_field in total_col_patterns.items():
+            if pattern in col_name:
+                matched_total = total_field
+                break
+
+        if matched_total:
+            if matched_total != db_field:
+                fixed_mappings[col_name] = matched_total
+                generic_fix_count += 1
+            else:
+                fixed_mappings[col_name] = db_field
+            continue
+
+        # 再检查普通通用列名
         for pattern, generic_field in generic_col_patterns.items():
             if pattern in col_name:
                 matched_generic = generic_field
                 break
 
         if matched_generic:
-            has_generic_cols = True
             # 根据列名内容判断是个人/单位/完全通用
             col_personal = any(kw in col_name for kw in personal_col_keywords)
             col_company = any(kw in col_name for kw in company_col_keywords)
@@ -1613,9 +2069,21 @@ def auto_detect_template(file_bytes: bytes, filename: str) -> Dict:
         else:
             fixed_mappings[col_name] = db_field
 
-    if generic_fix_count > 0:
-        column_mappings = fixed_mappings
-        matched_count = sum(1 for v in column_mappings.values() if v is not None)
+    column_mappings = fixed_mappings
+    matched_count = sum(1 for v in column_mappings.values() if v is not None)
+
+    # 生成描述信息
+    if parsed_count > 0 and generic_fix_count > 0:
+        description = (
+            f"已自动识别 {parsed_count} 个含具体险种的字段，{generic_fix_count} 个通用字段，"
+            f"共匹配 {matched_count}/{len(valid_column_names)} 个字段，请核对后保存"
+        )
+    elif parsed_count > 0:
+        description = (
+            f"AI 已自动匹配 {matched_count}/{len(valid_column_names)} 个字段，"
+            f"其中自动识别了{parsed_count}个含具体险种名的列，请核对后保存"
+        )
+    elif generic_fix_count > 0:
         insurance_info = _infer_insurance_from_filename(filename)
         ins_type = insurance_info.get("insurance_type")
         payer = insurance_info.get("payer")
@@ -1627,9 +2095,12 @@ def auto_detect_template(file_bytes: bytes, filename: str) -> Dict:
             if ins_name or payer_name:
                 detected_info = f"从文件名识别到「{ins_name}{payer_name}」，"
         description = (
-            f"{detected_info}检测到通用表头格式，已自动配置为通用字段映射（共匹配 {matched_count}/{len(valid_column_names)} 个字段）。"
+            f"{detected_info}检测到通用表头格式（列名不含具体险种），已自动配置为通用字段映射"
+            f"（共匹配 {matched_count}/{len(valid_column_names)} 个字段）。"
             f"系统将根据导入文件的文件名自动识别险种。如需限定为单一险种，请手动调整映射字段。"
         )
+    else:
+        description = f"已自动匹配 {matched_count}/{len(valid_column_names)} 个字段，请核对后保存"
 
     # 从文件名提取关键词（用于关键词匹配模式）
     # 过滤掉具体险种名和个人/单位方向词，保留城市、"社保"等通用词，
@@ -1658,6 +2129,17 @@ def auto_detect_template(file_bytes: bytes, filename: str) -> Dict:
             keywords.append(kw)
     keywords = keywords[:5]
 
+    # 获取所有工作表名称（供前端选择）
+    all_sheet_names = None
+    if ext in ("xlsx", "xls"):
+        try:
+            all_sheet_names = _get_excel_sheet_names(file_bytes, filename)
+        except Exception:
+            all_sheet_names = None
+
+    # 如果指定了sheet_name，建议将其作为sheet_pattern
+    suggested_sheet_pattern = sheet_name if sheet_name else None
+
     return {
         "name": f"{city or '通用'}{'社保' if source_category == 'social_insurance' else '公积金'}-{basename[:20]}",
         "source_category": source_category,
@@ -1666,13 +2148,15 @@ def auto_detect_template(file_bytes: bytes, filename: str) -> Dict:
         "description": description,
         "file_pattern": None,
         "file_keywords": keywords if keywords else None,
-        "sheet_pattern": None,
+        "sheet_pattern": suggested_sheet_pattern,
         "header_rows": header_rows_list,
         "data_start_row": data_start_row,
         "skip_footer_rows": skip_footer_rows,
         "column_mappings": column_mappings,
         "row_filters": None,
         "number_format": {"remove_chars": [",", "，"], "decimal_separator": "."},
+        "sheet_name": sheet_name,
+        "all_sheet_names": all_sheet_names,
     }
 
 
@@ -1750,7 +2234,11 @@ def save_batch_files(period: str, files: List) -> Dict:
 def precheck_batch(db: Session, batch_id: str) -> Dict:
     """
     预检查批次中的文件，判断哪些能匹配模板、哪些不能。
+    对于Excel多工作表文件，会检查所有包含数据的工作表。
+    每个未匹配的（文件, 工作表）组合生成一个独立的待配置条目。
+    
     返回: {batch_id, matched_files: [...], unmatched_files: [...], all_files: [...]}
+    unmatched_files 中的每个条目可能包含 sheet_name 字段，标识需要配置模板的具体工作表
     """
     batch_dir = TEMP_DIR / batch_id
     meta_path = batch_dir / "meta.json"
@@ -1771,7 +2259,7 @@ def precheck_batch(db: Session, batch_id: str) -> Dict:
         file_path = batch_dir / safe_name
 
         if not file_path.exists():
-            unmatched_files.append({**finfo, "reason": "文件不存在"})
+            unmatched_files.append({**finfo, "reason": "文件不存在", "sheet_name": None})
             file_results.append({**finfo, "matched": False, "reason": "文件不存在"})
             continue
 
@@ -1780,36 +2268,133 @@ def precheck_batch(db: Session, batch_id: str) -> Dict:
                 file_bytes = f.read()
 
             ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+            file_fully_matched = True
+            matched_template_info = None
+            all_matched_sheets = []
+            unmatched_sheet_entries = []
+
             if ext in ("xlsx", "xls"):
-                file_rows = _parse_excel(file_bytes, filename)
+                # Excel文件：遍历所有工作表检查匹配
+                sheet_names = _get_excel_sheet_names(file_bytes, filename)
+                if not sheet_names:
+                    sheet_names = [None]
+                
+                data_sheet_count = 0
+                for sheet_name in sheet_names:
+                    try:
+                        file_rows = _parse_excel(file_bytes, filename, sheet_name=sheet_name)
+                    except Exception:
+                        continue
+                    
+                    if not file_rows or len(file_rows) < 2:
+                        continue
+
+                    # 判断该工作表是否包含有效数据
+                    if not _sheet_has_data(file_rows):
+                        continue
+
+                    data_sheet_count += 1
+                    sheet_display = sheet_name if sheet_name else f"工作表{data_sheet_count}"
+
+                    # 尝试匹配模板
+                    template = _match_template(db, file_rows, filename, sheet_name=sheet_name)
+                    if template:
+                        all_matched_sheets.append(sheet_display)
+                        if not matched_template_info:
+                            matched_template_info = {"name": template.name, "id": template.id}
+                    else:
+                        file_fully_matched = False
+                        # 为这个未匹配的工作表创建一个待配置条目
+                        unmatched_entry = {
+                            **finfo,
+                            "sheet_name": sheet_name,
+                            "sheet_display": sheet_display,
+                            "reason": f"工作表「{sheet_display}」未匹配到模板",
+                            "display_name": f"{filename}（工作表：{sheet_display}）" if sheet_name else filename,
+                        }
+                        unmatched_sheet_entries.append(unmatched_entry)
+
+                # 判断文件匹配状态
+                if data_sheet_count == 0:
+                    # 没有找到任何包含数据的工作表
+                    reason = "文件中未找到有效数据工作表"
+                    unmatched_files.append({**finfo, "reason": reason, "sheet_name": None})
+                    file_results.append({**finfo, "matched": False, "reason": reason, "total_sheets": len(sheet_names)})
+                    continue
+                elif not file_fully_matched:
+                    # 有工作表未匹配模板
+                    for entry in unmatched_sheet_entries:
+                        unmatched_files.append(entry)
+                    total_sheets = data_sheet_count
+                    matched_count = len(all_matched_sheets)
+                    file_results.append({
+                        **finfo,
+                        "matched": False,
+                        "reason": f"{len(unmatched_sheet_entries)}/{total_sheets}个工作表未匹配模板",
+                        "matched_sheets": all_matched_sheets,
+                        "unmatched_sheets": [e["sheet_display"] for e in unmatched_sheet_entries],
+                    })
+                    continue
+                else:
+                    # 所有数据工作表都匹配成功
+                    pass
+                            
             elif ext == "pdf":
                 file_rows = _parse_pdf(file_bytes)
+                if not file_rows or len(file_rows) < 2:
+                    unmatched_files.append({**finfo, "reason": "PDF文件为空或无法解析", "sheet_name": None})
+                    file_results.append({**finfo, "matched": False, "reason": "PDF文件为空或无法解析"})
+                    continue
+                if not _sheet_has_data(file_rows, min_data_rows=1):
+                    unmatched_files.append({**finfo, "reason": "PDF文件中未找到有效数据表格", "sheet_name": None})
+                    file_results.append({**finfo, "matched": False, "reason": "PDF文件中未找到有效数据表格"})
+                    continue
+                template = _match_template(db, file_rows, filename)
+                if template:
+                    matched_template_info = {"name": template.name, "id": template.id}
+                    all_matched_sheets = ["(PDF)"]
+                else:
+                    file_fully_matched = False
+                    unmatched_files.append({
+                        **finfo,
+                        "sheet_name": None,
+                        "sheet_display": None,
+                        "reason": "未匹配到模板",
+                        "display_name": filename,
+                    })
+                    file_results.append({**finfo, "matched": False, "reason": "未匹配到模板"})
+                    continue
             else:
-                unmatched_files.append({**finfo, "reason": "不支持的文件格式"})
+                unmatched_files.append({**finfo, "reason": "不支持的文件格式", "sheet_name": None})
                 file_results.append({**finfo, "matched": False, "reason": "不支持的文件格式"})
                 continue
 
-            if not file_rows or len(file_rows) < 2:
-                unmatched_files.append({**finfo, "reason": "文件为空或数据行数不足"})
-                file_results.append({**finfo, "matched": False, "reason": "文件为空或数据行数不足"})
-                continue
-
-            template = _match_template(db, file_rows, filename)
-            if template:
-                matched_files.append({**finfo, "template_name": template.name, "template_id": template.id})
-                file_results.append({**finfo, "matched": True, "template_name": template.name, "template_id": template.id})
+            if file_fully_matched and matched_template_info:
+                matched_files.append({
+                    **finfo, 
+                    "template_name": matched_template_info["name"], 
+                    "template_id": matched_template_info["id"],
+                    "matched_sheets": all_matched_sheets,
+                })
+                file_results.append({
+                    **finfo, 
+                    "matched": True, 
+                    "template_name": matched_template_info["name"], 
+                    "template_id": matched_template_info["id"],
+                    "matched_sheets": all_matched_sheets,
+                })
             else:
-                unmatched_files.append({**finfo, "reason": "未匹配到模板"})
-                file_results.append({**finfo, "matched": False, "reason": "未匹配到模板"})
+                unmatched_files.append({**finfo, "reason": "未匹配到模板（已检查所有工作表）", "sheet_name": None})
+                file_results.append({**finfo, "matched": False, "reason": "未匹配到模板（已检查所有工作表）"})
         except Exception as e:
             logger.exception(f"预检查文件失败: {filename}")
-            unmatched_files.append({**finfo, "reason": f"文件解析失败: {str(e)}"})
+            unmatched_files.append({**finfo, "reason": f"文件解析失败: {str(e)}", "sheet_name": None})
             file_results.append({**finfo, "matched": False, "reason": f"文件解析失败: {str(e)}"})
 
     return {
         "batch_id": batch_id,
         "period": meta.get("period", ""),
-        "total_files": len(file_results),
+        "total_files": len(meta.get("files", [])),
         "matched_count": len(matched_files),
         "unmatched_count": len(unmatched_files),
         "has_unmatched": len(unmatched_files) > 0,
@@ -1819,10 +2404,19 @@ def precheck_batch(db: Session, batch_id: str) -> Dict:
     }
 
 
-def auto_detect_from_batch(batch_id: str, file_index: int) -> Dict:
+def auto_detect_from_batch(
+    batch_id: str,
+    file_index: int,
+    sheet_name: Optional[str] = None,
+) -> Dict:
     """
-    对批次中指定索引的文件执行自动模板识别。
+    对批次中指定索引的文件（可指定工作表）执行自动模板识别。
     返回auto_detect_template的结果。
+    
+    Args:
+        batch_id: 批次ID
+        file_index: 文件索引
+        sheet_name: Excel工作表名称，None则使用默认工作表
     """
     batch_dir = TEMP_DIR / batch_id
     meta_path = batch_dir / "meta.json"
@@ -1849,7 +2443,7 @@ def auto_detect_from_batch(batch_id: str, file_index: int) -> Dict:
     with open(file_path, "rb") as f:
         file_bytes = f.read()
 
-    return auto_detect_template(file_bytes, filename)
+    return auto_detect_template(file_bytes, filename, sheet_name=sheet_name)
 
 
 def run_smart_import_from_batch(
@@ -1893,11 +2487,15 @@ def run_smart_import_from_batch(
         if file_path.exists():
             temp_files.append(TempFileWrapper(filename, file_path))
 
-    try:
-        result = run_smart_import(db, period, temp_files, user_id, username)
-        return result
-    finally:
-        shutil.rmtree(batch_dir, ignore_errors=True)
+    result = run_smart_import(db, period, temp_files, user_id, username)
+    # 收集未匹配模板的文件名（仅error级别的no_template错误，即整个文件未匹配到模板）
+    # warning级别的是单个工作表未匹配（预检查阶段应已拦截，此处仅作兜底）
+    result.no_template_filenames = list({
+        e["file_name"] for e in result.errors 
+        if e.get("error_type") == "no_template" and e.get("error_level") == "error"
+    })
+    # 不自动清理批次目录，由调用方决定是否清理（若需要配置模板则先复制失败文件）
+    return result
 
 
 def cleanup_batch(batch_id: str):
@@ -1905,3 +2503,60 @@ def cleanup_batch(batch_id: str):
     batch_dir = TEMP_DIR / batch_id
     if batch_dir.exists():
         shutil.rmtree(batch_dir, ignore_errors=True)
+
+
+def create_batch_from_unmatched(original_batch_id: str, failed_filenames: List[str]) -> Dict:
+    """
+    从原批次中提取未匹配模板的文件，创建一个新的批次用于模板配置。
+    返回新批次的 meta 信息（含 batch_id、period、files 列表）。
+    """
+    _cleanup_expired_batches()
+
+    src_dir = TEMP_DIR / original_batch_id
+    src_meta_path = src_dir / "meta.json"
+    if not src_meta_path.exists():
+        raise ValueError(f"原批次 {original_batch_id} 不存在或已过期")
+
+    with open(src_meta_path, "r", encoding="utf-8") as f:
+        src_meta = json.load(f)
+
+    period = src_meta.get("period", "")
+    failed_set = set(failed_filenames)
+
+    new_batch_id = str(uuid.uuid4())
+    new_dir = TEMP_DIR / new_batch_id
+    new_dir.mkdir(parents=True, exist_ok=True)
+
+    new_file_infos = []
+    new_idx = 0
+    for finfo in src_meta.get("files", []):
+        if finfo["filename"] not in failed_set:
+            continue
+        old_safe_name = f"{finfo['index']}_{finfo['filename']}"
+        src_file = src_dir / old_safe_name
+        if not src_file.exists():
+            continue
+        new_safe_name = f"{new_idx}_{finfo['filename']}"
+        dst_file = new_dir / new_safe_name
+        shutil.copy2(str(src_file), str(dst_file))
+        new_file_infos.append({
+            "index": new_idx,
+            "filename": finfo["filename"],
+            "size": finfo.get("size", 0),
+        })
+        new_idx += 1
+
+    if not new_file_infos:
+        shutil.rmtree(new_dir, ignore_errors=True)
+        raise ValueError("没有需要配置模板的文件")
+
+    new_meta = {
+        "batch_id": new_batch_id,
+        "period": period,
+        "created_at": time.time(),
+        "files": new_file_infos,
+    }
+    with open(new_dir / "meta.json", "w", encoding="utf-8") as f:
+        json.dump(new_meta, f, ensure_ascii=False, indent=2)
+
+    return new_meta

@@ -30,6 +30,19 @@
       </template>
     </div>
 
+    <el-alert
+      v-if="mismatchCount > 0"
+      type="error"
+      :closable="false"
+      show-icon
+      class="mb-4"
+      title="计薪天数异常"
+    >
+      <template #default>
+        检测到 <b>{{ mismatchCount }}</b> 条记录的「当月总计薪天数」与「应计薪天数」不一致，请先点击「计薪日历」检查年度工作日历配置是否正确（修改后关闭弹窗会自动重算对应月份），避免工资核算错误！
+      </template>
+    </el-alert>
+
     <el-table :data="records" border stripe v-loading="loading" max-height="600" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
       <el-table-column type="selection" width="45" />
       <el-table-column type="index" label="序号" width="50" />
@@ -51,7 +64,12 @@
         </template>
       </el-table-column>
       <el-table-column prop="adjusted_salary_days" label="应计薪天数" width="95">
-        <template #default="{ row }">{{ formatNum(row.adjusted_salary_days) }}</template>
+        <template #default="{ row }">
+          <span :class="{ 'text-red-600 font-bold': isDaysMismatch(row) }">
+            {{ formatNum(row.adjusted_salary_days) }}
+            <el-icon v-if="isDaysMismatch(row)" class="text-red-500 ml-0.5 text-xs align-middle"><WarningFilled /></el-icon>
+          </span>
+        </template>
       </el-table-column>
       <el-table-column prop="actual_salary_days" label="计薪天数" width="85">
         <template #default="{ row }">{{ formatNum(row.actual_salary_days) }}</template>
@@ -471,39 +489,56 @@
       </template>
     </el-dialog>
 
-    <!-- 计薪日历弹窗 -->
-    <el-dialog v-model="calendarVisible" title="计薪日历" width="800px" append-to-body>
-      <div class="mb-3">
-        <el-date-picker v-model="calendarPeriod" type="month" placeholder="选择月份" value-format="YYYYMM" @change="loadSalaryCalendar" />
-        <span class="ml-4 text-gray-500">总计薪天数：<b class="text-blue-600">{{ calendarTotalDays }}</b> | 已覆盖：<b class="text-orange-500">{{ calendarOverrideCount }}</b></span>
-        <span class="ml-2 text-xs text-gray-400">蓝=计薪日 | 灰=休息日 | 橙=调休补班 | 红叉=已排除 | 点击切换</span>
+    <!-- 年度工作日历弹窗 -->
+    <el-dialog v-model="calendarVisible" title="年度工作日历配置" width="1100px" append-to-body top="5vh" @close="onCalendarClose">
+      <div class="mb-4 flex items-center gap-3 flex-wrap">
+        <el-date-picker v-model="calendarYearPicker" type="year" placeholder="选择年份" size="default" :clearable="false" style="width: 130px" @change="loadYearCalendar" />
+        <el-button type="primary" :icon="MagicStick" :loading="aiGenerating" @click="aiGenerateCalendar">
+          AI 预填{{ displayCalendarYear }}年节假日
+        </el-button>
+        <el-button type="warning" :icon="RefreshRight" :loading="recalculating" :disabled="touchedPeriods.size === 0" @click="recalculateAttendance">
+          {{ touchedPeriods.size > 0 ? `立即重算已改月份(${touchedPeriods.size})` : '点击日期切换状态' }}
+        </el-button>
+        <el-divider direction="vertical" />
+        <div class="text-sm text-gray-600">
+          全年计薪天数：<b class="text-blue-600 text-base">{{ yearSummary.total_salary_days || 0 }}</b> 天
+          <span class="mx-2">|</span>
+          工作日：<span class="text-green-600">{{ yearSummary.workdays || 0 }}</span>
+          <span class="mx-1">|</span>
+          节假日：<span class="text-red-500">{{ yearSummary.holidays || 0 }}</span>
+          <span class="mx-1">|</span>
+          调休补班：<span class="text-orange-500">{{ yearSummary.makeup_work || 0 }}</span>
+        </div>
       </div>
-      <div class="calendar-grid">
-        <div class="calendar-header">一</div>
-        <div class="calendar-header">二</div>
-        <div class="calendar-header">三</div>
-        <div class="calendar-header">四</div>
-        <div class="calendar-header">五</div>
-        <div class="calendar-header">六</div>
-        <div class="calendar-header">日</div>
-        <template v-for="(blank, i) in calendarBlanks" :key="'b' + i">
-          <div class="calendar-cell blank"></div>
-        </template>
-        <div
-          v-for="d in calendarDays"
-          :key="d.date"
-          class="calendar-cell"
-          :class="{
-            'workday': d.is_salary_day && !d.is_overridden && d.is_workday,
-            'weekend': !d.is_salary_day && !d.is_workday,
-            'excluded': !d.is_salary_day && d.is_workday,
-            'makeup': d.is_salary_day && !d.is_workday,
-          }"
-          @click="toggleSalaryDay(d)"
-        >
-          <span class="day-num">{{ d.day }}</span>
-          <span v-if="!d.is_salary_day && d.is_workday" class="excluded-mark">✕</span>
-          <span v-if="d.is_salary_day && !d.is_workday" class="makeup-mark">班</span>
+      <div class="mb-3 text-xs text-gray-500 flex items-center gap-4">
+        <span><span class="inline-block w-3 h-3 rounded bg-blue-100 border border-blue-300 mr-1 align-middle"></span> 工作日（计薪）</span>
+        <span><span class="inline-block w-3 h-3 rounded bg-gray-100 mr-1 align-middle"></span> 周末（不计薪）</span>
+        <span><span class="inline-block w-3 h-3 rounded bg-red-100 border border-red-300 mr-1 align-middle"></span> 法定节假日（不计薪）</span>
+        <span><span class="inline-block w-3 h-3 rounded bg-orange-100 border border-orange-300 mr-1 align-middle"></span> 调休补班（计薪）</span>
+        <span class="ml-auto">点击日期循环切换：工作日 → 节假日 → 调休补班 → 工作日</span>
+      </div>
+      <div v-loading="calendarLoading" class="year-calendar-grid">
+        <div v-for="m in 12" :key="m" class="month-card">
+          <div class="month-header">
+            <span class="month-title">{{ m }}月</span>
+            <span class="month-stats">计薪 <b :class="getMonthSalaryClass(m)">{{ getMonthSalaryDays(m) }}</b> 天</span>
+          </div>
+          <div class="mini-calendar">
+            <div class="mini-weekday" v-for="wd in ['一','二','三','四','五','六','日']" :key="wd">{{ wd }}</div>
+            <template v-for="blank in getMonthBlanks(m)" :key="'b'+m+'-'+blank">
+              <div class="mini-cell blank"></div>
+            </template>
+            <div
+              v-for="d in getMonthDays(m)"
+              :key="d.date"
+              class="mini-cell"
+              :class="getDayClass(d)"
+              :title="getDayTitle(d)"
+              @click="toggleDay(d)"
+            >
+              {{ d.day }}
+            </div>
+          </div>
         </div>
       </div>
       <template #footer>
@@ -514,9 +549,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Download, Upload, Delete, Refresh } from '@element-plus/icons-vue'
+import { Plus, Download, Upload, Delete, Refresh, MagicStick, RefreshRight, WarningFilled } from '@element-plus/icons-vue'
 import api from '../../api'
 
 function getDefaultPeriod() {
@@ -567,13 +602,75 @@ const changedSet = ref(new Set())
 const editConfirmVisible = ref(false)
 const confirmList = ref([])
 
-// 计薪日历相关
+// 年度工作日历相关
 const calendarVisible = ref(false)
-const calendarPeriod = ref(defaultPeriod)
-const calendarDays = ref([])
-const calendarBlanks = ref(0)
-const calendarTotalDays = ref(0)
-const calendarOverrideCount = ref(0)
+const calendarYearPicker = ref(new Date())
+const calendarLoading = ref(false)
+const aiGenerating = ref(false)
+const recalculating = ref(false)
+const yearCalendarDays = ref([])
+const yearSummary = ref({})
+const touchedPeriods = ref(new Set())
+
+const displayCalendarYear = computed(() => {
+  if (!calendarYearPicker.value) return new Date().getFullYear()
+  if (calendarYearPicker.value instanceof Date) return calendarYearPicker.value.getFullYear()
+  const y = Number(calendarYearPicker.value)
+  return isNaN(y) ? new Date().getFullYear() : y
+})
+
+const monthNames = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月']
+const weekdayNames = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+
+function getMonthDays(month) {
+  return yearCalendarDays.value.filter(d => d.month === month)
+}
+
+function getMonthBlanks(month) {
+  const days = getMonthDays(month)
+  if (!days.length) return []
+  const firstDay = days[0]
+  return Array(firstDay.weekday).fill(0)
+}
+
+function getMonthSalaryDays(month) {
+  const days = getMonthDays(month)
+  return days.filter(d => d.is_salary_day).length
+}
+
+function getMonthSalaryClass(month) {
+  const days = getMonthDays(month)
+  const salary = days.filter(d => d.is_salary_day).length
+  const total = days.length
+  if (total === 0) return ''
+  return salary <= 20 ? 'text-red-500' : 'text-blue-600'
+}
+
+function getDayClass(d) {
+  const classes = []
+  switch (d.day_type) {
+    case 'holiday':
+      classes.push('day-holiday')
+      break
+    case 'makeup_work':
+      classes.push('day-makeup')
+      break
+    case 'weekend':
+      classes.push('day-weekend')
+      break
+    default:
+      classes.push(d.is_salary_day ? 'day-work' : 'day-weekend')
+  }
+  if (d.remark) classes.push('day-has-remark')
+  return classes.join(' ')
+}
+
+function getDayTitle(d) {
+  let title = `${d.date} ${weekdayNames[d.weekday]}`
+  if (d.remark) title += ` - ${d.remark}`
+  title += d.is_salary_day ? '（计薪）' : '（不计薪）'
+  return title
+}
 
 const fieldLabels = {
   total_work_days: '当月总计薪天数',
@@ -675,9 +772,20 @@ function formatInt(val, hideZero = false) {
 
 function onPeriodChange() { fetchData() }
 
+function isDaysMismatch(row) {
+  if (row.total_work_days == null || row.adjusted_salary_days == null) return false
+  return Number(row.total_work_days) !== Number(row.adjusted_salary_days)
+}
+
+const mismatchCount = computed(() => {
+  return records.value.filter(row => isDaysMismatch(row)).length
+})
+
 function tableRowClassName({ row }) {
-  if (editMode.value && row.id && changedSet.value.has(row.id)) return 'row-changed'
-  return ''
+  const classes = []
+  if (editMode.value && row.id && changedSet.value.has(row.id)) classes.push('row-changed')
+  if (isDaysMismatch(row)) classes.push('row-mismatch')
+  return classes.join(' ')
 }
 
 function initEditCache() {
@@ -944,66 +1052,150 @@ async function doImport() {
   } finally { importing.value = false }
 }
 
-// ==================== 计薪日历 ====================
+// ==================== 年度工作日历 ====================
 
 async function openSalaryCalendar() {
-  calendarPeriod.value = periodDate.value
-  await loadSalaryCalendar()
+  const currentPeriod = periodDate.value
+  const year = parseInt(currentPeriod.substring(0, 4))
+  calendarYearPicker.value = new Date(year, 0, 1)
+  touchedPeriods.value = new Set()
+  await loadYearCalendar()
   calendarVisible.value = true
 }
 
-async function loadSalaryCalendar() {
+async function loadYearCalendar() {
+  calendarLoading.value = true
   try {
-    const res = await api.get('/attendance/salary-calendar', { params: { period: calendarPeriod.value } })
-    const data = res.data
-    calendarDays.value = data.days
-    calendarTotalDays.value = data.total_salary_days
-    calendarOverrideCount.value = data.override_count
-
-    // 计算第一个日期是周几，填充空白格
-    if (data.days.length > 0) {
-      calendarBlanks.value = data.days[0].weekday
-    }
+    const year = displayCalendarYear.value
+    const res = await api.get(`/attendance/work-calendar/${year}`)
+    yearCalendarDays.value = res.data.days
+    yearSummary.value = res.data.summary
   } catch (e) {
-    ElMessage.error('加载计薪日历失败：' + (e.response?.data?.detail || e.message))
+    ElMessage.error('加载工作日历失败：' + (e.response?.data?.detail || e.message))
+  } finally {
+    calendarLoading.value = false
   }
 }
 
-async function toggleSalaryDay(day) {
-  // 判断当前状态并决定操作
-  let action
-  if (day.is_salary_day && day.is_workday) {
-    // 状态1: 工作日计薪 → 点击排除
-    action = 'exclude'
-  } else if (!day.is_salary_day && day.is_workday) {
-    // 状态3: 工作日已排除 → 点击恢复
-    action = 'restore'
-  } else if (day.is_salary_day && !day.is_workday) {
-    // 状态2: 周末已纳入(调休补班) → 点击恢复
-    action = 'restore'
+function getNextDayState(day) {
+  const weekday = day.weekday
+  const isWeekend = weekday >= 5
+  let nextType, nextSalary, nextRemark
+  if (day.day_type === 'workday') {
+    nextType = 'holiday'; nextSalary = false; nextRemark = '节假日'
+  } else if (day.day_type === 'holiday') {
+    nextType = 'makeup_work'; nextSalary = true; nextRemark = '调休补班'
+  } else if (day.day_type === 'makeup_work') {
+    nextType = isWeekend ? 'weekend' : 'workday'
+    nextSalary = !isWeekend
+    nextRemark = null
   } else {
-    // 状态4: 周末休息 → 点击纳入为计薪日
-    action = 'include'
+    nextType = 'workday'; nextSalary = true; nextRemark = null
   }
+  return { day_type: nextType, is_salary_day: nextSalary, remark: nextRemark }
+}
+
+async function toggleDay(day) {
+  const idx = yearCalendarDays.value.findIndex(d => d.date === day.date)
+  if (idx === -1) return
+
+  const nextState = getNextDayState(day)
+  const originalState = { day_type: day.day_type, is_salary_day: day.is_salary_day, remark: day.remark }
+  const year = displayCalendarYear.value
+  const period = day.date.substring(0, 7).replace('-', '')
+
+  yearCalendarDays.value[idx] = { ...yearCalendarDays.value[idx], ...nextState }
+  touchedPeriods.value.add(period)
 
   try {
     const formData = new URLSearchParams()
-    formData.append('period', calendarPeriod.value)
     formData.append('date', day.date)
-    formData.append('action', action)
-    if (action === 'exclude') formData.append('reason', '用户手动排除')
-    if (action === 'include') formData.append('reason', '调休补班')
-
-    await api.post('/attendance/salary-calendar/toggle', formData, {
+    const res = await api.post(`/attendance/work-calendar/${year}/toggle-day`, formData, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     })
-    await loadSalaryCalendar()
-    await fetchData()
-    const msgs = { exclude: `已排除 ${day.date}`, include: `已将 ${day.date} 纳入计薪日`, restore: `已恢复 ${day.date} 为默认状态` }
-    ElMessage.success(msgs[action])
+    yearSummary.value = res.data.summary
+    const updated = res.data
+    if (idx !== -1) {
+      yearCalendarDays.value[idx] = { ...yearCalendarDays.value[idx], day_type: updated.day_type, is_salary_day: updated.is_salary_day }
+    }
   } catch (e) {
+    yearCalendarDays.value[idx] = { ...yearCalendarDays.value[idx], ...originalState }
+    touchedPeriods.value.delete(period)
     ElMessage.error('操作失败：' + (e.response?.data?.detail || e.message))
   }
+}
+
+async function aiGenerateCalendar() {
+  const year = displayCalendarYear.value
+  await ElMessageBox.confirm(
+    `确定要用 AI 预填 ${year} 年的法定节假日和调休补班安排吗？\n这将覆盖已标记的节假日/补班日期，但不会影响您手动设置的其他日期。`,
+    'AI 预填节假日',
+    { type: 'info', confirmButtonText: '开始预填', cancelButtonText: '取消' }
+  )
+  aiGenerating.value = true
+  try {
+    const res = await api.post(`/attendance/work-calendar/${year}/ai-generate`)
+    ElMessage.success(res.data.message)
+    yearSummary.value = res.data.summary
+    await loadYearCalendar()
+    for (let m = 1; m <= 12; m++) {
+      touchedPeriods.value.add(`${year}${String(m).padStart(2, '0')}`)
+    }
+  } catch (e) {
+    ElMessage.error('AI预填失败：' + (e.response?.data?.detail || e.message))
+  } finally {
+    aiGenerating.value = false
+  }
+}
+
+async function recalculateAttendance() {
+  const periods = Array.from(touchedPeriods.value)
+  if (periods.length === 0) {
+    ElMessage.info('请先点击日历日期进行修改')
+    return
+  }
+  const periodNames = periods.map(p => {
+    const y = p.substring(0, 4)
+    const m = p.substring(4, 6)
+    return `${y}年${parseInt(m)}月`
+  }).join('、')
+  await ElMessageBox.confirm(
+    `确定要立即重算以下月份的考勤数据吗？\n${periodNames}\n提示：关闭日历弹窗时也会自动重算这些月份。重算会更新数据库中的「应计薪天数」「计薪天数」和「出勤率」，用于薪资核算。`,
+    '重算考勤',
+    { type: 'warning', confirmButtonText: '立即重算', cancelButtonText: '取消' }
+  )
+  recalculating.value = true
+  try {
+    const formData = new URLSearchParams()
+    formData.append('period', periods.join(','))
+    const res = await api.post('/attendance/work-calendar/recalculate', formData, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+    ElMessage.success(res.data.message)
+    touchedPeriods.value = new Set()
+    await fetchData()
+  } catch (e) {
+    ElMessage.error('重算失败：' + (e.response?.data?.detail || e.message))
+  } finally {
+    recalculating.value = false
+  }
+}
+
+async function onCalendarClose() {
+  const periods = Array.from(touchedPeriods.value)
+  touchedPeriods.value = new Set()
+  if (periods.length > 0) {
+    try {
+      const formData = new URLSearchParams()
+      formData.append('period', periods.join(','))
+      await api.post('/attendance/work-calendar/recalculate', formData, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      })
+    } catch (e) {
+      console.error('自动重算考勤失败:', e)
+    }
+  }
+  await fetchData()
 }
 
 onMounted(() => { fetchData() })
@@ -1016,87 +1208,117 @@ onMounted(() => { fetchData() })
 .cell-input { width: 100%; }
 .cell-input :deep(.el-input__wrapper) { padding: 0 4px; }
 :deep(.row-changed) { background-color: #fef3c7 !important; }
+:deep(.row-mismatch) { background-color: #fef2f2 !important; }
+:deep(.row-mismatch:hover) > td { background-color: #fee2e2 !important; }
 
-/* 计薪日历样式 */
-.calendar-grid {
+/* 年度工作日历样式 */
+.year-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px;
+}
+.month-card {
+  background: #fafcff;
+  border: 1px solid #e8f0fe;
+  border-radius: 8px;
+  padding: 10px;
+  transition: box-shadow 0.2s;
+}
+.month-card:hover {
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.1);
+}
+.month-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #eef2f7;
+}
+.month-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #1e40af;
+}
+.month-stats {
+  font-size: 12px;
+  color: #64748b;
+}
+.mini-calendar {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
+  gap: 2px;
 }
-.calendar-header {
+.mini-weekday {
   text-align: center;
-  font-weight: 600;
-  font-size: 13px;
-  color: #606266;
-  padding: 6px 0;
-  background: #f5f7fa;
-  border-radius: 4px;
+  font-size: 10px;
+  color: #94a3b8;
+  padding: 2px 0;
+  font-weight: 500;
 }
-.calendar-cell {
-  text-align: center;
-  padding: 10px 4px;
-  border-radius: 6px;
-  cursor: pointer;
-  position: relative;
-  min-height: 40px;
+.mini-cell {
+  aspect-ratio: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
-  border: 1px solid transparent;
-}
-.calendar-cell.blank { cursor: default; background: transparent; }
-.calendar-cell.workday {
-  background: #e8f4fd;
-  border-color: #91caff;
-  color: #1677ff;
-  font-weight: 500;
-}
-.calendar-cell.workday:hover {
-  background: #bae0ff;
-  border-color: #4096ff;
-}
-.calendar-cell.weekend {
-  background: #f5f5f5;
-  color: #bbb;
-}
-.calendar-cell.weekend:hover {
-  background: #e8e8e8;
-  color: #999;
-}
-.calendar-cell.excluded {
-  background: #fff1f0;
-  border-color: #ffccc7;
-  color: #ff4d4f;
-}
-.calendar-cell.excluded:hover {
-  background: #ffe0e0;
-}
-.calendar-cell.makeup {
-  background: #fff7e6;
-  border-color: #ffd591;
-  color: #fa8c16;
-  font-weight: 500;
-}
-.calendar-cell.makeup:hover {
-  background: #ffe7ba;
-  border-color: #ffa940;
-}
-.day-num { font-size: 15px; }
-.excluded-mark {
   font-size: 11px;
-  color: #ff4d4f;
-  position: absolute;
-  top: 2px;
-  right: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+  user-select: none;
 }
-.makeup-mark {
-  font-size: 10px;
-  color: #fa8c16;
-  position: absolute;
-  top: 2px;
-  right: 4px;
+.mini-cell.blank {
+  cursor: default;
+  background: transparent;
+}
+.mini-cell.day-work {
+  background: #eff6ff;
+  color: #2563eb;
+  font-weight: 500;
+}
+.mini-cell.day-work:hover {
+  background: #dbeafe;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.2);
+}
+.mini-cell.day-weekend {
+  background: #f8fafc;
+  color: #cbd5e1;
+}
+.mini-cell.day-weekend:hover {
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+.mini-cell.day-holiday {
+  background: #fef2f2;
+  color: #dc2626;
   font-weight: 600;
+  border: 1px solid #fecaca;
+}
+.mini-cell.day-holiday:hover {
+  background: #fee2e2;
+}
+.mini-cell.day-makeup {
+  background: #fff7ed;
+  color: #ea580c;
+  font-weight: 600;
+  border: 1px solid #fed7aa;
+}
+.mini-cell.day-makeup:hover {
+  background: #ffedd5;
+}
+.mini-cell.day-has-remark::after {
+  content: '';
+  position: absolute;
+  bottom: 1px;
+  right: 1px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
 }
 </style>

@@ -15,6 +15,7 @@ import httpx
 
 from app.core.config import DINGTALK_CLIENT_ID, DINGTALK_CLIENT_SECRET, DINGTALK_AGENT_ID, DINGTALK_SYNC_DEPT_NAMES
 from app.models.models import SysDictBase
+from app.services import work_calendar as work_cal
 
 logger = logging.getLogger(__name__)
 
@@ -1445,8 +1446,9 @@ def sync_attendance_to_db(db_session, period: str) -> dict:
                 maternity + paternity + marriage + funeral + engineering, 2
             )
 
-            # 应计薪天数 = 总计薪天数（默认，后续用户可通过日历调整）
-            adjusted = float(total)
+            # 应计薪天数 = 从年度工作日历计算（而非直接使用钉钉的应出勤天数）
+            # total_work_days 保留钉钉原始值（当月总计薪天数）用于参考
+            adjusted = work_cal.get_month_salary_days(db_session, period)
 
             # 计薪天数 = 应计薪 - 请假合计
             actual_salary = max(round(adjusted - leave_total, 2), 0)

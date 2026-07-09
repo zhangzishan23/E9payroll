@@ -12,7 +12,7 @@
       <template #default>
         <div class="flex items-center justify-between w-full">
           <div>
-            <p class="font-medium">正在配置文件：<span class="text-blue-600">{{ currentBatchFile?.filename }}</span></p>
+            <p class="font-medium">正在配置：<span class="text-blue-600">{{ currentBatchDisplayName }}</span></p>
             <p class="text-xs mt-1">请核对自动识别的模板配置，确认无误后点击「保存并继续」配置下一个文件</p>
           </div>
           <div class="flex gap-2 ml-4">
@@ -109,7 +109,7 @@
       <!-- 批量模式提示 -->
       <el-alert
         v-if="batchMode"
-        :title="`正在配置文件「${currentBatchFile?.filename}」的模板（第 ${currentBatchIndex + 1}/${batchUnmatchedFiles.length} 个）`"
+        :title="`正在配置「${currentBatchDisplayName}」的模板（第 ${currentBatchIndex + 1}/${batchUnmatchedFiles.length} 个）`"
         type="info"
         :closable="false"
         show-icon
@@ -644,13 +644,18 @@ const currentBatchFile = computed(() => {
   return null
 })
 
+const currentBatchDisplayName = computed(() => {
+  if (!currentBatchFile.value) return ''
+  return currentBatchFile.value.display_name || currentBatchFile.value.filename
+})
+
 const isLastBatchFile = computed(() => {
   return currentBatchIndex.value >= batchUnmatchedFiles.value.length - 1
 })
 
 function getDialogTitle() {
   if (batchMode.value) {
-    return `批量配置模板 - ${currentBatchFile.value?.filename || ''}`
+    return `批量配置模板 - ${currentBatchDisplayName.value || ''}`
   }
   if (isEdit.value) return '编辑模板'
   if (isAutoDetected.value) return '核对自动识别结果'
@@ -778,7 +783,12 @@ async function loadCurrentBatchFile() {
   autoDetecting.value = true
   try {
     const fileIdx = currentBatchFile.value.index
-    const res = await api.get(`/social-insurance/templates/auto-detect-batch/${batchId.value}/${fileIdx}`)
+    const sheetName = currentBatchFile.value.sheet_name
+    let url = `/social-insurance/templates/auto-detect-batch/${batchId.value}/${fileIdx}`
+    if (sheetName) {
+      url += `?sheet_name=${encodeURIComponent(sheetName)}`
+    }
+    const res = await api.get(url)
     const detected = res.data
     applyDetectedConfig(detected)
     isEdit.value = false
@@ -787,7 +797,7 @@ async function loadCurrentBatchFile() {
     dialogVisible.value = true
   } catch (e) {
     console.error('自动识别失败：', e)
-    ElMessage.error(`文件「${currentBatchFile.value.filename}」自动识别失败，请手动配置`)
+    ElMessage.error(`文件「${currentBatchDisplayName.value}」自动识别失败，请手动配置`)
     resetForm()
     isEdit.value = false
     isAutoDetected.value = false

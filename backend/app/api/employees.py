@@ -8,7 +8,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from app.core.database import get_db
 from app.core.log_helper import write_log
-from app.models.models import Employee, EmployeeSalary, SysDictBase
+from app.models.models import Employee, EmployeeSalary, SysDictBase, SysUser
 from app.api.auth import get_current_user, UserInfo
 from app.core.query_utils import filter_active_employees
 
@@ -206,6 +206,8 @@ class SalaryOut(BaseModel):
     housing_allowance: float
     effective_date: str
     change_reason: Optional[str] = None
+    created_at: Optional[str] = None
+    operator_name: Optional[str] = None
 
     @field_validator('effective_date', mode='before')
     @classmethod
@@ -213,6 +215,15 @@ class SalaryOut(BaseModel):
         if isinstance(v, date):
             return v.isoformat()
         return str(v) if v else ''
+
+    @field_validator('created_at', mode='before')
+    @classmethod
+    def convert_created_at(cls, v):
+        if v:
+            if hasattr(v, 'strftime'):
+                return v.strftime('%Y-%m-%d %H:%M')
+            return str(v)
+        return None
 
     class Config:
         from_attributes = True
@@ -231,20 +242,30 @@ class SalaryCreate(BaseModel):
     change_reason: Optional[str] = None
 
 
-def _enrich_employee(emp: Employee, db: Session) -> dict:
-    # 按类别分别查询字典项，确保名称正确匹配
-    def _get_name(dict_id, category):
+def _enrich_employee(emp: Employee, db: Session = None, name_map: dict = None, salary_map: dict = None) -> dict:
+    if name_map is None and db is not None:
+        dict_items = db.query(SysDictBase).all()
+        name_map = {d.id: d.name for d in dict_items}
+    if name_map is None:
+        name_map = {}
+
+    def _get_name(dict_id):
         if dict_id is None:
             return None
-        item = db.query(SysDictBase).filter(
-            SysDictBase.id == dict_id,
-            SysDictBase.category == category
-        ).first()
-        return item.name if item else None
+        return name_map.get(dict_id)
 
-    latest_salary = db.query(EmployeeSalary).filter(
-        EmployeeSalary.employee_id == emp.id
-    ).order_by(EmployeeSalary.effective_date.desc()).first()
+    if salary_map is None and db is not None:
+        latest_salaries = db.query(EmployeeSalary).order_by(
+            EmployeeSalary.employee_id, EmployeeSalary.effective_date.desc(), EmployeeSalary.id.desc()
+        ).all()
+        salary_map = {}
+        for s in latest_salaries:
+            if s.employee_id not in salary_map:
+                salary_map[s.employee_id] = s
+    if salary_map is None:
+        salary_map = {}
+
+    latest_salary = salary_map.get(emp.id)
 
     result = {
         "id": emp.id, "employee_no": emp.employee_no, "dingtalk_user_id": emp.dingtalk_user_id,
@@ -252,13 +273,13 @@ def _enrich_employee(emp: Employee, db: Session) -> dict:
         "gender": emp.gender, "id_card": emp.id_card, "phone": emp.phone,
         "email": emp.email, "work_place": emp.work_place,
         "contract_company_id": emp.contract_company_id,
-        "contract_company_name": _get_name(emp.contract_company_id, "contract_company"),
+        "contract_company_name": _get_name(emp.contract_company_id),
         "department_id": emp.department_id,
-        "department_name": _get_name(emp.department_id, "department"),
+        "department_name": _get_name(emp.department_id),
         "position_id": emp.position_id,
-        "position_name": _get_name(emp.position_id, "position"),
+        "position_name": _get_name(emp.position_id),
         "status_id": emp.status_id,
-        "status_name": _get_name(emp.status_id, "employee_status"),
+        "status_name": _get_name(emp.status_id),
         "position_level": emp.position_level, "employee_type": emp.employee_type,
         "job_level": emp.job_level, "cost_owner": emp.cost_owner,
         "report_manager": emp.report_manager,
@@ -300,6 +321,24 @@ def _enrich_employee(emp: Employee, db: Session) -> dict:
         "salary_effective_date": str(latest_salary.effective_date) if latest_salary and latest_salary.effective_date else None,
     }
     return result
+
+
+def _batch_load_enrich_data(db: Session, employee_ids: list = None) -> tuple:
+    dict_items = db.query(SysDictBase).all()
+    name_map = {d.id: d.name for d in dict_items}
+
+    salary_query = db.query(EmployeeSalary)
+    if employee_ids:
+        salary_query = salary_query.filter(EmployeeSalary.employee_id.in_(employee_ids))
+    latest_salaries = salary_query.order_by(
+        EmployeeSalary.employee_id, EmployeeSalary.effective_date.desc(), EmployeeSalary.id.desc()
+    ).all()
+    salary_map = {}
+    for s in latest_salaries:
+        if s.employee_id not in salary_map:
+            salary_map[s.employee_id] = s
+
+    return name_map, salary_map
 
 
 @router.get("/", response_model=List[EmployeeOut])
@@ -352,7 +391,8 @@ def get_employees(
     # 默认隐藏已禁用部门的员工，可选隐藏指定状态
     query = filter_active_employees(query, db, hide_status_id=hide_status_id)
     employees = query.order_by(Employee.employee_no).all()
-    return [_enrich_employee(e, db) for e in employees]
+    name_map, salary_map = _batch_load_enrich_data(db, [e.id for e in employees])
+    return [_enrich_employee(e, name_map=name_map, salary_map=salary_map) for e in employees]
 
 
 @router.get("/export")
@@ -392,7 +432,8 @@ def export_employees(
             if status_ids:
                 query = query.filter(Employee.status_id.in_([s[0] for s in status_ids]))
     employees = query.order_by(Employee.employee_no).all()
-    enriched = [_enrich_employee(e, db) for e in employees]
+    name_map, salary_map = _batch_load_enrich_data(db, [e.id for e in employees])
+    enriched = [_enrich_employee(e, name_map=name_map, salary_map=salary_map) for e in employees]
 
     wb = Workbook()
     ws = wb.active
@@ -496,8 +537,23 @@ def delete_employee(employee_id: int, db: Session = Depends(get_db), current_use
 def get_employee_salaries(employee_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     salaries = db.query(EmployeeSalary).filter(
         EmployeeSalary.employee_id == employee_id
-    ).order_by(EmployeeSalary.effective_date.desc()).all()
-    return salaries
+    ).order_by(EmployeeSalary.effective_date.desc(), EmployeeSalary.id.desc()).all()
+    result = []
+    for s in salaries:
+        item = {
+            "id": s.id, "employee_id": s.employee_id,
+            "base_salary": float(s.base_salary), "performance_standard": float(s.performance_standard),
+            "meal_allowance": float(s.meal_allowance or 0), "transport_allowance": float(s.transport_allowance or 0),
+            "communication_allowance": float(s.communication_allowance or 0),
+            "computer_allowance": float(s.computer_allowance or 0), "housing_allowance": float(s.housing_allowance or 0),
+            "effective_date": s.effective_date.isoformat() if s.effective_date else "",
+            "change_reason": s.change_reason, "created_at": s.created_at, "operator_name": None
+        }
+        if s.operator_id:
+            op = db.query(SysUser).filter(SysUser.id == s.operator_id).first()
+            item["operator_name"] = op.username if op else None
+        result.append(item)
+    return result
 
 
 @router.post("/salaries", response_model=SalaryOut)
@@ -506,15 +562,30 @@ def create_employee_salary(salary: SalaryCreate, db: Session = Depends(get_db), 
     if not employee:
         raise HTTPException(status_code=404, detail="员工不存在，无法创建薪资记录")
     try:
-        db_salary = EmployeeSalary(**salary.model_dump())
+        data = salary.model_dump()
+        data["operator_id"] = current_user.id
+        db_salary = EmployeeSalary(**data)
         db.add(db_salary)
         db.commit()
         db.refresh(db_salary)
-        write_log(db, "data_change", current_user.id, current_user.username, "employee", "edit", f"更新员工薪资记录 (employee_id={salary.employee_id})")
+        write_log(db, "data_change", current_user.id, current_user.username, "employee", "edit", f"新增员工薪资记录 (employee_id={salary.employee_id}, effective_date={salary.effective_date})")
         return db_salary
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"薪资记录创建失败：{str(e)}")
+
+
+@router.delete("/salaries/{salary_id}")
+def delete_employee_salary(salary_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    sal = db.query(EmployeeSalary).filter(EmployeeSalary.id == salary_id).first()
+    if not sal:
+        raise HTTPException(status_code=404, detail="薪资记录不存在")
+    emp_id = sal.employee_id
+    eff_date = sal.effective_date
+    db.delete(sal)
+    db.commit()
+    write_log(db, "data_change", current_user.id, current_user.username, "employee", "delete", f"删除员工薪资记录 (employee_id={emp_id}, effective_date={eff_date})")
+    return {"message": "删除成功"}
 
 
 @router.post("/batch-delete")
@@ -537,7 +608,8 @@ def export_selected_employees(ids: List[int], db: Session = Depends(get_db), cur
     if not ids:
         raise HTTPException(status_code=400, detail="请提供要导出的员工ID列表")
     employees = db.query(Employee).filter(Employee.id.in_(ids)).order_by(Employee.employee_no).all()
-    enriched = [_enrich_employee(e, db) for e in employees]
+    name_map, salary_map = _batch_load_enrich_data(db, [e.id for e in employees])
+    enriched = [_enrich_employee(e, name_map=name_map, salary_map=salary_map) for e in employees]
 
     wb = Workbook()
     ws = wb.active

@@ -4,11 +4,12 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 from io import BytesIO
+from decimal import Decimal
 from openpyxl import Workbook
 from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.core.query_utils import filter_active_employees
-from app.models.models import PerformanceScore, Employee
+from app.models.models import PerformanceScore, Employee, EmployeeSalary, AttendanceRecord
 from app.api.auth import get_current_user, UserInfo
 
 router = APIRouter()
@@ -20,9 +21,21 @@ class PerformanceOut(BaseModel):
     employee_id: int
     employee_no: str = ""
     employee_name: str = ""
+    contract_company: str = ""
+    department: str = ""
+    position: str = ""
+    performance_standard: float = 0
     initial_score: Optional[float] = None
     final_score: Optional[float] = None
     coefficient: float = 1.00
+    evaluated_performance: float = 0
+    performance_diff: float = 0
+    score_diff: Optional[float] = None
+    performance_category: Optional[str] = None
+    score_reason: Optional[str] = None
+    review_note: Optional[str] = None
+    total_work_days: Optional[float] = None
+    actual_work_days: Optional[float] = None
     reviewer_id: Optional[int] = None
 
     class Config:
@@ -34,20 +47,77 @@ class PerformanceCreate(BaseModel):
     employee_id: int
     initial_score: Optional[float] = None
     final_score: Optional[float] = None
-    coefficient: float = 1.00
+    performance_category: Optional[str] = None
+    score_reason: Optional[str] = None
+    review_note: Optional[str] = None
 
 
 class PerformanceUpdate(BaseModel):
     initial_score: Optional[float] = None
     final_score: Optional[float] = None
-    coefficient: Optional[float] = None
+    performance_category: Optional[str] = None
+    score_reason: Optional[str] = None
+    review_note: Optional[str] = None
 
 
 class PerformanceImportItem(BaseModel):
     employee_no: str
     initial_score: Optional[float] = None
     final_score: Optional[float] = None
-    coefficient: float = 1.00
+    performance_category: Optional[str] = None
+    score_reason: Optional[str] = None
+    review_note: Optional[str] = None
+
+
+def _build_performance_out(p: Optional[PerformanceScore], emp: Employee, perf_std: float,
+                           total_work_days: Optional[float], actual_work_days: Optional[float],
+                           period: str) -> PerformanceOut:
+    initial = float(p.initial_score) if p and p.initial_score is not None else None
+    final = float(p.final_score) if p and p.final_score is not None else None
+    coef = final if final is not None else 1.00
+    evaluated = round(perf_std * coef, 2)
+    diff = round(evaluated - perf_std, 2)
+    score_diff = round(final - initial, 2) if (initial is not None and final is not None) else None
+
+    return PerformanceOut(
+        id=p.id if p else None,
+        period=period,
+        employee_id=emp.id,
+        employee_no=emp.employee_no,
+        employee_name=emp.name,
+        contract_company="",
+        department="",
+        position="",
+        performance_standard=perf_std,
+        initial_score=initial,
+        final_score=final,
+        coefficient=coef,
+        evaluated_performance=evaluated,
+        performance_diff=diff,
+        score_diff=score_diff,
+        performance_category=p.performance_category if p else None,
+        score_reason=p.score_reason if p else None,
+        review_note=p.review_note if p else None,
+        total_work_days=total_work_days,
+        actual_work_days=actual_work_days,
+        reviewer_id=p.reviewer_id if p else None,
+    )
+
+
+def _get_dict_name(db: Session, dict_id: Optional[int], name_map: dict = None) -> str:
+    if not dict_id:
+        return ""
+    if name_map is not None:
+        return name_map.get(dict_id, "")
+    from app.models.models import SysDictBase
+    d = db.query(SysDictBase).filter(SysDictBase.id == dict_id).first()
+    return d.name if d else ""
+
+
+def _batch_load_dict_names(db: Session) -> dict:
+    from app.models.models import SysDictBase
+    dict_items = db.query(SysDictBase).all()
+    return {d.id: d.name for d in dict_items}
 
 
 @router.get("/", response_model=List[PerformanceOut])
@@ -58,6 +128,7 @@ def get_performances(
     current_user: UserInfo = Depends(get_current_user)
 ):
     if period:
+        from datetime import date
         query = db.query(Employee)
         employees = filter_active_employees(query, db, hide_status_id=hide_status_id).order_by(Employee.employee_no).all()
         perf_map = {}
@@ -65,37 +136,68 @@ def get_performances(
         for r in records:
             perf_map[r.employee_id] = r
 
+        year = int(period[:4])
+        month = int(period[4:])
+        if month == 12:
+            period_end = date(year + 1, 1, 1)
+        else:
+            period_end = date(year, month + 1, 1)
+
+        sal_map = {}
+        for sal in db.query(EmployeeSalary).filter(
+            EmployeeSalary.effective_date < period_end
+        ).order_by(EmployeeSalary.effective_date.desc(), EmployeeSalary.id.desc()).all():
+            if sal.employee_id not in sal_map:
+                sal_map[sal.employee_id] = sal
+
+        att_map = {}
+        for att in db.query(AttendanceRecord).filter(AttendanceRecord.period == period).all():
+            att_map[att.employee_id] = att
+
+        name_map = _batch_load_dict_names(db)
+
         result = []
         for emp in employees:
             p = perf_map.get(emp.id)
-            result.append(PerformanceOut(
-                id=p.id if p else None,
-                period=period,
-                employee_id=emp.id,
-                employee_no=emp.employee_no,
-                employee_name=emp.name,
-                initial_score=float(p.initial_score) if p and p.initial_score else None,
-                final_score=float(p.final_score) if p and p.final_score else None,
-                coefficient=float(p.coefficient) if p else 1.00,
-                reviewer_id=p.reviewer_id if p else None,
-            ))
+            sal = sal_map.get(emp.id)
+            att = att_map.get(emp.id)
+            perf_std = float(sal.performance_standard) if sal else 0
+            total_days = float(att.total_work_days) if att else None
+            actual_days = float(att.actual_salary_days) if att else None
+
+            out = _build_performance_out(p, emp, perf_std, total_days, actual_days, period)
+            out.contract_company = _get_dict_name(db, emp.contract_company_id, name_map)
+            out.department = _get_dict_name(db, emp.department_id, name_map)
+            out.position = _get_dict_name(db, emp.position_id, name_map)
+            result.append(out)
         return result
 
     records = db.query(PerformanceScore).order_by(
         PerformanceScore.period.desc(), PerformanceScore.employee_id
     ).all()
     result = []
+    sal_map = {}
+    for sal in db.query(EmployeeSalary).order_by(
+        EmployeeSalary.effective_date.desc(), EmployeeSalary.id.desc()
+    ).all():
+        if sal.employee_id not in sal_map:
+            sal_map[sal.employee_id] = sal
+
+    emp_ids = list(set(r.employee_id for r in records))
+    emp_map = {e.id: e for e in db.query(Employee).filter(Employee.id.in_(emp_ids)).all()}
+    name_map = _batch_load_dict_names(db)
+
     for r in records:
-        emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
-        result.append(PerformanceOut(
-            id=r.id, period=r.period, employee_id=r.employee_id,
-            employee_no=emp.employee_no if emp else "",
-            employee_name=emp.name if emp else "",
-            initial_score=float(r.initial_score) if r.initial_score else None,
-            final_score=float(r.final_score) if r.final_score else None,
-            coefficient=float(r.coefficient),
-            reviewer_id=r.reviewer_id,
-        ))
+        emp = emp_map.get(r.employee_id)
+        if not emp:
+            continue
+        sal = sal_map.get(emp.id)
+        perf_std = float(sal.performance_standard) if sal else 0
+        out = _build_performance_out(r, emp, perf_std, None, None, r.period)
+        out.contract_company = _get_dict_name(db, emp.contract_company_id, name_map)
+        out.department = _get_dict_name(db, emp.department_id, name_map)
+        out.position = _get_dict_name(db, emp.position_id, name_map)
+        result.append(out)
     return result
 
 
@@ -117,7 +219,9 @@ def create_performance(
         employee_id=data.employee_id,
         initial_score=data.initial_score,
         final_score=data.final_score,
-        coefficient=data.coefficient,
+        performance_category=data.performance_category,
+        score_reason=data.score_reason,
+        review_note=data.review_note,
         reviewer_id=current_user.id
     )
     db.add(perf)
@@ -126,15 +230,15 @@ def create_performance(
     write_log(db, "data_change", current_user.id, current_user.username, "performance", "create", f"新增绩效数据 (employee_id={data.employee_id}, period={data.period})")
 
     emp = db.query(Employee).filter(Employee.id == perf.employee_id).first()
-    return PerformanceOut(
-        id=perf.id, period=perf.period, employee_id=perf.employee_id,
-        employee_no=emp.employee_no if emp else "",
-        employee_name=emp.name if emp else "",
-        initial_score=float(perf.initial_score) if perf.initial_score else None,
-        final_score=float(perf.final_score) if perf.final_score else None,
-        coefficient=float(perf.coefficient),
-        reviewer_id=perf.reviewer_id,
-    )
+    sal = db.query(EmployeeSalary).filter(
+        EmployeeSalary.employee_id == perf.employee_id
+    ).order_by(EmployeeSalary.effective_date.desc(), EmployeeSalary.id.desc()).first()
+    perf_std = float(sal.performance_standard) if sal else 0
+    out = _build_performance_out(perf, emp, perf_std, None, None, perf.period)
+    out.contract_company = _get_dict_name(db, emp.contract_company_id)
+    out.department = _get_dict_name(db, emp.department_id)
+    out.position = _get_dict_name(db, emp.position_id)
+    return out
 
 
 @router.put("/{perf_id}", response_model=PerformanceOut)
@@ -158,15 +262,15 @@ def update_performance(
     write_log(db, "data_change", current_user.id, current_user.username, "performance", "edit", f"编辑绩效数据 (id={perf_id})")
 
     emp = db.query(Employee).filter(Employee.id == perf.employee_id).first()
-    return PerformanceOut(
-        id=perf.id, period=perf.period, employee_id=perf.employee_id,
-        employee_no=emp.employee_no if emp else "",
-        employee_name=emp.name if emp else "",
-        initial_score=float(perf.initial_score) if perf.initial_score else None,
-        final_score=float(perf.final_score) if perf.final_score else None,
-        coefficient=float(perf.coefficient),
-        reviewer_id=perf.reviewer_id,
-    )
+    sal = db.query(EmployeeSalary).filter(
+        EmployeeSalary.employee_id == perf.employee_id
+    ).order_by(EmployeeSalary.effective_date.desc(), EmployeeSalary.id.desc()).first()
+    perf_std = float(sal.performance_standard) if sal else 0
+    out = _build_performance_out(perf, emp, perf_std, None, None, perf.period)
+    out.contract_company = _get_dict_name(db, emp.contract_company_id)
+    out.department = _get_dict_name(db, emp.department_id)
+    out.position = _get_dict_name(db, emp.position_id)
+    return out
 
 
 @router.delete("/{perf_id}")
@@ -210,7 +314,9 @@ def import_performances(
         if existing:
             existing.initial_score = item.initial_score
             existing.final_score = item.final_score
-            existing.coefficient = item.coefficient
+            existing.performance_category = item.performance_category
+            existing.score_reason = item.score_reason
+            existing.review_note = item.review_note
             existing.reviewer_id = current_user.id
             updated += 1
         else:
@@ -219,7 +325,9 @@ def import_performances(
                 employee_id=emp.id,
                 initial_score=item.initial_score,
                 final_score=item.final_score,
-                coefficient=item.coefficient,
+                performance_category=item.performance_category,
+                score_reason=item.score_reason,
+                review_note=item.review_note,
                 reviewer_id=current_user.id
             )
             db.add(perf)
@@ -249,20 +357,68 @@ def export_performances(
     for r in records:
         perf_map[r.employee_id] = r
 
+    sal_map = {}
+    year = int(period[:4])
+    month = int(period[4:])
+    if month == 12:
+        export_period_end = __import__('datetime').date(year + 1, 1, 1)
+    else:
+        export_period_end = __import__('datetime').date(year, month + 1, 1)
+    for sal in db.query(EmployeeSalary).filter(
+        EmployeeSalary.effective_date < export_period_end
+    ).order_by(EmployeeSalary.effective_date.desc(), EmployeeSalary.id.desc()).all():
+        if sal.employee_id not in sal_map:
+            sal_map[sal.employee_id] = sal
+
+    att_map = {}
+    for att in db.query(AttendanceRecord).filter(AttendanceRecord.period == period).all():
+        att_map[att.employee_id] = att
+
+    name_map = _batch_load_dict_names(db)
+
     wb = Workbook()
     ws = wb.active
     ws.title = f"绩效数据_{period}"
-    headers = ["员工编号", "员工姓名", "初评分数", "复评分数", "绩效系数"]
+    headers = [
+        "员工编号", "员工姓名", "合同公司", "部门", "职务",
+        "当月总计薪天数", "实际计薪天数",
+        "绩效奖金标准", "绩效类别",
+        "初评", "复评", "评价后绩效标准", "差额",
+        "调整差异", "评分理由", "分管领导审核后调整"
+    ]
     ws.append(headers)
 
     for emp in employees:
         p = perf_map.get(emp.id)
+        sal = sal_map.get(emp.id)
+        att = att_map.get(emp.id)
+        perf_std = float(sal.performance_standard) if sal else 0
+        initial = float(p.initial_score) if p and p.initial_score is not None else None
+        final = float(p.final_score) if p and p.final_score is not None else None
+        coef = final if final is not None else 1.00
+        evaluated = round(perf_std * coef, 2)
+        diff = round(evaluated - perf_std, 2)
+        score_diff = round(final - initial, 2) if (initial is not None and final is not None) else None
+        total_days = float(att.total_work_days) if att else ""
+        actual_days = float(att.actual_salary_days) if att else ""
+
         ws.append([
             emp.employee_no,
             emp.name,
-            float(p.initial_score) if p and p.initial_score else "",
-            float(p.final_score) if p and p.final_score else "",
-            float(p.coefficient) if p else 1.00
+            _get_dict_name(db, emp.contract_company_id, name_map),
+            _get_dict_name(db, emp.department_id, name_map),
+            _get_dict_name(db, emp.position_id, name_map),
+            total_days,
+            actual_days,
+            perf_std,
+            p.performance_category if p else "",
+            initial if initial is not None else "",
+            final if final is not None else "",
+            evaluated,
+            diff,
+            score_diff if score_diff is not None else "",
+            p.score_reason if p else "",
+            p.review_note if p else ""
         ])
 
     output = BytesIO()
@@ -318,15 +474,19 @@ async def import_performances_excel(
             header_map["employee_name"] = i
         elif "初评" in h:
             header_map["initial_score"] = i
-        elif "复评" in h:
+        elif "复评" in h and "审核" not in h and "调整" not in h:
             header_map["final_score"] = i
-        elif "系数" in h:
-            header_map["coefficient"] = i
+        elif "绩效类别" in h or "类别" in h:
+            header_map["performance_category"] = i
+        elif "评分理由" in h or "理由" in h:
+            header_map["score_reason"] = i
+        elif "分管领导" in h or "审核后调整" in h or "审核备注" in h:
+            header_map["review_note"] = i
 
-    required = ["employee_name", "initial_score", "final_score"]
-    missing = [{"employee_name": "姓名", "initial_score": "初评分数", "final_score": "复评分数"}[k] for k in required if k not in header_map]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Excel 表头缺少必需列：{'、'.join(missing)}")
+    if "employee_name" not in header_map:
+        raise HTTPException(status_code=400, detail="Excel 表头缺少必需列：姓名")
+    if "final_score" not in header_map:
+        raise HTTPException(status_code=400, detail="Excel 表头缺少必需列：复评（绩效系数）")
 
     all_employees = db.query(Employee).all()
     name_count = {}
@@ -363,16 +523,26 @@ async def import_performances_excel(
             def get_float(key):
                 if key in header_map and row[header_map[key]] is not None:
                     try:
-                        return float(row[header_map[key]])
+                        val = row[header_map[key]]
+                        if isinstance(val, str):
+                            val = val.replace('%', '').strip()
+                            if val.endswith('%'):
+                                return float(val[:-1]) / 100
+                        return float(val)
                     except (ValueError, TypeError):
                         return None
                 return None
 
+            def get_str(key):
+                if key in header_map and row[header_map[key]] is not None:
+                    return str(row[header_map[key]]).strip()
+                return None
+
             initial = get_float("initial_score")
             final = get_float("final_score")
-            coef = get_float("coefficient")
-            if coef is None:
-                coef = 1.00
+            category = get_str("performance_category")
+            reason = get_str("score_reason")
+            note = get_str("review_note")
 
             existing = db.query(PerformanceScore).filter(
                 PerformanceScore.period == period,
@@ -384,15 +554,21 @@ async def import_performances_excel(
                     existing.initial_score = initial
                 if final is not None:
                     existing.final_score = final
-                if coef is not None:
-                    existing.coefficient = coef
+                if category is not None:
+                    existing.performance_category = category
+                if reason is not None:
+                    existing.score_reason = reason
+                if note is not None:
+                    existing.review_note = note
                 existing.reviewer_id = current_user.id
                 updated += 1
             else:
                 perf = PerformanceScore(
                     period=period, employee_id=emp.id,
                     initial_score=initial, final_score=final,
-                    coefficient=coef, reviewer_id=current_user.id
+                    performance_category=category,
+                    score_reason=reason, review_note=note,
+                    reviewer_id=current_user.id
                 )
                 db.add(perf)
                 created += 1

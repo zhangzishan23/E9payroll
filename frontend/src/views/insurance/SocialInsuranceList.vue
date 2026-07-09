@@ -714,6 +714,7 @@
       </div>
       <template #footer>
         <el-button @click="smartImportVisible = false">关闭</el-button>
+        <el-button v-if="hasNoTemplateError" type="warning" @click="goToTemplateConfig">配置缺失模板</el-button>
         <el-button v-if="smartImportResult" type="primary" @click="closeSmartImport">完成</el-button>
       </template>
     </el-dialog>
@@ -804,6 +805,7 @@ const smartUploadRef = ref(null)
 const smartFiles = ref([])
 const smartFileList = ref([])
 const smartImportResult = ref(null)
+const smartBatchId = ref(null)
 const formRef = ref(null)
 const editId = ref(null)
 const formEmployeeId = ref(null)
@@ -876,6 +878,12 @@ const errorTypeLabels = {
   missing_period: '月份缺失',
   amount_mismatch: '金额不匹配', duplicate_record: '重复记录'
 }
+
+// 检测导入结果中是否有未匹配模板的错误
+const hasNoTemplateError = computed(() => {
+  if (!smartImportResult.value) return false
+  return smartImportResult.value.errors?.some(e => e.error_type === 'no_template')
+})
 
 const filteredRecords = computed(() => {
   if (!filterField.value || !filterValue.value) return records.value
@@ -1172,6 +1180,7 @@ function resetSmartImport() {
   smartFiles.value = []
   smartFileList.value = []
   smartImportResult.value = null
+  smartBatchId.value = null
 }
 
 async function doSmartImport() {
@@ -1192,9 +1201,12 @@ async function doSmartImport() {
     })
     const prepareData = prepareRes.data
 
+    // 保存 batch_id，供结果弹窗中配置模板跳转使用
+    smartBatchId.value = prepareData.batch_id
+
     // 如果有未匹配模板的文件，跳转到模板配置页面
     if (prepareData.has_unmatched && prepareData.unmatched_files.length > 0) {
-      ElMessage.warning(`检测到 ${prepareData.unmatched_files.length} 个文件未匹配模板，请先配置模板`)
+      ElMessage.warning(`检测到 ${prepareData.unmatched_files.length} 个文件/工作表未匹配模板，请先配置模板`)
       smartImportVisible.value = false
       resetSmartImport()
       // 跳转到模板配置页面，传入batch_id和period
@@ -1221,7 +1233,37 @@ async function doSmartImport() {
 async function executeSmartImportBatch(batchId) {
   try {
     smartImporting.value = true
+    smartBatchId.value = batchId
     const res = await api.post(`/social-insurance/smart-import-batch/${batchId}/execute`)
+
+    // 如果返回需要配置模板
+    if (res.data.needs_config) {
+      if (res.data.partial_success) {
+        // 部分成功：已有文件导入成功，显示结果弹窗，让用户点击按钮跳转配置
+        smartBatchId.value = res.data.config_batch_id
+        smartImportResult.value = res.data
+        if (res.data.created > 0 || res.data.updated > 0) {
+          ElMessage.success(`导入成功：新增 ${res.data.created} 条，更新 ${res.data.updated} 条`)
+        }
+        ElMessage.warning(`检测到 ${res.data.unmatched_files?.length || 0} 个文件未匹配模板，请配置模板后继续`)
+        smartImportVisible.value = true
+        await fetchData()
+        return
+      }
+      // 预检查阶段发现未匹配：直接跳转
+      ElMessage.warning(`检测到 ${res.data.unmatched_files.length} 个文件未匹配模板，请先配置模板`)
+      smartImportVisible.value = false
+      resetSmartImport()
+      router.push({
+        name: 'InsuranceTemplate',
+        query: {
+          batch_id: res.data.config_batch_id || batchId,
+          period: periodDate.value
+        }
+      })
+      return
+    }
+
     smartImportResult.value = res.data
     if (res.data.created > 0 || res.data.updated > 0) {
       ElMessage.success(`导入成功：新增 ${res.data.created} 条，更新 ${res.data.updated} 条`)
@@ -1234,7 +1276,6 @@ async function executeSmartImportBatch(batchId) {
   } catch (e) {
     const msg = e.response?.data?.detail || '批量导入执行失败'
     ElMessage.error(msg)
-    // 清理失败的batch
     if (batchId) {
       api.post(`/social-insurance/smart-import-batch/${batchId}/cancel`).catch(() => {})
     }
@@ -1246,6 +1287,18 @@ async function executeSmartImportBatch(batchId) {
 function closeSmartImport() {
   smartImportVisible.value = false
   resetSmartImport()
+}
+
+function goToTemplateConfig() {
+  const batchId = smartBatchId.value
+  smartImportVisible.value = false
+  router.push({
+    name: 'InsuranceTemplate',
+    query: {
+      batch_id: batchId,
+      period: periodDate.value
+    }
+  })
 }
 
 async function handleExport() {
