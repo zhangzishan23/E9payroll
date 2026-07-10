@@ -46,6 +46,9 @@ frontend/src/views/AIAssistant.vue
 # 数据备份目录
 backups/
 
+# 文件上传临时目录
+temp/
+
 # 原始考勤数据文件(不提交)
 *钉钉原始考勤数据*.xlsx
 *原始考勤数据*.xlsx
@@ -75,3 +78,6 @@ stop.bat
 *.swp
 *.swo
 .path.join*
+
+# IDE配置目录
+.trae/
