@@ -835,6 +835,18 @@ def _auto_fill_shared_bases(aggregated: Dict[str, Dict]):
                 record[personal_base_field] = c_base
 
 
+def _format_source_files(sources: List[Dict]) -> str:
+    """格式化来源文件列表，避免文件名过长导致数据库写入失败"""
+    if not sources:
+        return ""
+    files = [s.get("file", "") for s in sources if s.get("file")]
+    if len(files) == 1:
+        return files[0]
+    if len(files) <= 3:
+        return ", ".join(files)
+    return f"{files[0]}, {files[1]} 等{len(files)}个文件"
+
+
 def _match_employees(
     db: Session,
     aggregated: Dict[str, Dict],
@@ -853,9 +865,10 @@ def _match_employees(
 
     for name, record in aggregated.items():
         matches = name_index.get(name, [])
+        source_files = _format_source_files(record.get("_sources", []))
         if not matches:
             logs.append({
-                "file_name": ", ".join(s["file"] for s in record.get("_sources", [])),
+                "file_name": source_files,
                 "row_number": None,
                 "employee_name": name,
                 "error_level": "warning",
@@ -867,7 +880,7 @@ def _match_employees(
 
         if len(matches) > 1:
             logs.append({
-                "file_name": ", ".join(s["file"] for s in record.get("_sources", [])),
+                "file_name": source_files,
                 "row_number": None,
                 "employee_name": name,
                 "error_level": "warning",
@@ -889,7 +902,7 @@ def _validate_data(
 ):
     """多层级数据校验"""
     for name, record in records.items():
-        source_info = ", ".join(s["file"] for s in record.get("_sources", []))
+        source_info = _format_source_files(record.get("_sources", []))
 
         # 1. 缴费月份检查
         period = record.get("period", "")
@@ -1465,20 +1478,29 @@ def run_smart_import(
 
 
 def _save_logs(db: Session, logs: List[Dict], period: str, batch_id: str):
-    """将导入日志写入数据库"""
-    for log_entry in logs:
-        db_log = SiImportLog(
-            period=period,
-            batch_id=batch_id,
-            file_name=log_entry.get("file_name"),
-            row_number=log_entry.get("row_number"),
-            employee_name=log_entry.get("employee_name"),
-            error_level=log_entry.get("error_level", "warning"),
-            error_type=log_entry.get("error_type", "unknown"),
-            error_message=log_entry.get("error_message", ""),
-        )
-        db.add(db_log)
-    db.commit()
+    """将导入日志写入数据库（日志保存失败不影响主流程）"""
+    if not logs:
+        return
+    try:
+        for log_entry in logs:
+            file_name = log_entry.get("file_name") or ""
+            error_msg = log_entry.get("error_message", "") or ""
+            emp_name = log_entry.get("employee_name") or ""
+            db_log = SiImportLog(
+                period=period,
+                batch_id=batch_id,
+                file_name=file_name[:1000] if len(file_name) > 1000 else file_name,
+                row_number=log_entry.get("row_number"),
+                employee_name=emp_name[:100] if len(emp_name) > 100 else emp_name,
+                error_level=log_entry.get("error_level", "warning"),
+                error_type=log_entry.get("error_type", "unknown")[:50],
+                error_message=error_msg[:2000] if len(error_msg) > 2000 else error_msg,
+            )
+            db.add(db_log)
+        db.commit()
+    except Exception as e:
+        logger.error(f"保存导入日志失败（不影响数据导入结果）: {e}")
+        db.rollback()
 
 
 

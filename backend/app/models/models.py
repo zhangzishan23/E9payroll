@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, DateTime, Boolean, DECIMAL, ForeignKey, JSON, func
+from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Boolean, DECIMAL, ForeignKey, JSON, func
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
@@ -419,12 +419,12 @@ class SiImportLog(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     period = Column(String(7), nullable=False, comment="核算月份")
     batch_id = Column(String(36), nullable=False, comment="导入批次UUID，同一次导入共用")
-    file_name = Column(String(500), nullable=True, comment="来源文件名")
+    file_name = Column(Text, nullable=True, comment="来源文件名")
     row_number = Column(Integer, nullable=True, comment="文件中的行号(1-based)")
-    employee_name = Column(String(50), nullable=True, comment="涉及的员工姓名")
+    employee_name = Column(String(100), nullable=True, comment="涉及的员工姓名")
     error_level = Column(String(20), nullable=False, comment="级别: error(阻断) / warning(预警)")
     error_type = Column(String(50), nullable=False, comment="异常类型: file_error/name_not_found/duplicate_name/empty_name/missing_period/missing_base/amount_mismatch/duplicate_record/unknown_format")
-    error_message = Column(String(500), nullable=False, comment="异常描述（中文）")
+    error_message = Column(Text, nullable=False, comment="异常描述（中文）")
     raw_data = Column(JSON, nullable=True, comment="原始行数据，便于排查")
     resolved = Column(Boolean, default=False, comment="是否已处理")
     created_at = Column(DateTime, server_default=func.now())
@@ -494,6 +494,7 @@ class SalaryCalculation(Base):
     allowance_total = Column(DECIMAL(10, 2), default=0)
     commission_bonus = Column(DECIMAL(10, 2), default=0)
     pretax_adjustment = Column(DECIMAL(10, 2), default=0)
+    pretax_adjustment_reason = Column(String(200), nullable=True, comment="税前调整原因")
     posttax_adjustment = Column(DECIMAL(10, 2), default=0)
     posttax_adjustment_reason = Column(String(200), nullable=True)
     total_work_days = Column(DECIMAL(4, 2), nullable=False)
@@ -506,11 +507,14 @@ class SalaryCalculation(Base):
     social_insurance_personal = Column(DECIMAL(10, 2), default=0)
     housing_fund_personal = Column(DECIMAL(10, 2), default=0)
     si_hf_total = Column(DECIMAL(10, 2), default=0)
+    salary_after_si_hf = Column(DECIMAL(10, 2), default=0, comment="扣掉社保公积金工资")
     tax_deduction = Column(DECIMAL(10, 2), default=0)
     net_salary = Column(DECIMAL(10, 2), nullable=False)
     last_month_untaxed = Column(DECIMAL(10, 2), default=0)
     travel_untaxed = Column(DECIMAL(10, 2), default=0)
     compensation_tax = Column(DECIMAL(10, 2), default=0)
+    severance_pay = Column(DECIMAL(10, 2), default=0, comment="实发离职补偿金")
+    year_end_bonus_untaxed = Column(DECIMAL(10, 2), default=0, comment="未报税年终奖")
     actual_taxable = Column(DECIMAL(10, 2), default=0)
     special_deduction = Column(DECIMAL(10, 2), default=0)
     review_status = Column(String(20), default="待审核")

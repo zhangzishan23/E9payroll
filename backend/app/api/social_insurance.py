@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 from io import BytesIO
+from urllib.parse import quote
 import logging
 from openpyxl import Workbook
 from app.core.database import get_db
@@ -533,10 +534,12 @@ def export_social_insurance(
     output = BytesIO()
     wb.save(output)
     output.seek(0)
+    filename = f"社保公积金_{period}.xlsx"
+    encoded_filename = quote(filename)
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=社保公积金_{period}.xlsx"}
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"}
     )
 
 

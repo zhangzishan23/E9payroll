@@ -16,6 +16,7 @@ def run_migrations():
         _run_pg_migrations()
         _run_pg_nullable_migration()
         _run_attendance_precision_migration()
+    _run_salary_export_migrations()
 
 
 def _run_pg_migrations():
@@ -277,3 +278,29 @@ def _run_sqlite_nullable_migration():
         # 删除旧表，重命名新表
         conn.execute(text("DROP TABLE social_insurance"))
         conn.execute(text("ALTER TABLE social_insurance_new RENAME TO social_insurance"))
+
+
+def _run_salary_export_migrations():
+    """为薪资核算表添加导出所需的缺失字段（兼容SQLite和PostgreSQL）"""
+    is_sqlite = "sqlite" in DATABASE_URL
+    salary_new_columns = [
+        ("pretax_adjustment_reason", "VARCHAR(200)"),
+        ("severance_pay", "DECIMAL(10, 2) DEFAULT 0"),
+        ("year_end_bonus_untaxed", "DECIMAL(10, 2) DEFAULT 0"),
+        ("salary_after_si_hf", "DECIMAL(10, 2) DEFAULT 0"),
+    ]
+    
+    with engine.begin() as conn:
+        if is_sqlite:
+            result = conn.execute(text("PRAGMA table_info(salary_calculations)"))
+            existing_cols = {row[1] for row in result.fetchall()}
+            for col_name, col_def in salary_new_columns:
+                if col_name not in existing_cols:
+                    conn.execute(text(
+                        f"ALTER TABLE salary_calculations ADD COLUMN {col_name} {col_def}"
+                    ))
+        else:
+            for col_name, col_def in salary_new_columns:
+                conn.execute(text(
+                    f"ALTER TABLE salary_calculations ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
+                ))
