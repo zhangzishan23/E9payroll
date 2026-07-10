@@ -60,6 +60,16 @@ check_template.py
 # 调试文档
 debug-*.md
 columns_v2.json
+query
+
+# 本地启动/停止脚本
+start.bat
+stop.bat
+
+# 本地技术方案和需求文档(不提交)
+技术方案.md
+考勤模块优化.md
+社保公积金模块优化.md
 
 # 编辑器临时文件
 *.swp
