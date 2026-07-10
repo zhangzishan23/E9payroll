@@ -2,7 +2,7 @@
   <div class="min-h-screen flex items-center justify-center" style="background: linear-gradient(135deg, #0c4a6e 0%, #0369a1 30%, #0284c7 60%, #38bdf8 100%);">
     <div class="apple-card p-10 w-full max-w-md">
       <div class="text-center mb-8">
-        <h1 class="text-2xl font-bold text-blue-700">E9 Payroll</h1>
+        <h1 class="text-2xl font-bold text-blue-700">工资计算管家</h1>
         <p class="text-gray-400 mt-2 text-sm">请登录您的账号</p>
       </div>
       <el-form ref="formRef" :model="form" :rules="rules" label-width="0" @submit.prevent="handleLogin">

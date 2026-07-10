@@ -99,10 +99,6 @@
         </div>
 
         <div class="apple-card p-6 text-center border-2 border-dashed border-green-200 hover:border-green-400 hover:shadow-lg transition-shadow">
-          <div class="flex items-center gap-2 justify-center mb-4">
-            <el-icon class="text-4xl text-green-500"><Document /></el-icon>
-            <span class="font-semibold text-lg">薪资核算表</span>
-          </div>
           <div class="flex items-center gap-2 justify-center mb-3">
             <el-date-picker v-model="salaryPeriod" type="month" placeholder="选择月份" size="small" class="!w-40" value-format="YYYYMM" />
           </div>
@@ -366,6 +362,7 @@ import { Document, Calendar, Setting, Plus, Close, Rank, CircleCheck, Top, Botto
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../../api'
 import { getDefaultPeriod } from '../../utils/date.js'
+import { ALL_EXPORT_FIELDS } from '../../config/columns'
 
 const TAB_TYPE_MAP = {
   salary: ['salary_finance', 'salary_slip', 'custom'],
@@ -403,7 +400,7 @@ const contractWarning = reactive({
 const configVisible = ref(false)
 const configTab = ref('salary')
 const templates = ref([])
-const allAvailableFields = ref({})
+const allAvailableFields = ref({ ...ALL_EXPORT_FIELDS })
 
 const editVisible = ref(false)
 const editingTemplate = reactive({
@@ -485,17 +482,32 @@ async function fetchContractWarning() {
 async function fetchTemplates() {
   try {
     const res = await api.get('/reports/export/templates')
-    templates.value = res.data
+    templates.value = (res.data || []).map(tpl => syncTemplateFieldLabels(tpl))
   } catch {
     ElMessage.error('加载模板列表失败')
   }
 }
 
-async function fetchAvailableFields() {
-  try {
-    const res = await api.get('/reports/export/available-fields')
-    allAvailableFields.value = res.data
-  } catch {}
+function syncTemplateFieldLabels(tpl) {
+  const typeKey = tpl.template_type?.startsWith('salary') ? 'salary'
+    : tpl.template_type === 'roster' ? 'roster'
+    : tpl.template_type === 'attendance' ? 'attendance'
+    : tpl.template_type === 'social_insurance' ? 'social_insurance'
+    : configTab.value
+  const fieldDefs = ALL_EXPORT_FIELDS[typeKey] || []
+  const labelMap = {}
+  fieldDefs.forEach(f => { labelMap[f.key] = f.label })
+  const syncedFields = (tpl.fields || []).map(f => {
+    if (labelMap[f.key]) {
+      return { ...f, label: labelMap[f.key] }
+    }
+    return f
+  })
+  return { ...tpl, fields: syncedFields }
+}
+
+function fetchAvailableFields() {
+  allAvailableFields.value = { ...ALL_EXPORT_FIELDS }
 }
 
 function showConfigDialog() {
@@ -529,13 +541,14 @@ function createNewTemplate() {
 }
 
 function editTemplate(row) {
-  editingTemplate.id = row.id
-  editingTemplate.name = row.name
-  editingTemplate.template_type = row.template_type
-  editingTemplate.description = row.description || ''
-  editingTemplate.fields = [...(row.fields || [])]
-  editingTemplate.is_default = row.is_default
-  editingTemplate.is_enabled = row.is_enabled
+  const synced = syncTemplateFieldLabels(row)
+  editingTemplate.id = synced.id
+  editingTemplate.name = synced.name
+  editingTemplate.template_type = synced.template_type
+  editingTemplate.description = synced.description || ''
+  editingTemplate.fields = [...(synced.fields || [])]
+  editingTemplate.is_default = synced.is_default
+  editingTemplate.is_enabled = synced.is_enabled
   editVisible.value = true
 }
 

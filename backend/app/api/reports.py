@@ -217,15 +217,18 @@ def export_roster(db: Session = Depends(get_db), current_user: UserInfo = Depend
 
 @router.get("/salary/{period}")
 def export_salary(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    # 获取活跃员工ID列表
+    # 获取所有在职员工
     query = db.query(Employee)
-    active_employees = _filter_active_without_pending_resign(query, db).all()
+    active_employees = _filter_active_without_pending_resign(query, db).order_by(Employee.employee_no).all()
     active_employee_ids = [emp.id for emp in active_employees]
 
     calcs = db.query(SalaryCalculation).filter(
         SalaryCalculation.period == period,
         SalaryCalculation.employee_id.in_(active_employee_ids)
     ).all()
+    
+    calc_map = {c.employee_id: c for c in calcs}
+    dict_name_map = _get_emp_dict_maps(active_employees, db)
 
     wb = Workbook()
     ws = wb.active
@@ -236,36 +239,51 @@ def export_salary(period: str, db: Session = Depends(get_db), current_user: User
         "基本工资", "绩效标准", "绩效系数", "实际绩效",
         "餐补", "交通补", "通讯补", "电脑补", "住房补", "补贴合计",
         "提成/奖金", "税前调整", "税后调整",
-        "应计薪天数", "实际计薪天数", "出勤率",
+        "当月总计薪天数", "实际计薪天数", "出勤率",
         "总应发工资", "社保个人", "公积金个人", "社保公积金合计",
-        "上月未报税", "差旅未报税", "补偿金计税", "实际应纳税额",
-        "本月应扣个税", "实发工资", "实发离职补偿金",
+        "上月未报税", "差旅未报税",
+        "本月应扣个税", "实发工资", "本月实际工资报税金额",
+        "实发离职补偿金", "未报税补偿金", "未报税年终奖",
         "核算状态", "数据完整性", "审核状态"
     ]
     ws.append(headers)
 
-    for c in calcs:
-        emp = db.query(Employee).filter(Employee.id == c.employee_id).first()
-        ws.append([
-            c.employee_id, emp.name if emp else "",
-            c.contract_company, c.department, c.position, c.cost_owner or "", c.status,
-            float(c.base_salary), float(c.performance_standard),
-            float(c.performance_coefficient), float(c.actual_performance),
-            float(c.meal_allowance), float(c.transport_allowance),
-            float(c.communication_allowance), float(c.computer_allowance),
-            float(c.housing_allowance), float(c.allowance_total),
-            float(c.commission_bonus), float(c.pretax_adjustment),
-            float(c.posttax_adjustment),
-            float(c.total_work_days), float(c.actual_work_days),
-            float(c.attendance_rate),
-            float(c.gross_salary), float(c.social_insurance_personal),
-            float(c.housing_fund_personal), float(c.si_hf_total),
-            float(c.last_month_untaxed or 0), float(c.travel_untaxed or 0),
-            float(c.compensation_tax or 0), float(c.actual_taxable or 0),
-            float(c.tax_deduction), float(c.net_salary),
-            float(c.severance_pay or 0),
-            c.calculation_status, c.data_completeness, c.review_status
-        ])
+    for emp in active_employees:
+        c = calc_map.get(emp.id)
+        if c:
+            ws.append([
+                c.employee_id, emp.name,
+                c.contract_company or "", c.department or "", c.position or "", c.cost_owner or "", c.status or "",
+                float(c.base_salary or 0), float(c.performance_standard or 0),
+                float(c.performance_coefficient or 0), float(c.actual_performance or 0),
+                float(c.meal_allowance or 0), float(c.transport_allowance or 0),
+                float(c.communication_allowance or 0), float(c.computer_allowance or 0),
+                float(c.housing_allowance or 0), float(c.allowance_total or 0),
+                float(c.commission_bonus or 0), float(c.pretax_adjustment or 0),
+                float(c.posttax_adjustment or 0),
+                float(c.total_work_days or 0), float(c.actual_work_days or 0),
+                float(c.attendance_rate or 0),
+                float(c.gross_salary or 0), float(c.social_insurance_personal or 0),
+                float(c.housing_fund_personal or 0), float(c.si_hf_total or 0),
+                float(c.last_month_untaxed or 0), float(c.travel_untaxed or 0),
+                float(c.tax_deduction or 0), float(c.net_salary or 0),
+                float(c.actual_taxable or 0),
+                float(c.severance_pay or 0), float(c.compensation_tax or 0),
+                float(c.year_end_bonus_untaxed or 0),
+                c.calculation_status or "", c.data_completeness or "", c.review_status or ""
+            ])
+        else:
+            ws.append([
+                emp.id, emp.name,
+                dict_name_map.get(emp.contract_company_id, ""),
+                dict_name_map.get(emp.department_id, ""),
+                dict_name_map.get(emp.position_id, ""),
+                emp.cost_owner or "",
+                dict_name_map.get(emp.status_id, ""),
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                "", "", ""
+            ])
 
     output = io.BytesIO()
     wb.save(output)
@@ -280,41 +298,57 @@ def export_salary(period: str, db: Session = Depends(get_db), current_user: User
 
 @router.get("/attendance/{period}")
 def export_attendance(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    # 先获取活跃员工ID列表
+    # 获取所有在职员工
     query = db.query(Employee)
-    active_employees = _filter_active_without_pending_resign(query, db).all()
+    active_employees = _filter_active_without_pending_resign(query, db).order_by(Employee.employee_no).all()
     active_employee_ids = [emp.id for emp in active_employees]
 
     records = db.query(AttendanceRecord).filter(
         AttendanceRecord.period == period,
         AttendanceRecord.employee_id.in_(active_employee_ids)
     ).all()
+    
+    record_map = {r.employee_id: r for r in records}
+    dict_name_map = _get_emp_dict_maps(active_employees, db)
 
     wb = Workbook()
     ws = wb.active
     ws.title = f"考勤表_{period}"
 
     headers = [
-        "员工ID", "姓名", "应计薪天数", "实际计薪天数", "出勤率",
+        "员工ID", "姓名", "部门", "职务",
+        "当月总计薪天数", "实际计薪天数", "出勤率",
         "迟到次数", "早退次数", "缺卡次数",
         "病假天数", "事假天数", "年假天数", "其他假天数",
         "是否在家打卡", "需核实", "核实状态", "备注"
     ]
     ws.append(headers)
 
-    for r in records:
-        emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
-        ws.append([
-            r.employee_id, emp.name if emp else "",
-            float(r.total_work_days), float(r.actual_work_days),
-            float(r.attendance_rate),
-            r.late_count, r.early_count, r.missed_punch_count,
-            float(r.sick_leave_days), float(r.personal_leave_days),
-            float(r.annual_leave_days), float(r.other_leave_days),
-            "是" if r.is_home_checkin else "否",
-            "是" if r.need_verify else "否",
-            r.verify_status or "", r.remark or ""
-        ])
+    for emp in active_employees:
+        r = record_map.get(emp.id)
+        if r:
+            ws.append([
+                r.employee_id, emp.name,
+                dict_name_map.get(emp.department_id, ""),
+                dict_name_map.get(emp.position_id, ""),
+                float(r.total_work_days or 0), float(r.actual_work_days or 0),
+                float(r.attendance_rate or 0),
+                r.late_count or 0, r.early_leave_count or 0, r.missed_punch_count or 0,
+                float(r.sick_leave_days or 0), float(r.personal_leave_days or 0),
+                float(r.annual_leave_days or 0), float(r.other_leave_days or 0),
+                "是" if r.is_home_checkin else "否",
+                "是" if r.need_verify else "否",
+                r.verify_status or "", r.remark or ""
+            ])
+        else:
+            ws.append([
+                emp.id, emp.name,
+                dict_name_map.get(emp.department_id, ""),
+                dict_name_map.get(emp.position_id, ""),
+                0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0,
+                "否", "否", "", ""
+            ])
 
     output = io.BytesIO()
     wb.save(output)
@@ -340,41 +374,41 @@ SALARY_FIELDS = [
     {"key": "cost_owner", "label": "费用负责人", "width": 90},
     {"key": "status", "label": "状态", "width": 80},
     {"key": "entry_date", "label": "入职时间", "width": 100},
-    {"key": "total_work_days", "label": "应计薪天数", "width": 100},
-    {"key": "actual_work_days", "label": "实际计薪天数", "width": 100},
+    {"key": "total_work_days", "label": "当月总计薪天数", "width": 105},
+    {"key": "actual_work_days", "label": "实际计薪天数", "width": 95},
     {"key": "attendance_rate", "label": "出勤率", "width": 75},
     {"key": "base_salary", "label": "基本工资", "width": 95},
-    {"key": "commission_bonus", "label": "提成/项目奖金/补发", "width": 130},
+    {"key": "commission_bonus", "label": "提成/项目奖金/补发", "width": 95},
     {"key": "meal_allowance", "label": "餐补", "width": 70},
     {"key": "transport_allowance", "label": "交通补", "width": 75},
     {"key": "communication_allowance", "label": "通讯补", "width": 75},
-    {"key": "computer_allowance", "label": "电脑补贴（非固定收入）", "width": 130},
-    {"key": "housing_allowance", "label": "住房补（非固定收入）", "width": 120},
+    {"key": "computer_allowance", "label": "电脑补贴（非固定收入）", "width": 95},
+    {"key": "housing_allowance", "label": "住房补（非固定收入）", "width": 95},
     {"key": "allowance_total", "label": "补贴合计", "width": 85},
-    {"key": "performance_standard", "label": "绩效奖金标准", "width": 100},
-    {"key": "performance_coefficient", "label": "实发绩效奖金系数", "width": 120},
-    {"key": "actual_performance", "label": "实发绩效奖金标准", "width": 120},
-    {"key": "effective_performance", "label": "实发绩效奖金", "width": 100},
+    {"key": "performance_standard", "label": "绩效奖金标准", "width": 95},
+    {"key": "performance_coefficient", "label": "实发绩效奖金系数", "width": 95},
+    {"key": "actual_performance", "label": "实发绩效奖金标准", "width": 95},
+    {"key": "effective_performance", "label": "实发绩效奖金", "width": 95},
     {"key": "monthly_standard", "label": "月薪标准", "width": 90},
     {"key": "gross_salary", "label": "总应发工资", "width": 100},
-    {"key": "pretax_adjustment", "label": "税前调整金额", "width": 110},
+    {"key": "pretax_adjustment", "label": "税前调整金额", "width": 90},
     {"key": "pretax_adjustment_reason", "label": "税前调整原因", "width": 120},
-    {"key": "pension_personal", "label": "养老保险（个人）", "width": 120},
-    {"key": "unemployment_personal", "label": "失业保险（个人）", "width": 120},
-    {"key": "medical_personal", "label": "医疗保险（个人）", "width": 120},
-    {"key": "housing_fund_personal", "label": "公积金（个人）", "width": 110},
-    {"key": "si_hf_total", "label": "社保、公积金（个人）合计", "width": 150},
-    {"key": "salary_after_si_hf", "label": "扣掉社保公积金工资", "width": 130},
-    {"key": "tax_deduction", "label": "本月应扣个税额", "width": 110},
-    {"key": "posttax_adjustment", "label": "税后调整金额", "width": 110},
+    {"key": "pension_personal", "label": "养老保险（个人）", "width": 95},
+    {"key": "unemployment_personal", "label": "失业保险（个人）", "width": 95},
+    {"key": "medical_personal", "label": "医疗保险（个人）", "width": 95},
+    {"key": "housing_fund_personal", "label": "公积金（个人）", "width": 90},
+    {"key": "si_hf_total", "label": "社保、公积金（个人）合计", "width": 100},
+    {"key": "salary_after_si_hf", "label": "扣掉社保公积金工资", "width": 110},
+    {"key": "tax_deduction", "label": "本月应扣个税额", "width": 100},
+    {"key": "posttax_adjustment", "label": "税后调整金额", "width": 90},
     {"key": "posttax_adjustment_reason", "label": "税后调整原因", "width": 120},
-    {"key": "severance_pay", "label": "实发离职补偿金", "width": 120},
-    {"key": "year_end_bonus_untaxed", "label": "未报税年终奖", "width": 110},
     {"key": "net_salary", "label": "实发工资", "width": 100},
-    {"key": "last_month_untaxed", "label": "上月未报税金额", "width": 120},
-    {"key": "travel_untaxed", "label": "临时性差旅补贴未报税费用", "width": 160},
-    {"key": "compensation_tax", "label": "未报税补偿金", "width": 110},
-    {"key": "actual_taxable", "label": "本月实际报税金额", "width": 130},
+    {"key": "last_month_untaxed", "label": "上月未报税金额", "width": 100},
+    {"key": "travel_untaxed", "label": "临时性差旅补贴未报税费用", "width": 100},
+    {"key": "actual_taxable", "label": "本月实际工资报税金额", "width": 120},
+    {"key": "severance_pay", "label": "实发离职补偿金", "width": 100},
+    {"key": "compensation_tax", "label": "未报税补偿金", "width": 100},
+    {"key": "year_end_bonus_untaxed", "label": "未报税年终奖", "width": 100},
     {"key": "remark", "label": "备注", "width": 200},
 ]
 
@@ -637,6 +671,145 @@ def delete_export_template(
     return {"message": "模板已删除"}
 
 
+def _get_emp_dict_maps(emps, db):
+    """批量获取员工的字典映射（合同公司、部门、职位、状态）"""
+    dict_ids = set()
+    for emp in emps:
+        if emp.contract_company_id:
+            dict_ids.add(emp.contract_company_id)
+        if emp.department_id:
+            dict_ids.add(emp.department_id)
+        if emp.position_id:
+            dict_ids.add(emp.position_id)
+        if emp.status_id:
+            dict_ids.add(emp.status_id)
+    
+    name_map = {}
+    if dict_ids:
+        dict_items = db.query(SysDictBase).filter(SysDictBase.id.in_(list(dict_ids))).all()
+        name_map = {d.id: d.name for d in dict_items}
+    return name_map
+
+
+def _safe_float(val, default=0.0):
+    """安全转换为浮点数"""
+    try:
+        return float(val or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _build_salary_row_data(emp, calc, dict_name_map):
+    """构建单条薪资导出行数据，兼容无核算记录的情况"""
+    row_data = {}
+    row_data["employee_no"] = getattr(emp, 'employee_no', "") if emp else ""
+    row_data["employee_name"] = getattr(emp, 'name', "") if emp else ""
+    
+    if calc:
+        row_data["contract_company"] = getattr(calc, 'contract_company', "") or ""
+        row_data["department"] = getattr(calc, 'department', "") or ""
+        row_data["position"] = getattr(calc, 'position', "") or ""
+        row_data["cost_owner"] = getattr(calc, 'cost_owner', "") or ""
+        row_data["status"] = getattr(calc, 'status', "") or ""
+        entry_date = getattr(calc, 'entry_date', None)
+        row_data["entry_date"] = str(entry_date) if entry_date else ""
+        row_data["total_work_days"] = _safe_float(getattr(calc, 'total_work_days', 0))
+        row_data["actual_work_days"] = _safe_float(getattr(calc, 'actual_work_days', 0))
+        row_data["attendance_rate"] = _safe_float(getattr(calc, 'attendance_rate', 0))
+        row_data["base_salary"] = _safe_float(getattr(calc, 'base_salary', 0))
+        row_data["commission_bonus"] = _safe_float(getattr(calc, 'commission_bonus', 0))
+        row_data["meal_allowance"] = _safe_float(getattr(calc, 'meal_allowance', 0))
+        row_data["transport_allowance"] = _safe_float(getattr(calc, 'transport_allowance', 0))
+        row_data["communication_allowance"] = _safe_float(getattr(calc, 'communication_allowance', 0))
+        row_data["computer_allowance"] = _safe_float(getattr(calc, 'computer_allowance', 0))
+        row_data["housing_allowance"] = _safe_float(getattr(calc, 'housing_allowance', 0))
+        row_data["allowance_total"] = _safe_float(getattr(calc, 'allowance_total', 0))
+        row_data["performance_standard"] = _safe_float(getattr(calc, 'performance_standard', 0))
+        row_data["performance_coefficient"] = _safe_float(getattr(calc, 'performance_coefficient', 0))
+        row_data["actual_performance"] = _safe_float(getattr(calc, 'actual_performance', 0))
+        row_data["effective_performance"] = _safe_float(getattr(calc, 'effective_performance', 0))
+        row_data["monthly_standard"] = _safe_float(getattr(calc, 'monthly_standard', 0))
+        row_data["gross_salary"] = _safe_float(getattr(calc, 'gross_salary', 0))
+        row_data["pretax_adjustment"] = _safe_float(getattr(calc, 'pretax_adjustment', 0))
+        row_data["pretax_adjustment_reason"] = getattr(calc, 'pretax_adjustment_reason', "") or ""
+        row_data["pension_personal"] = _safe_float(getattr(calc, 'pension_personal', 0))
+        row_data["unemployment_personal"] = _safe_float(getattr(calc, 'unemployment_personal', 0))
+        row_data["medical_personal"] = _safe_float(getattr(calc, 'medical_personal', 0))
+        row_data["housing_fund_personal"] = _safe_float(getattr(calc, 'housing_fund_personal', 0))
+        row_data["social_insurance_personal"] = _safe_float(getattr(calc, 'social_insurance_personal', 0))
+        row_data["si_hf_total"] = _safe_float(getattr(calc, 'si_hf_total', 0))
+        salary_after_si_hf = (
+            _safe_float(getattr(calc, 'gross_salary', 0)) + 
+            _safe_float(getattr(calc, 'pretax_adjustment', 0)) - 
+            _safe_float(getattr(calc, 'si_hf_total', 0))
+        )
+        row_data["salary_after_si_hf"] = round(salary_after_si_hf, 2)
+        row_data["tax_deduction"] = _safe_float(getattr(calc, 'tax_deduction', 0))
+        row_data["posttax_adjustment"] = _safe_float(getattr(calc, 'posttax_adjustment', 0))
+        row_data["posttax_adjustment_reason"] = getattr(calc, 'posttax_adjustment_reason', "") or ""
+        row_data["severance_pay"] = _safe_float(getattr(calc, 'severance_pay', 0))
+        row_data["year_end_bonus_untaxed"] = _safe_float(getattr(calc, 'year_end_bonus_untaxed', 0))
+        row_data["net_salary"] = _safe_float(getattr(calc, 'net_salary', 0))
+        row_data["last_month_untaxed"] = _safe_float(getattr(calc, 'last_month_untaxed', 0))
+        row_data["travel_untaxed"] = _safe_float(getattr(calc, 'travel_untaxed', 0))
+        row_data["compensation_tax"] = _safe_float(getattr(calc, 'compensation_tax', 0))
+        row_data["actual_taxable"] = _safe_float(getattr(calc, 'actual_taxable', 0))
+        row_data["data_completeness"] = getattr(calc, 'data_completeness', "") or ""
+        row_data["calculation_status"] = getattr(calc, 'calculation_status', "") or ""
+        row_data["review_status"] = getattr(calc, 'review_status', "") or ""
+        row_data["remark"] = getattr(calc, 'remark', "") or ""
+    else:
+        row_data["contract_company"] = dict_name_map.get(getattr(emp, 'contract_company_id', None), "") if emp else ""
+        row_data["department"] = dict_name_map.get(getattr(emp, 'department_id', None), "") if emp else ""
+        row_data["position"] = dict_name_map.get(getattr(emp, 'position_id', None), "") if emp else ""
+        row_data["cost_owner"] = getattr(emp, 'cost_owner', "") if emp else ""
+        row_data["status"] = dict_name_map.get(getattr(emp, 'status_id', None), "") if emp else ""
+        emp_entry = getattr(emp, 'entry_date', None) if emp else None
+        row_data["entry_date"] = str(emp_entry) if emp_entry else ""
+        row_data["total_work_days"] = 0
+        row_data["actual_work_days"] = 0
+        row_data["attendance_rate"] = 0
+        row_data["base_salary"] = 0
+        row_data["commission_bonus"] = 0
+        row_data["meal_allowance"] = 0
+        row_data["transport_allowance"] = 0
+        row_data["communication_allowance"] = 0
+        row_data["computer_allowance"] = 0
+        row_data["housing_allowance"] = 0
+        row_data["allowance_total"] = 0
+        row_data["performance_standard"] = 0
+        row_data["performance_coefficient"] = 0
+        row_data["actual_performance"] = 0
+        row_data["effective_performance"] = 0
+        row_data["monthly_standard"] = 0
+        row_data["gross_salary"] = 0
+        row_data["pretax_adjustment"] = 0
+        row_data["pretax_adjustment_reason"] = ""
+        row_data["pension_personal"] = 0
+        row_data["unemployment_personal"] = 0
+        row_data["medical_personal"] = 0
+        row_data["housing_fund_personal"] = 0
+        row_data["social_insurance_personal"] = 0
+        row_data["si_hf_total"] = 0
+        row_data["salary_after_si_hf"] = 0
+        row_data["tax_deduction"] = 0
+        row_data["posttax_adjustment"] = 0
+        row_data["posttax_adjustment_reason"] = ""
+        row_data["severance_pay"] = 0
+        row_data["year_end_bonus_untaxed"] = 0
+        row_data["net_salary"] = 0
+        row_data["last_month_untaxed"] = 0
+        row_data["travel_untaxed"] = 0
+        row_data["compensation_tax"] = 0
+        row_data["actual_taxable"] = 0
+        row_data["data_completeness"] = ""
+        row_data["calculation_status"] = ""
+        row_data["review_status"] = ""
+        row_data["remark"] = ""
+    
+    return row_data
+
+
 @router.get("/salary-by-template/{period}")
 def export_salary_by_template(
     period: str,
@@ -644,9 +817,9 @@ def export_salary_by_template(
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
-    """按自定义模板导出薪资表"""
+    """按自定义模板导出薪资表（包含所有在职员工，无核算记录则字段留空）"""
     query = db.query(Employee)
-    active_employees = _filter_active_without_pending_resign(query, db).all()
+    active_employees = _filter_active_without_pending_resign(query, db).order_by(Employee.employee_no).all()
     active_employee_ids = [emp.id for emp in active_employees]
 
     calcs = db.query(SalaryCalculation).filter(
@@ -654,13 +827,14 @@ def export_salary_by_template(
         SalaryCalculation.employee_id.in_(active_employee_ids)
     ).all()
     
-    emp_map = {e.id: e for e in active_employees}
+    calc_map = {c.employee_id: c for c in calcs}
+    dict_name_map = _get_emp_dict_maps(active_employees, db)
     
     if template_id:
         template = db.query(ExportTemplate).filter(ExportTemplate.id == template_id).first()
     else:
         template = db.query(ExportTemplate).filter(
-            ExportTemplate.template_type.in_(["salary_finance", "salary_slip", "custom"]),
+            ExportTemplate.template_type.in_(["salary_finance", "salary_slip", "tax", "custom"]),
             ExportTemplate.is_default == True,
             ExportTemplate.is_enabled == True
         ).first()
@@ -678,53 +852,9 @@ def export_salary_by_template(
     
     field_keys = [f["key"] for f in field_list]
     
-    for c in calcs:
-        emp = emp_map.get(c.employee_id)
-        row_data = {}
-        row_data["employee_no"] = emp.employee_no if emp else ""
-        row_data["contract_company"] = c.contract_company
-        row_data["employee_name"] = emp.name if emp else ""
-        row_data["department"] = c.department
-        row_data["position"] = c.position
-        row_data["cost_owner"] = c.cost_owner or ""
-        row_data["status"] = c.status
-        row_data["entry_date"] = str(c.entry_date) if c.entry_date else ""
-        row_data["total_work_days"] = float(c.total_work_days)
-        row_data["actual_work_days"] = float(c.actual_work_days)
-        row_data["attendance_rate"] = float(c.attendance_rate)
-        row_data["base_salary"] = float(c.base_salary)
-        row_data["commission_bonus"] = float(c.commission_bonus or 0)
-        row_data["meal_allowance"] = float(c.meal_allowance)
-        row_data["transport_allowance"] = float(c.transport_allowance)
-        row_data["communication_allowance"] = float(c.communication_allowance)
-        row_data["computer_allowance"] = float(c.computer_allowance)
-        row_data["housing_allowance"] = float(c.housing_allowance)
-        row_data["allowance_total"] = float(c.allowance_total)
-        row_data["performance_standard"] = float(c.performance_standard)
-        row_data["performance_coefficient"] = float(c.performance_coefficient)
-        row_data["actual_performance"] = float(c.actual_performance)
-        row_data["effective_performance"] = float(c.effective_performance)
-        row_data["monthly_standard"] = float(c.monthly_standard)
-        row_data["gross_salary"] = float(c.gross_salary)
-        row_data["pretax_adjustment"] = float(c.pretax_adjustment or 0)
-        row_data["pretax_adjustment_reason"] = c.pretax_adjustment_reason or ""
-        row_data["pension_personal"] = float(c.pension_personal)
-        row_data["unemployment_personal"] = float(c.unemployment_personal)
-        row_data["medical_personal"] = float(c.medical_personal)
-        row_data["housing_fund_personal"] = float(c.housing_fund_personal)
-        row_data["si_hf_total"] = float(c.si_hf_total)
-        row_data["salary_after_si_hf"] = round(float(c.gross_salary) + float(c.pretax_adjustment or 0) - float(c.si_hf_total), 2)
-        row_data["tax_deduction"] = float(c.tax_deduction)
-        row_data["posttax_adjustment"] = float(c.posttax_adjustment)
-        row_data["posttax_adjustment_reason"] = c.posttax_adjustment_reason or ""
-        row_data["severance_pay"] = float(c.severance_pay or 0)
-        row_data["year_end_bonus_untaxed"] = float(c.year_end_bonus_untaxed or 0)
-        row_data["net_salary"] = float(c.net_salary)
-        row_data["last_month_untaxed"] = float(c.last_month_untaxed or 0)
-        row_data["travel_untaxed"] = float(c.travel_untaxed or 0)
-        row_data["compensation_tax"] = float(c.compensation_tax or 0)
-        row_data["actual_taxable"] = float(c.actual_taxable or 0)
-        
+    for emp in active_employees:
+        calc = calc_map.get(emp.id)
+        row_data = _build_salary_row_data(emp, calc, dict_name_map)
         ws.append([row_data.get(k, "") for k in field_keys])
     
     output = io.BytesIO()

@@ -9,6 +9,7 @@ from openpyxl import Workbook, load_workbook
 from urllib.parse import quote
 import xlrd
 import uuid
+import zipfile
 from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.core.query_utils import filter_active_employees
@@ -394,9 +395,9 @@ def calculate_salary(period: str, hide_status_id: Optional[int] = Query(None, de
             year_end_bonus_untaxed_val = 0
             severance_pay_val = 0
             pretax_adj_val = float(pretax_adj or 0)
-            actual_taxable = round(gross_salary + pretax_adj_val + last_month_untaxed_val + travel_untaxed + compensation_tax + year_end_bonus_untaxed_val + severance_pay_val, 2)
+            actual_taxable = round(gross_salary + pretax_adj_val + last_month_untaxed_val + travel_untaxed, 2)
             salary_after_si_hf_val = round(gross_salary + pretax_adj_val - si_hf_total, 2)
-            net_salary = round(gross_salary + pretax_adj_val - si_hf_total - tax_deduction_val + posttax_adj + severance_pay_val, 2)
+            net_salary = round(gross_salary + pretax_adj_val - si_hf_total - tax_deduction_val + posttax_adj, 2)
 
             calc = SalaryCalculation(
                 period=period,
@@ -641,8 +642,8 @@ def get_calculation_results(
             salary_after_si_hf_val = None
             if gross_salary_val is not None:
                 salary_after_si_hf_val = round(gross_salary_val + pretax_adj_val - (si_hf_total_val or 0), 2)
-                net_salary_val = round(gross_salary_val + pretax_adj_val - (si_hf_total_val or 0) - tax_deduction_val + posttax_adj_val + severance_pay_val, 2)
-                actual_taxable_val = round(gross_salary_val + pretax_adj_val + last_month_untaxed_val + travel_untaxed_val + compensation_tax_val + year_end_bonus_untaxed_val + severance_pay_val, 2)
+                net_salary_val = round(gross_salary_val + pretax_adj_val - (si_hf_total_val or 0) - tax_deduction_val + posttax_adj_val, 2)
+                actual_taxable_val = round(gross_salary_val + pretax_adj_val + last_month_untaxed_val + travel_untaxed_val, 2)
 
             results.append(SalaryCalcOut(
                 period=period, employee_id=emp.id,
@@ -728,10 +729,10 @@ def update_calculation_result(
     posttax = float(calc.posttax_adjustment or 0)
     severance = float(calc.severance_pay or 0)
     calc.salary_after_si_hf = round(float(calc.gross_salary or 0) + pretax - si_hf, 2)
-    calc.net_salary = round(float(calc.gross_salary) + pretax - si_hf - tax + posttax + severance, 2)
+    calc.net_salary = round(float(calc.gross_salary) + pretax - si_hf - tax + posttax, 2)
 
     calc.actual_taxable = round(
-        float(calc.gross_salary) + pretax + float(calc.last_month_untaxed or 0) + float(calc.travel_untaxed or 0) + float(calc.compensation_tax or 0) + float(calc.year_end_bonus_untaxed or 0) + severance, 2
+        float(calc.gross_salary) + pretax + float(calc.last_month_untaxed or 0) + float(calc.travel_untaxed or 0), 2
     )
 
     if calc.net_salary < 0:
@@ -739,7 +740,7 @@ def update_calculation_result(
     if si_hf > float(calc.gross_salary) + pretax:
         raise HTTPException(status_code=400, detail="社保公积金个人合计不能超过总应发工资+税前调整，请检查社保公积金数据")
     if calc.actual_taxable < float(calc.gross_salary) and not calc.posttax_adjustment_reason:
-        raise HTTPException(status_code=400, detail="本月实际报税金额小于总应发工资时，必须填写税后调整原因")
+        raise HTTPException(status_code=400, detail="本月实际工资报税金额小于总应发工资时，必须填写税后调整原因")
 
     db.commit()
     db.refresh(calc)
@@ -822,9 +823,9 @@ def calculate_net_salary(period: str, db: Session = Depends(get_db), current_use
         posttax = float(calc.posttax_adjustment or 0)
         severance = float(calc.severance_pay or 0)
         calc.salary_after_si_hf = round(float(calc.gross_salary or 0) + pretax - si_hf, 2)
-        calc.net_salary = round(float(calc.gross_salary) + pretax - si_hf - tax + posttax + severance, 2)
+        calc.net_salary = round(float(calc.gross_salary) + pretax - si_hf - tax + posttax, 2)
         calc.actual_taxable = round(
-            float(calc.gross_salary) + pretax + float(calc.last_month_untaxed or 0) + float(calc.travel_untaxed or 0) + float(calc.compensation_tax or 0) + float(calc.year_end_bonus_untaxed or 0) + severance, 2
+            float(calc.gross_salary) + pretax + float(calc.last_month_untaxed or 0) + float(calc.travel_untaxed or 0), 2
         )
         calc.calculation_status = "实发已核算"
         total_gross += float(calc.gross_salary)
@@ -905,7 +906,7 @@ def export_salary_results(
         "养老保险（个人）", "失业保险（个人）", "医疗保险（个人）", "公积金（个人）",
         "社保、公积金（个人）合计", "扣掉社保公积金工资",
         "本月应扣个税额", "税后调整金额", "税后调整原因", "实发工资", "实发离职补偿金",
-        "上月未报税金额", "临时性差旅补贴未报税费用", "本月实际报税金额",
+        "上月未报税金额", "临时性差旅补贴未报税费用", "本月实际工资报税金额",
         "未报税补偿金", "未报税年终奖",
         "员工编号", "成本归属", "核算状态", "审核状态"
     ]
@@ -1003,9 +1004,9 @@ def import_tax_data(
         posttax = float(calc.posttax_adjustment or 0)
         severance = float(calc.severance_pay or 0)
         calc.salary_after_si_hf = round(float(calc.gross_salary or 0) + pretax - si_hf, 2)
-        calc.net_salary = round(float(calc.gross_salary) + pretax - si_hf - tax + posttax + severance, 2)
+        calc.net_salary = round(float(calc.gross_salary) + pretax - si_hf - tax + posttax, 2)
         calc.actual_taxable = round(
-            float(calc.gross_salary) + pretax + float(calc.last_month_untaxed or 0) + float(calc.travel_untaxed or 0) + float(calc.compensation_tax or 0) + float(calc.year_end_bonus_untaxed or 0) + severance, 2
+            float(calc.gross_salary) + pretax + float(calc.last_month_untaxed or 0) + float(calc.travel_untaxed or 0), 2
         )
         updated += 1
     db.commit()
@@ -1400,9 +1401,9 @@ async def upload_tax_excel(
         posttax = float(calc.posttax_adjustment or 0)
         severance = float(calc.severance_pay or 0)
         calc.salary_after_si_hf = round(float(calc.gross_salary or 0) + pretax - si_hf, 2)
-        calc.net_salary = round(float(calc.gross_salary) + pretax - si_hf - tax + posttax + severance, 2)
+        calc.net_salary = round(float(calc.gross_salary) + pretax - si_hf - tax + posttax, 2)
         calc.actual_taxable = round(
-            float(calc.gross_salary) + pretax + float(calc.last_month_untaxed or 0) + float(calc.travel_untaxed or 0) + float(calc.compensation_tax or 0) + float(calc.year_end_bonus_untaxed or 0) + severance, 2
+            float(calc.gross_salary) + pretax + float(calc.last_month_untaxed or 0) + float(calc.travel_untaxed or 0), 2
         )
         updated += 1
     
@@ -1430,7 +1431,7 @@ def export_tax_template(
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
-    """导出报税系统模板格式的表格，检查必填字段并提示缺失"""
+    """导出报税系统模板格式的表格（正常工资+年终奖+补偿金），打包成ZIP"""
     calcs = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()
     calc_map = {c.employee_id: c for c in calcs}
     employees = filter_active_employees(db.query(Employee), db, hide_status_id=hide_status_id).order_by(Employee.employee_no).all()
@@ -1458,134 +1459,198 @@ def export_tax_template(
     adjustments = {a.employee_id: a for a in db.query(EmployeeSalaryAdjustment).filter(
         EmployeeSalaryAdjustment.period == period
     ).all()}
-    
-    standard_salary_days = get_month_salary_days(db, period)
-    
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "正常工资薪金收入"
-    
-    headers = [
-        "工号", "*姓名", "*证件类型", "*证件号码", "本期收入", "本期免税收入",
-        "基本养老保险费", "基本医疗保险费", "失业保险费", "住房公积金",
-        "累计子女教育", "累计继续教育", "累计住房贷款利息", "累计住房租金",
-        "累计赡养老人", "累计3岁以下婴幼儿照护", "累计个人养老金",
-        "企业(职业)年金", "商业健康保险", "税延养老保险", "其他",
-        "准予扣除的捐赠额", "减免税额", "备注"
-    ]
-    ws.append(headers)
-    
-    missing_data_warnings = []
-    
-    for emp in employees:
-        c = calc_map.get(emp.id)
-        remarks = []
-        id_card = emp.id_card or ""
-        
-        if not id_card:
-            remarks.append("证件号码缺失")
-        
-        if c:
-            taxable_income = float(c.actual_taxable or 0)
-            pension = float(c.pension_personal or 0)
-            medical = float(c.medical_personal or 0)
-            unemployment = float(c.unemployment_personal or 0)
-            housing = float(c.housing_fund_personal or 0)
-            if not si_map.get(emp.id):
-                remarks.append("社保公积金数据缺失")
-        else:
-            sal = salary_map.get(emp.id)
-            if not sal:
-                taxable_income = 0
-                pension = 0
-                medical = 0
-                unemployment = 0
-                housing = 0
-                remarks.append("薪资档案缺失")
-            else:
-                perf = perf_map.get(emp.id)
-                att = att_map.get(emp.id)
-                si = si_map.get(emp.id)
-                adj = adjustments.get(emp.id)
-                
-                base_salary = float(sal.base_salary)
-                perf_std = float(sal.performance_standard)
-                meal = float(sal.meal_allowance or 0)
-                transport = float(sal.transport_allowance or 0)
-                comm = float(sal.communication_allowance or 0)
-                computer = float(sal.computer_allowance or 0)
-                housing_allow = float(sal.housing_allowance or 0)
-                allowance_total = meal + transport + comm + computer + housing_allow
-                
-                if att:
-                    att_rate = float(att.attendance_rate)
-                else:
-                    att_rate = 1.00
-                    remarks.append("考勤数据缺失")
-                
-                if adj:
-                    base_prorated = float(adj.base_salary_prorated or 0)
-                    perf_prorated = float(adj.performance_standard_prorated or 0)
-                    commission_prorated = float(adj.commission_prorated or 0)
-                else:
-                    base_prorated = base_salary
-                    perf_prorated = perf_std
-                    commission_prorated = 0
-                
-                perf_coef = float(perf.final_score) if perf and perf.final_score is not None else 1.00
-                actual_perf = round(perf_prorated * perf_coef, 2)
-                effective_perf = round(actual_perf * att_rate, 2)
-                
-                gross = round((base_prorated + allowance_total + commission_prorated) * att_rate + effective_perf, 2)
-                taxable_income = gross
-                
-                pension = float(si.pension_personal or 0) if si else 0
-                medical = float(si.medical_personal or 0) if si else 0
-                unemployment = float(si.unemployment_personal or 0) if si else 0
-                housing = float(si.hf_personal or 0) if si else 0
-                if not si:
+
+    def _create_workbook_bytes(wb):
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf.getvalue()
+
+    def _build_salary_workbook():
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "正常工资薪金收入"
+        headers = [
+            "工号", "*姓名", "*证件类型", "*证件号码", "本期收入", "本期免税收入",
+            "基本养老保险费", "基本医疗保险费", "失业保险费", "住房公积金",
+            "累计子女教育", "累计继续教育", "累计住房贷款利息", "累计住房租金",
+            "累计赡养老人", "累计3岁以下婴幼儿照护", "累计个人养老金",
+            "企业(职业)年金", "商业健康保险", "税延养老保险", "其他",
+            "准予扣除的捐赠额", "减免税额", "备注"
+        ]
+        ws.append(headers)
+        warnings = []
+        for emp in employees:
+            c = calc_map.get(emp.id)
+            remarks = []
+            id_card = emp.id_card or ""
+            if not id_card:
+                remarks.append("证件号码缺失")
+            if c:
+                taxable_income = float(c.actual_taxable or 0)
+                pension = float(c.pension_personal or 0)
+                medical = float(c.medical_personal or 0)
+                unemployment = float(c.unemployment_personal or 0)
+                housing = float(c.housing_fund_personal or 0)
+                if not si_map.get(emp.id):
                     remarks.append("社保公积金数据缺失")
-                if not perf:
-                    remarks.append("绩效系数缺失(按1.0计算)")
-        
-        remark_str = f"{period}薪资"
-        if remarks:
-            warning_msg = f"{emp.name}({emp.employee_no}): {', '.join(remarks)}"
-            missing_data_warnings.append(warning_msg)
-            remark_str += " | 警告: " + ", ".join(remarks)
-        
-        ws.append([
-            emp.employee_no,
-            emp.name,
-            "居民身份证",
-            id_card,
-            round(taxable_income, 2),
-            0,
-            round(pension, 2),
-            round(medical, 2),
-            round(unemployment, 2),
-            round(housing, 2),
-            0, 0, 0, 0, 0, 0, 0,
-            0,
-            0, 0, 0,
-            0, 0,
-            remark_str
-        ])
-    
-    if missing_data_warnings:
-        ws2 = wb.create_sheet("数据缺失提示")
-        ws2.append(["以下员工存在必填字段缺失或数据不完整，导入报税系统前请补充："])
-        ws2.append([])
-        for warning in missing_data_warnings:
-            ws2.append([warning])
-    
-    output = BytesIO()
-    wb.save(output)
-    output.seek(0)
-    filename = f"报税导入模板_{period}.xlsx"
+            else:
+                sal = salary_map.get(emp.id)
+                if not sal:
+                    taxable_income = 0
+                    pension = medical = unemployment = housing = 0
+                    remarks.append("薪资档案缺失")
+                else:
+                    perf = perf_map.get(emp.id)
+                    att = att_map.get(emp.id)
+                    si = si_map.get(emp.id)
+                    adj = adjustments.get(emp.id)
+                    base_salary = float(sal.base_salary)
+                    perf_std = float(sal.performance_standard)
+                    meal = float(sal.meal_allowance or 0)
+                    transport = float(sal.transport_allowance or 0)
+                    comm = float(sal.communication_allowance or 0)
+                    computer = float(sal.computer_allowance or 0)
+                    housing_allow = float(sal.housing_allowance or 0)
+                    allowance_total = meal + transport + comm + computer + housing_allow
+                    att_rate = float(att.attendance_rate) if att else 1.00
+                    if not att:
+                        remarks.append("考勤数据缺失")
+                    if adj:
+                        base_prorated = float(adj.base_salary_prorated or 0)
+                        perf_prorated = float(adj.performance_standard_prorated or 0)
+                        commission_prorated = float(adj.commission_prorated or 0)
+                    else:
+                        base_prorated = base_salary
+                        perf_prorated = perf_std
+                        commission_prorated = 0
+                    perf_coef = float(perf.final_score) if perf and perf.final_score is not None else 1.00
+                    actual_perf = round(perf_prorated * perf_coef, 2)
+                    effective_perf = round(actual_perf * att_rate, 2)
+                    gross = round((base_prorated + allowance_total + commission_prorated) * att_rate + effective_perf, 2)
+                    taxable_income = gross
+                    pension = float(si.pension_personal or 0) if si else 0
+                    medical = float(si.medical_personal or 0) if si else 0
+                    unemployment = float(si.unemployment_personal or 0) if si else 0
+                    housing = float(si.hf_personal or 0) if si else 0
+                    if not si:
+                        remarks.append("社保公积金数据缺失")
+                    if not perf:
+                        remarks.append("绩效系数缺失(按1.0计算)")
+            remark_str = f"{period}正常工资薪金"
+            if remarks:
+                warnings.append(f"{emp.name}({emp.employee_no}): {', '.join(remarks)}")
+                remark_str += " | 警告: " + ", ".join(remarks)
+            ws.append([
+                emp.employee_no, emp.name, "居民身份证", id_card,
+                round(taxable_income, 2), 0,
+                round(pension, 2), round(medical, 2), round(unemployment, 2), round(housing, 2),
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                remark_str
+            ])
+        if warnings:
+            ws2 = wb.create_sheet("数据缺失提示")
+            ws2.append(["以下员工存在必填字段缺失或数据不完整，导入报税系统前请补充："])
+            ws2.append([])
+            for w in warnings:
+                ws2.append([w])
+        return _create_workbook_bytes(wb)
+
+    def _build_bonus_workbook():
+        bonus_emps = []
+        for emp in employees:
+            c = calc_map.get(emp.id)
+            amount = float(c.year_end_bonus_untaxed or 0) if c else 0
+            if amount > 0:
+                bonus_emps.append((emp, amount))
+        if not bonus_emps:
+            return None
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "全年一次性奖金收入"
+        headers = [
+            "工号", "*姓名", "*证件类型", "*证件号码", "*全年一次性奖金额",
+            "免税收入", "其他", "准予扣除的捐赠额", "减免税额", "备注"
+        ]
+        ws.append(headers)
+        warnings = []
+        for emp, amount in bonus_emps:
+            id_card = emp.id_card or ""
+            remarks = []
+            if not id_card:
+                remarks.append("证件号码缺失")
+            remark_str = f"{period}全年一次性奖金"
+            if remarks:
+                warnings.append(f"{emp.name}({emp.employee_no}): {', '.join(remarks)}")
+                remark_str += " | 警告: " + ", ".join(remarks)
+            ws.append([
+                emp.employee_no, emp.name, "居民身份证", id_card,
+                round(amount, 2), 0, 0, 0, 0, remark_str
+            ])
+        if warnings:
+            ws2 = wb.create_sheet("数据缺失提示")
+            ws2.append(["以下员工存在必填字段缺失，请补充："])
+            ws2.append([])
+            for w in warnings:
+                ws2.append([w])
+        return _create_workbook_bytes(wb)
+
+    def _build_severance_workbook():
+        comp_emps = []
+        for emp in employees:
+            c = calc_map.get(emp.id)
+            amount = float(c.compensation_tax or 0) if c else 0
+            if amount > 0:
+                comp_emps.append((emp, amount))
+        if not comp_emps:
+            return None
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "解除劳动合同一次性补偿金"
+        headers = [
+            "工号", "*姓名", "*证件类型", "*证件号码", "*一次性补偿收入",
+            "免税收入", "其他", "准予扣除的捐赠额", "减免税额", "备注"
+        ]
+        ws.append(headers)
+        warnings = []
+        for emp, amount in comp_emps:
+            id_card = emp.id_card or ""
+            remarks = []
+            if not id_card:
+                remarks.append("证件号码缺失")
+            remark_str = f"{period}一次性补偿金"
+            if remarks:
+                warnings.append(f"{emp.name}({emp.employee_no}): {', '.join(remarks)}")
+                remark_str += " | 警告: " + ", ".join(remarks)
+            ws.append([
+                emp.employee_no, emp.name, "居民身份证", id_card,
+                round(amount, 2), 0, 0, 0, 0, remark_str
+            ])
+        if warnings:
+            ws2 = wb.create_sheet("数据缺失提示")
+            ws2.append(["以下员工存在必填字段缺失，请补充："])
+            ws2.append([])
+            for w in warnings:
+                ws2.append([w])
+        return _create_workbook_bytes(wb)
+
+    salary_bytes = _build_salary_workbook()
+    bonus_bytes = _build_bonus_workbook()
+    severance_bytes = _build_severance_workbook()
+
+    zip_buf = BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"正常工资薪金_{period}.xlsx", salary_bytes)
+        if bonus_bytes:
+            zf.writestr(f"全年一次性奖金_{period}.xlsx", bonus_bytes)
+        if severance_bytes:
+            zf.writestr(f"解除劳动合同一次性补偿金_{period}.xlsx", severance_bytes)
+    zip_buf.seek(0)
+
+    filename = f"报税导入模板_{period}.zip"
     encoded_filename = quote(filename)
     return StreamingResponse(
-        output,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        zip_buf,
+        media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"}
     )

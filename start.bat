@@ -77,11 +77,32 @@ if %errorlevel% equ 0 (
 
 echo.
 echo ========================================
+echo   正在获取本机局域网IP...
+echo ========================================
+for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /i "IPv4" ^| findstr /v "127.0.0.1"') do (
+    for /f "tokens=1" %%b in ("%%a") do set "LAN_IP=%%b"
+)
+if defined LAN_IP (
+    echo   局域网IP: %LAN_IP%
+) else (
+    set "LAN_IP=localhost"
+    echo   未检测到局域网IP，使用localhost
+)
+echo.
+echo ========================================
 echo   启动完成！
 echo ========================================
-echo   后端地址: http://localhost:%BACKEND_PORT%
-echo   前端地址: http://localhost:%FRONTEND_PORT%/e9salary/
-echo   API文档:  http://localhost:%BACKEND_PORT%/e9salary/docs
+echo   本机访问:
+echo     前端地址: http://localhost:%FRONTEND_PORT%/e9salary/
+echo     后端地址: http://localhost:%BACKEND_PORT%
+echo     API文档:  http://localhost:%BACKEND_PORT%/e9salary/docs
+echo.
+if not "%LAN_IP%"=="localhost" (
+echo   局域网访问（其他人电脑用这个地址）:
+echo     前端地址: http://%LAN_IP%:%FRONTEND_PORT%/e9salary/
+echo     后端地址: http://%LAN_IP%:%BACKEND_PORT%
+echo.
+)
 echo   默认账号: admin / admin123
 echo.
 echo   数据库: 本地 PostgreSQL 端口 5432

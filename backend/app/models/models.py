@@ -521,6 +521,7 @@ class SalaryCalculation(Base):
     calculation_status = Column(String(20), default="草稿")
     data_completeness = Column(String(20), default="完整")
     missing_fields = Column(JSON, nullable=True)
+    remark = Column(String(500), nullable=True, comment="备注")
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

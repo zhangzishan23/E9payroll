@@ -288,6 +288,7 @@ def _run_salary_export_migrations():
         ("severance_pay", "DECIMAL(10, 2) DEFAULT 0"),
         ("year_end_bonus_untaxed", "DECIMAL(10, 2) DEFAULT 0"),
         ("salary_after_si_hf", "DECIMAL(10, 2) DEFAULT 0"),
+        ("remark", "VARCHAR(500)"),
     ]
     
     with engine.begin() as conn:

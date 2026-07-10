@@ -1,0 +1,40 @@
+export const ATTENDANCE_COLUMNS = [
+  { key: 'employee_name', label: '员工姓名', width: 80, fixed: 'left', type: 'text' },
+  { key: 'contract_company', label: '合同主体', width: 120, type: 'text' },
+  { key: 'department', label: '部门', width: 100, type: 'text' },
+  { key: 'salary_start_date', label: '计薪开始日期', width: 110, type: 'text' },
+  { key: 'salary_end_date', label: '计薪截至日期', width: 110, type: 'text' },
+  { key: 'total_work_days', label: '当月总计薪天数', width: 115, type: 'number', editable: true },
+  { key: 'adjusted_salary_days', label: '应计薪天数', width: 95, type: 'number' },
+  { key: 'actual_salary_days', label: '计薪天数', width: 85, type: 'number' },
+  { key: 'attendance_rate', label: '出勤率', width: 80, type: 'percent' },
+  { key: 'half_day_missed_punch', label: '半天缺卡（次数）', width: 115, type: 'int', editable: true },
+  { key: 'absenteeism_days', label: '全天缺卡（天数）', width: 115, type: 'number', editable: true },
+  { key: 'late_count', label: '迟到次数', width: 80, type: 'int', editable: true },
+  { key: 'late_duration', label: '迟到时长（分钟）', width: 115, type: 'int', editable: true },
+  { key: 'severe_late_count', label: '严重迟到次数', width: 100, type: 'int', editable: true },
+  { key: 'severe_late_duration', label: '严重迟到时长（分钟）', width: 130, type: 'int', editable: true },
+  { key: 'early_count', label: '早退次数', width: 80, type: 'int', editable: true },
+  { key: 'early_duration', label: '早退时长（分钟）', width: 115, type: 'int', editable: true },
+  { key: 'total_overtime', label: '加班（小时）', width: 90, type: 'number', editable: true },
+  { key: 'late_to_personal_leave_days', label: '迟到转事假', width: 95, type: 'number' },
+  { key: 'personal_leave_days', label: '事假', width: 70, type: 'number', editable: true },
+  { key: 'full_pay_sick_days', label: '全薪病假', width: 80, type: 'number', editable: true },
+  { key: 'reduced_pay_sick_days', label: '减薪病假', width: 80, type: 'number', editable: true },
+  { key: 'statutory_sick_days', label: '法定病假', width: 80, type: 'number', editable: true },
+  { key: 'compensatory_leave_days', label: '调休', width: 70, type: 'number', editable: true },
+  { key: 'annual_leave_days', label: '年假', width: 70, type: 'number', editable: true },
+  { key: 'prenatal_checkup_days', label: '产检假', width: 70, type: 'number', editable: true },
+  { key: 'maternity_leave_days', label: '产假', width: 70, type: 'number', editable: true },
+  { key: 'paternity_leave_days', label: '陪产假', width: 70, type: 'number', editable: true },
+  { key: 'marriage_leave_days', label: '婚假', width: 70, type: 'number', editable: true },
+  { key: 'funeral_leave_days', label: '丧假', width: 70, type: 'number', editable: true },
+  { key: 'engineering_compensatory_days', label: '调休-工程交付（天）', width: 140, type: 'number', editable: true },
+  { key: 'leave_total_days', label: '合计', width: 70, type: 'number' },
+  { key: 'remark', label: '备注', width: 130, type: 'text', editable: true },
+]
+
+export function getAttendanceFieldLabel(key) {
+  const col = ATTENDANCE_COLUMNS.find(c => c.key === key)
+  return col ? col.label : key
+}

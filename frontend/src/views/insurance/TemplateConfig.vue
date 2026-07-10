@@ -269,9 +269,23 @@
               <p class="text-gray-600 mb-1">
                 <span class="font-medium">① 指定险种模板：</span>直接选择具体险种字段（如"医疗保险个人基数"）。适用于文件内容固定为某一险种的场景。
               </p>
-              <p class="text-gray-600">
+              <p class="text-gray-600 mb-2">
                 <span class="font-medium">② 通用险种模板（推荐用于多险种同格式场景）：</span>选择<span class="text-amber-600 font-medium">[通用]</span>开头的字段，系统将<span class="font-medium">根据文件名自动识别险种</span>。例如邯郸社保：养老/失业/医疗/工伤文件格式相同，但文件名含"养老""医疗"等关键词，只需配置1个通用模板即可适配所有险种文件。
               </p>
+              <div class="border-t border-blue-200 pt-2 mt-2">
+                <p class="font-medium text-blue-700 mb-1">📌 个人/单位字段命名规则：</p>
+                <p class="text-gray-600 mb-1">
+                  系统字段格式为「<span class="font-mono bg-blue-100 px-1 rounded">险种_缴纳方_类型</span>」：
+                </p>
+                <ul class="text-gray-600 list-disc list-inside ml-2 space-y-0.5">
+                  <li><span class="font-medium">缴纳方：</span><span class="text-green-600">personal</span>(个人) / <span class="text-orange-600">company</span>(单位)；工伤保险只有单位部分</li>
+                  <li><span class="font-medium">类型：</span>base(基数)、rate(比例)、无后缀(金额)</li>
+                  <li><span class="font-medium">示例：</span><span class="font-mono bg-gray-100 px-1 rounded">pension_personal_base</span> = 养老保险个人基数，<span class="font-mono bg-gray-100 px-1 rounded">medical_company</span> = 医疗保险单位金额</li>
+                </ul>
+                <p class="text-gray-500 mt-1 text-[11px]">
+                  通用模板时系统从文件名识别方向：文件名含「个人」→个人部分，含「单位/企业」→单位部分
+                </p>
+              </div>
             </div>
           </div>
         </div>

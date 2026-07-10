@@ -2,14 +2,14 @@
   <div class="min-h-screen flex">
     <el-menu
       :default-active="activeMenu"
-      :default-openeds="['system']"
+      :default-openeds="defaultOpeneds"
       class="w-56 h-screen overflow-y-auto apple-header flex-shrink-0"
       background-color="transparent"
       router
       @select="handleSelect"
     >
       <div class="px-5 py-5 text-center">
-        <h2 class="text-lg font-bold text-blue-700">E9 Payroll</h2>
+        <h2 class="text-lg font-bold text-blue-700">工资计算管家</h2>
         <p class="text-xs text-gray-400 mt-1">{{ authStore.user?.display_name }}</p>
       </div>
 
@@ -23,11 +23,7 @@
       </el-menu-item>
       <el-menu-item index="/performance">
         <el-icon><TrendCharts /></el-icon>
-        <span>绩效管理</span>
-      </el-menu-item>
-      <el-menu-item index="/salary">
-        <el-icon><Money /></el-icon>
-        <span>薪资核算</span>
+        <span>绩效评分</span>
       </el-menu-item>
       <el-menu-item index="/insurance">
         <el-icon><CreditCard /></el-icon>
@@ -36,6 +32,10 @@
       <el-menu-item index="/insurance-template">
         <el-icon><Setting /></el-icon>
         <span>导入模板</span>
+      </el-menu-item>
+      <el-menu-item index="/salary">
+        <el-icon><Money /></el-icon>
+        <span>薪资核算</span>
       </el-menu-item>
       <el-menu-item index="/approval">
         <el-icon><Checked /></el-icon>
@@ -96,6 +96,8 @@ const activeMenu = computed(() => {
   if (path.startsWith('/system')) return '/system/users'
   return path
 })
+
+const defaultOpeneds = ['system']
 
 function handleSelect(index) {
   if (index === '/system') return

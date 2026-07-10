@@ -99,403 +99,61 @@
       </div>
       <el-table :data="results" border stripe max-height="500" v-loading="loading" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
         <el-table-column type="selection" width="55" />
-        <el-table-column prop="employee_no" width="90" fixed>
+        <el-table-column
+          v-for="col in SALARY_COLUMNS"
+          :key="col.key"
+          :prop="col.key"
+          :label="col.label"
+          :width="col.width"
+          :fixed="col.fixed || false"
+          :class-name="col.summary ? 'col-summary' : ''"
+        >
           <template #header>
-            <el-tooltip content="员工唯一编号，来源于员工档案" placement="top" :show-after="400">
-              <span>员工编号</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column prop="contract_company" width="120">
-          <template #header>
-            <el-tooltip content="员工合同所属公司，来源于员工档案" placement="top" :show-after="400">
-              <span>合同公司</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column prop="employee_name" width="70" fixed>
-          <template #header>
-            <el-tooltip content="员工姓名，来源于员工档案" placement="top" :show-after="400">
-              <span>姓名</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column prop="department" width="90">
-          <template #header>
-            <el-tooltip content="员工所属部门，来源于员工档案" placement="top" :show-after="400">
-              <span>部门</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column prop="position" width="90">
-          <template #header>
-            <el-tooltip content="员工职务，来源于员工档案" placement="top" :show-after="400">
-              <span>职务</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column prop="cost_owner" width="90">
-          <template #header>
-            <el-tooltip content="费用负责人，来源于员工档案" placement="top" :show-after="400">
-              <span>费用负责人</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" width="80">
-          <template #header>
-            <el-tooltip content="员工用工状态" placement="top" :show-after="400">
-              <span>状态</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column prop="entry_date" width="100">
-          <template #header>
-            <el-tooltip content="员工入职日期，来源于员工档案" placement="top" :show-after="400">
-              <span>入职时间</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ row.entry_date || '' }}</template>
-        </el-table-column>
-        <el-table-column prop="total_work_days" width="105">
-          <template #header>
-            <el-tooltip content="即应计薪天数，指当月标准总计薪天数，根据工作日历自动计算，用于薪资折算" placement="top" :show-after="400">
-              <span>当月总计薪天数</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatValue(row.total_work_days) }}</template>
-        </el-table-column>
-        <el-table-column prop="actual_work_days" width="95">
-          <template #header>
-            <el-tooltip content="当月实际计薪天数，来源于考勤管理" placement="top" :show-after="400">
-              <span>实际计薪天数</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatValue(row.actual_work_days) }}</template>
-        </el-table-column>
-        <el-table-column prop="attendance_rate" width="75">
-          <template #header>
-            <el-tooltip content="= 实际计薪天数 ÷ 当月总计薪天数 × 100%" placement="top" :show-after="400">
-              <span>出勤率</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ row.attendance_rate != null && row.attendance_rate !== 0 ? (row.attendance_rate * 100).toFixed(1) + '%' : '' }}</template>
-        </el-table-column>
-        <el-table-column prop="base_salary" width="95">
-          <template #header>
-            <el-tooltip content="员工月基本工资，来源于员工薪资档案" placement="top" :show-after="400">
-              <span>基本工资</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.base_salary) }}</template>
-        </el-table-column>
-        <el-table-column prop="commission_bonus" width="95">
-          <template #header>
-            <el-tooltip content="当月提成/项目奖金/补发，手动录入或Excel导入" placement="top" :show-after="400">
-              <span>提成/项目奖金/补发</span>
+            <el-tooltip :content="col.tooltip || ''" placement="top" :show-after="400">
+              <span>{{ col.label }}</span>
             </el-tooltip>
           </template>
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].commission_bonus" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'commission_bonus')" />
+            <template v-if="editMode && col.editable && editCache[row.id]">
+              <el-input
+                v-if="col.type === 'text'"
+                v-model="editCache[row.id][col.key]"
+                size="small"
+                class="cell-text"
+                @change="markChanged(row.id, col.key)"
+              />
+              <el-input-number
+                v-else
+                v-model="editCache[row.id][col.key]"
+                :min="0"
+                :precision="2"
+                size="small"
+                controls-position="right"
+                class="cell-number"
+                @change="markChanged(row.id, col.key)"
+              />
             </template>
-            <template v-else>{{ formatMoney(row.commission_bonus) }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column prop="meal_allowance" width="70">
-          <template #header>
-            <el-tooltip content="每月固定餐费补贴，来源于员工薪资档案" placement="top" :show-after="400">
-              <span>餐补</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.meal_allowance) }}</template>
-        </el-table-column>
-        <el-table-column prop="transport_allowance" width="75">
-          <template #header>
-            <el-tooltip content="每月固定交通补贴，来源于员工薪资档案" placement="top" :show-after="400">
-              <span>交通补</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.transport_allowance) }}</template>
-        </el-table-column>
-        <el-table-column prop="communication_allowance" width="75">
-          <template #header>
-            <el-tooltip content="每月固定通讯补贴，来源于员工薪资档案" placement="top" :show-after="400">
-              <span>通讯补</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.communication_allowance) }}</template>
-        </el-table-column>
-        <el-table-column prop="computer_allowance" width="95">
-          <template #header>
-            <el-tooltip content="电脑补贴（非固定收入），仅当月有效，来源于员工薪资档案" placement="top" :show-after="400">
-              <span>电脑补贴（非固定收入）</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.computer_allowance) }}</template>
-        </el-table-column>
-        <el-table-column prop="housing_allowance" width="95">
-          <template #header>
-            <el-tooltip content="住房补贴（非固定收入），仅当月有效，来源于员工薪资档案" placement="top" :show-after="400">
-              <span>住房补（非固定收入）</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.housing_allowance) }}</template>
-        </el-table-column>
-        <el-table-column prop="allowance_total" width="85" class-name="col-summary">
-          <template #header>
-            <el-tooltip content="= 餐补+交通+通讯+电脑+住房补贴，自动计算" placement="top" :show-after="400">
-              <span>补贴合计</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.allowance_total) }}</template>
-        </el-table-column>
-        <el-table-column prop="performance_standard" width="95">
-          <template #header>
-            <el-tooltip content="绩效奖金计算基数，来源于员工薪资档案" placement="top" :show-after="400">
-              <span>绩效奖金标准</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.performance_standard) }}</template>
-        </el-table-column>
-        <el-table-column prop="performance_coefficient" width="95">
-          <template #header>
-            <el-tooltip content="当月绩效评分系数，来源于绩效管理模块" placement="top" :show-after="400">
-              <span>实发绩效奖金系数</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatValue(row.performance_coefficient) }}</template>
-        </el-table-column>
-        <el-table-column prop="actual_performance" width="95">
-          <template #header>
-            <el-tooltip content="= 绩效奖金标准 × 实发绩效奖金系数" placement="top" :show-after="400">
-              <span>实发绩效奖金标准</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.actual_performance) }}</template>
-        </el-table-column>
-        <el-table-column prop="effective_performance" width="95">
-          <template #header>
-            <el-tooltip content="= 实发绩效奖金标准 × 出勤率" placement="top" :show-after="400">
-              <span>实发绩效奖金</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.effective_performance) }}</template>
-        </el-table-column>
-        <el-table-column prop="monthly_standard" width="90" class-name="col-summary">
-          <template #header>
-            <el-tooltip content="= 基本工资 + 绩效奖金标准 + 补贴合计，自动计算" placement="top" :show-after="400">
-              <span>月薪标准</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.monthly_standard) }}</template>
-        </el-table-column>
-        <el-table-column prop="gross_salary" width="100" class-name="col-summary">
-          <template #header>
-            <el-tooltip content="= (基本工资 + 补贴合计 + 提成/项目奖金/补发) × 出勤率 + 实发绩效奖金" placement="top" :show-after="400">
-              <span>总应发工资</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <span v-if="row.gross_salary != null && row.gross_salary !== 0" class="font-semibold text-blue-600">{{ formatMoney(row.gross_salary) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="pretax_adjustment" width="90">
-          <template #header>
-            <el-tooltip content="税前调整金额（如补发工资等），影响个税计算" placement="top" :show-after="400">
-              <span>税前调整金额</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].pretax_adjustment" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'pretax_adjustment')" />
+            <template v-else>
+              <template v-if="col.type === 'percent'">
+                {{ row[col.key] != null && row[col.key] !== 0 ? (row[col.key] * 100).toFixed(1) + '%' : '' }}
+              </template>
+              <template v-else-if="col.type === 'money'">
+                <span
+                  v-if="row[col.key] != null && row[col.key] !== 0"
+                  :class="{
+                    'font-semibold text-blue-600': col.key === 'gross_salary',
+                    'font-semibold text-green-600': col.key === 'net_salary'
+                  }"
+                >{{ formatMoney(row[col.key]) }}</span>
+              </template>
+              <template v-else-if="col.type === 'number'">
+                {{ formatValue(row[col.key]) }}
+              </template>
+              <template v-else>
+                {{ row[col.key] || '' }}
+              </template>
             </template>
-            <template v-else>{{ formatMoney(row.pretax_adjustment) }}</template>
           </template>
-        </el-table-column>
-        <el-table-column prop="pretax_adjustment_reason" width="120">
-          <template #header>
-            <el-tooltip content="税前调整的原因说明" placement="top" :show-after="400">
-              <span>税前调整原因</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input v-model="editCache[row.id].pretax_adjustment_reason" size="small" class="cell-text" @change="markChanged(row.id, 'pretax_adjustment_reason')" />
-            </template>
-            <template v-else>{{ row.pretax_adjustment_reason || '' }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column prop="pension_personal" width="95">
-          <template #header>
-            <el-tooltip content="养老保险个人缴纳金额，来源于社保公积金表" placement="top" :show-after="400">
-              <span>养老保险（个人）</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.pension_personal) }}</template>
-        </el-table-column>
-        <el-table-column prop="unemployment_personal" width="95">
-          <template #header>
-            <el-tooltip content="失业保险个人缴纳金额，来源于社保公积金表" placement="top" :show-after="400">
-              <span>失业保险（个人）</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.unemployment_personal) }}</template>
-        </el-table-column>
-        <el-table-column prop="medical_personal" width="95">
-          <template #header>
-            <el-tooltip content="医疗保险个人缴纳金额，来源于社保公积金表" placement="top" :show-after="400">
-              <span>医疗保险（个人）</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.medical_personal) }}</template>
-        </el-table-column>
-        <el-table-column prop="housing_fund_personal" width="90">
-          <template #header>
-            <el-tooltip content="当月公积金个人缴纳金额，来源于社保公积金表" placement="top" :show-after="400">
-              <span>公积金（个人）</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.housing_fund_personal) }}</template>
-        </el-table-column>
-        <el-table-column prop="si_hf_total" width="100" class-name="col-summary">
-          <template #header>
-            <el-tooltip content="= 养老保险 + 失业保险 + 医疗保险 + 公积金（均为个人部分）" placement="top" :show-after="400">
-              <span>社保、公积金（个人）合计</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.si_hf_total) }}</template>
-        </el-table-column>
-        <el-table-column label="扣掉社保公积金工资" width="110" class-name="col-summary">
-          <template #header>
-            <el-tooltip content="= 总应发工资 + 税前调整 - 社保、公积金（个人）合计" placement="top" :show-after="400">
-              <span>扣掉社保公积金工资</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <span v-if="row.salary_after_si_hf != null && row.salary_after_si_hf !== 0">{{ formatMoney(row.salary_after_si_hf) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="tax_deduction" width="100">
-          <template #header>
-            <el-tooltip content="税务局申报后计算的应缴个税额，从本月工资代扣" placement="top" :show-after="400">
-              <span>本月应扣个税额</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].tax_deduction" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'tax_deduction')" />
-            </template>
-            <template v-else>{{ formatMoney(row.tax_deduction) }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column prop="posttax_adjustment" width="90">
-          <template #header>
-            <el-tooltip content="税后特殊调整（调休扣款等），不影响个税，只影响实发工资" placement="top" :show-after="400">
-              <span>税后调整金额</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].posttax_adjustment" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'posttax_adjustment')" />
-            </template>
-            <template v-else>{{ formatMoney(row.posttax_adjustment) }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column prop="posttax_adjustment_reason" width="120">
-          <template #header>
-            <el-tooltip content="税后调整的原因说明（如：临时性差旅补贴未报税费用），不填则报税金额应等于总应发工资" placement="top" :show-after="400">
-              <span>税后调整原因</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input v-model="editCache[row.id].posttax_adjustment_reason" size="small" class="cell-text" @change="markChanged(row.id, 'posttax_adjustment_reason')" />
-            </template>
-            <template v-else>{{ row.posttax_adjustment_reason || '' }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column prop="severance_pay" width="100">
-          <template #header>
-            <el-tooltip content="实发离职补偿金（已扣税或免税部分），不影响当月工资个税" placement="top" :show-after="400">
-              <span>实发离职补偿金</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].severance_pay" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'severance_pay')" />
-            </template>
-            <template v-else>{{ formatMoney(row.severance_pay) }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column prop="net_salary" width="100" class-name="col-summary">
-          <template #header>
-            <el-tooltip content="= 总应发工资 - 社保、公积金合计 - 本月应扣个税额 + 税后调整金额 + 实发离职补偿金" placement="top" :show-after="400">
-              <span>实发工资</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <span v-if="row.net_salary != null && row.net_salary !== 0" class="font-semibold text-green-600">{{ formatMoney(row.net_salary) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="last_month_untaxed" width="100">
-          <template #header>
-            <el-tooltip content="上月未报税金额，累计到本月报税" placement="top" :show-after="400">
-              <span>上月未报税金额</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].last_month_untaxed" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'last_month_untaxed')" />
-            </template>
-            <template v-else>{{ formatMoney(row.last_month_untaxed) }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column prop="travel_untaxed" width="100">
-          <template #header>
-            <el-tooltip content="临时性差旅补贴未报税费用，来源于差旅报销表" placement="top" :show-after="400">
-              <span>临时性差旅补贴未报税费用</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].travel_untaxed" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'travel_untaxed')" />
-            </template>
-            <template v-else>{{ formatMoney(row.travel_untaxed) }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column prop="compensation_tax" width="100">
-          <template #header>
-            <el-tooltip content="补偿金报税金额" placement="top" :show-after="400">
-              <span>未报税补偿金</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].compensation_tax" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'compensation_tax')" />
-            </template>
-            <template v-else>{{ formatMoney(row.compensation_tax) }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column prop="year_end_bonus_untaxed" width="100">
-          <template #header>
-            <el-tooltip content="未报税年终奖，计入本月报税收入" placement="top" :show-after="400">
-              <span>未报税年终奖</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].year_end_bonus_untaxed" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id, 'year_end_bonus_untaxed')" />
-            </template>
-            <template v-else>{{ formatMoney(row.year_end_bonus_untaxed) }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column prop="actual_taxable" width="110" class-name="col-summary">
-          <template #header>
-            <el-tooltip content="= 总应发工资 + 税前调整 + 上月未报税 + 差旅补贴未报税 + 补偿金报税 + 未报税年终奖 + 实发离职补偿金" placement="top" :show-after="400">
-              <span>本月实际报税金额</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">{{ formatMoney(row.actual_taxable) }}</template>
         </el-table-column>
       </el-table>
     </div>
@@ -572,6 +230,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download, Delete, UploadFilled } from '@element-plus/icons-vue'
 import api from '../../api'
+import { SALARY_COLUMNS, SALARY_EDITABLE_FIELDS, getSalaryFieldLabel } from '../../config/columns'
 
 function formatValue(val, decimals = null) {
   if (val == null || val === 0 || val === 0.0) return ''
@@ -632,22 +291,10 @@ const changedSet = reactive({})
 const editConfirmVisible = ref(false)
 const changedRows = ref([])
 
-const editableFields = [
-  'commission_bonus', 'pretax_adjustment', 'pretax_adjustment_reason',
-  'posttax_adjustment', 'posttax_adjustment_reason',
-  'severance_pay', 'year_end_bonus_untaxed',
-  'last_month_untaxed', 'travel_untaxed', 'compensation_tax',
-  'tax_deduction'
-]
+const editableFields = SALARY_EDITABLE_FIELDS
 
-const fieldLabels = {
-  commission_bonus: '提成/项目奖金/补发',
-  pretax_adjustment: '税前调整金额', pretax_adjustment_reason: '税前调整原因',
-  posttax_adjustment: '税后调整金额', posttax_adjustment_reason: '税后调整原因',
-  severance_pay: '实发离职补偿金', year_end_bonus_untaxed: '未报税年终奖',
-  tax_deduction: '本月应扣个税额',
-  last_month_untaxed: '上月未报税',
-  travel_untaxed: '临时性差旅补贴未报税费用', compensation_tax: '补偿金报税'
+function getFieldLabel(key) {
+  return getSalaryFieldLabel(key)
 }
 
 const canCalculate = computed(() => true)
@@ -745,7 +392,7 @@ async function confirmEdits() {
       const newVal = editCache[id]?.[field] ?? 0
       changes.push({
         field,
-        label: fieldLabels[field] || field,
+        label: getFieldLabel(field) || field,
         old: typeof oldVal === 'number' ? oldVal.toFixed(2) : String(oldVal),
         new: typeof newVal === 'number' ? newVal.toFixed(2) : String(newVal)
       })
