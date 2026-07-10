@@ -13,6 +13,10 @@
         <p class="text-xs text-gray-400 mt-1">{{ authStore.user?.display_name }}</p>
       </div>
 
+      <el-menu-item index="/dashboard">
+        <el-icon><HomeFilled /></el-icon>
+        <span>工作台</span>
+      </el-menu-item>
       <el-menu-item index="/employees">
         <el-icon><User /></el-icon>
         <span>档案管理</span>
@@ -84,7 +88,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { User, Calendar, Money, Checked, Document, Setting, TrendCharts, SwitchButton, CreditCard } from '@element-plus/icons-vue'
+import { User, Calendar, Money, Checked, Document, Setting, TrendCharts, SwitchButton, CreditCard, HomeFilled } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
 const route = useRoute()
