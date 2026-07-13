@@ -388,7 +388,6 @@ def get_employees(
         query = query.filter(
             Employee.name.contains(keyword) | Employee.employee_no.contains(keyword)
         )
-    # 默认隐藏已禁用部门的员工，可选隐藏指定状态
     query = filter_active_employees(query, db, hide_status_id=hide_status_id)
     employees = query.order_by(Employee.employee_no).all()
     name_map, salary_map = _batch_load_enrich_data(db, [e.id for e in employees])
@@ -403,7 +402,6 @@ def export_employees(
     current_user: UserInfo = Depends(get_current_user)
 ):
     query = db.query(Employee)
-    # 排除已禁用部门的员工
     query = filter_active_employees(query, db)
     if filter_field and filter_value:
         if filter_field == 'name':
@@ -464,128 +462,221 @@ def export_employees(
     )
 
 
-@router.get("/{employee_id}", response_model=EmployeeOut)
-def get_employee(employee_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    emp = db.query(Employee).filter(Employee.id == employee_id).first()
-    if not emp:
-        raise HTTPException(status_code=404, detail="员工不存在")
-    return _enrich_employee(emp, db)
+@router.get("/import-template")
+def download_import_template(
+    current_user: UserInfo = Depends(get_current_user)
+):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "员工档案导入模板"
+
+    headers = [
+        "姓名*", "身份证号*", "费用负责人",
+        "基本工资", "绩效标准", "餐补", "交通补贴", "通讯补贴", "电脑补贴", "住房补贴", "薪资生效日期"
+    ]
+
+    ws.append(headers)
+
+    examples = [
+        "张三", "111111111111111111", "研发中心",
+        "8000", "2000", "300", "200", "100", "100", "500", "2024-01-15"
+    ]
+    ws.append(examples)
+
+    from openpyxl.styles import Font, PatternFill, Alignment
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    example_fill = PatternFill(start_color="F3F4F6", end_color="F3F4F6", fill_type="solid")
+    note_font = Font(color="6B7280", italic=True)
+
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.column_dimensions[cell.column_letter].width = 16
+
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=2, column=col_idx)
+        cell.fill = example_fill
+
+    note_start_row = 4
+    notes = [
+        "填写说明：",
+        "1. 本模板仅用于补充钉钉同步不到的信息，员工必须先从钉钉同步后再导入",
+        "2. 带 * 号的为必填项：姓名、身份证号用于匹配已有员工",
+        "3. 姓名、性别、手机号、部门、职位、入职时间、家庭住址、银行卡等所有基本信息",
+        "   均会在「同步钉钉」时自动获取，无需在此模板填写",
+        "4. 「费用负责人」用于费用分摊归属，请按实际情况填写",
+        "5. 工资金额请填写数字，不要包含货币符号或千分位",
+        "6. 填写了薪资数据时，「薪资生效日期」为必填；仅填费用负责人则无需填写",
+        "7. 日期格式统一为 YYYY-MM-DD，如 2024-01-15",
+        "8. 系统根据身份证号匹配已有员工，不会创建新员工"
+    ]
+    for i, note in enumerate(notes):
+        cell = ws.cell(row=note_start_row + i, column=1, value=note)
+        cell.font = note_font
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    from urllib.parse import quote
+    filename = quote("员工档案导入模板.xlsx")
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"}
+    )
 
 
-@router.post("/", response_model=EmployeeOut)
-def create_employee(emp: EmployeeCreate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    existing = db.query(Employee).filter(Employee.id_card == emp.id_card).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="该身份证号已存在")
+@router.post("/import")
+async def import_employees(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="仅支持 .xlsx 或 .xls 格式的 Excel 文件")
 
-    # 验证部门是否启用
-    if emp.department_id:
-        dept = db.query(SysDictBase).filter(
-            SysDictBase.id == emp.department_id,
-            SysDictBase.category == 'department'
-        ).first()
-        if dept and dept.is_enabled == False:
-            raise HTTPException(status_code=400, detail=f"部门「{dept.name}」已被禁用，无法将员工分配到该部门")
-
-    count = db.query(Employee).count()
-    employee_no = f"E{count + 1:04d}"
-    db_emp = Employee(employee_no=employee_no, **emp.model_dump())
-    db.add(db_emp)
-    db.commit()
-    db.refresh(db_emp)
-    write_log(db, "data_change", current_user.id, current_user.username, "employee", "create", f"新增员工 {db_emp.name}({db_emp.employee_no})")
-    return _enrich_employee(db_emp, db)
-
-
-@router.put("/{employee_id}", response_model=EmployeeOut)
-def update_employee(employee_id: int, emp: EmployeeUpdate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    db_emp = db.query(Employee).filter(Employee.id == employee_id).first()
-    if not db_emp:
-        raise HTTPException(status_code=404, detail="员工不存在")
-
-    # 验证部门是否启用
-    dept_id = emp.department_id if emp.department_id is not None else db_emp.department_id
-    if dept_id:
-        dept = db.query(SysDictBase).filter(
-            SysDictBase.id == dept_id,
-            SysDictBase.category == 'department'
-        ).first()
-        if dept and dept.is_enabled == False:
-            raise HTTPException(status_code=400, detail=f"部门「{dept.name}」已被禁用，无法将员工分配到该部门")
-
-    update_data = emp.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(db_emp, key, value)
-    db.commit()
-    db.refresh(db_emp)
-    write_log(db, "data_change", current_user.id, current_user.username, "employee", "edit", f"编辑员工 {db_emp.name}({db_emp.employee_no})")
-    return _enrich_employee(db_emp, db)
-
-
-@router.delete("/{employee_id}")
-def delete_employee(employee_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    db_emp = db.query(Employee).filter(Employee.id == employee_id).first()
-    if not db_emp:
-        raise HTTPException(status_code=404, detail="员工不存在")
-    db.delete(db_emp)
-    db.commit()
-    write_log(db, "data_change", current_user.id, current_user.username, "employee", "delete", f"删除员工 {db_emp.name}({db_emp.employee_no})")
-    return {"message": "删除成功"}
-
-
-@router.get("/{employee_id}/salaries", response_model=List[SalaryOut])
-def get_employee_salaries(employee_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    salaries = db.query(EmployeeSalary).filter(
-        EmployeeSalary.employee_id == employee_id
-    ).order_by(EmployeeSalary.effective_date.desc(), EmployeeSalary.id.desc()).all()
-    result = []
-    for s in salaries:
-        item = {
-            "id": s.id, "employee_id": s.employee_id,
-            "base_salary": float(s.base_salary), "performance_standard": float(s.performance_standard),
-            "meal_allowance": float(s.meal_allowance or 0), "transport_allowance": float(s.transport_allowance or 0),
-            "communication_allowance": float(s.communication_allowance or 0),
-            "computer_allowance": float(s.computer_allowance or 0), "housing_allowance": float(s.housing_allowance or 0),
-            "effective_date": s.effective_date.isoformat() if s.effective_date else "",
-            "change_reason": s.change_reason, "created_at": s.created_at, "operator_name": None
-        }
-        if s.operator_id:
-            op = db.query(SysUser).filter(SysUser.id == s.operator_id).first()
-            item["operator_name"] = op.username if op else None
-        result.append(item)
-    return result
-
-
-@router.post("/salaries", response_model=SalaryOut)
-def create_employee_salary(salary: SalaryCreate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    employee = db.query(Employee).filter(Employee.id == salary.employee_id).first()
-    if not employee:
-        raise HTTPException(status_code=404, detail="员工不存在，无法创建薪资记录")
     try:
-        data = salary.model_dump()
-        data["operator_id"] = current_user.id
-        db_salary = EmployeeSalary(**data)
-        db.add(db_salary)
-        db.commit()
-        db.refresh(db_salary)
-        write_log(db, "data_change", current_user.id, current_user.username, "employee", "edit", f"新增员工薪资记录 (employee_id={salary.employee_id}, effective_date={salary.effective_date})")
-        return db_salary
+        contents = await file.read()
+        from openpyxl import load_workbook
+        wb = load_workbook(BytesIO(contents), read_only=True)
+        ws = wb.active
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"薪资记录创建失败：{str(e)}")
+        raise HTTPException(status_code=400, detail=f"无法读取 Excel 文件：{str(e)}")
 
+    rows = list(ws.iter_rows(values_only=True))
+    if len(rows) < 2:
+        raise HTTPException(status_code=400, detail="Excel 文件为空或只有表头，没有数据行")
 
-@router.delete("/salaries/{salary_id}")
-def delete_employee_salary(salary_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    sal = db.query(EmployeeSalary).filter(EmployeeSalary.id == salary_id).first()
-    if not sal:
-        raise HTTPException(status_code=404, detail="薪资记录不存在")
-    emp_id = sal.employee_id
-    eff_date = sal.effective_date
-    db.delete(sal)
+    headers = [str(h).strip() if h else "" for h in rows[0]]
+    header_map = {}
+    for i, h in enumerate(headers):
+        if "姓名" in h:
+            header_map["name"] = i
+        elif "身份证" in h or "证件号" in h:
+            header_map["id_card"] = i
+        elif "成本" in h or "费用负责人" in h:
+            header_map["cost_owner"] = i
+        elif "基本工资" in h:
+            header_map["base_salary"] = i
+        elif "绩效标准" in h or "绩效奖金" in h:
+            header_map["performance_standard"] = i
+        elif "餐补" in h:
+            header_map["meal_allowance"] = i
+        elif "交通补贴" in h:
+            header_map["transport_allowance"] = i
+        elif "通讯补贴" in h:
+            header_map["communication_allowance"] = i
+        elif "电脑补贴" in h:
+            header_map["computer_allowance"] = i
+        elif "住房补贴" in h:
+            header_map["housing_allowance"] = i
+        elif "薪资生效" in h or "生效日期" in h:
+            header_map["salary_effective_date"] = i
+
+    required = ["name", "id_card"]
+    missing = [k for k in required if k not in header_map]
+    if missing:
+        name_map = {"name": "姓名", "id_card": "身份证号"}
+        missing_names = [name_map.get(k, k) for k in missing]
+        raise HTTPException(status_code=400, detail=f"Excel 表头缺少必要列：{', '.join(missing_names)}")
+
+    updated = 0
+    salary_created = 0
+    errors = []
+
+    def _parse_float(val):
+        if val is None or val == "":
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+
+    for row_idx, row in enumerate(rows[1:], start=2):
+        try:
+            name = str(row[header_map["name"]]).strip() if row[header_map["name"]] else ""
+            id_card = str(row[header_map["id_card"]]).strip() if row[header_map["id_card"]] else ""
+            
+            if not name or not id_card:
+                errors.append(f"第{row_idx}行：姓名、身份证号不能为空")
+                continue
+
+            cost_owner = None
+            if header_map.get("cost_owner") is not None and row[header_map["cost_owner"]]:
+                cost_owner = str(row[header_map["cost_owner"]]).strip()
+
+            base_salary = _parse_float(row[header_map["base_salary"]]) if header_map.get("base_salary") is not None else None
+            performance_standard = _parse_float(row[header_map["performance_standard"]]) if header_map.get("performance_standard") is not None else None
+            meal_allowance = _parse_float(row[header_map["meal_allowance"]]) if header_map.get("meal_allowance") is not None else None
+            transport_allowance = _parse_float(row[header_map["transport_allowance"]]) if header_map.get("transport_allowance") is not None else None
+            communication_allowance = _parse_float(row[header_map["communication_allowance"]]) if header_map.get("communication_allowance") is not None else None
+            computer_allowance = _parse_float(row[header_map["computer_allowance"]]) if header_map.get("computer_allowance") is not None else None
+            housing_allowance = _parse_float(row[header_map["housing_allowance"]]) if header_map.get("housing_allowance") is not None else None
+            salary_effective_str = str(row[header_map["salary_effective_date"]]).strip() if header_map.get("salary_effective_date") is not None and row[header_map["salary_effective_date"]] else None
+
+            has_salary = any(v is not None and v > 0 for v in [
+                base_salary, performance_standard, meal_allowance, transport_allowance,
+                communication_allowance, computer_allowance, housing_allowance
+            ])
+
+            salary_effective_date = None
+            if has_salary:
+                if not salary_effective_str:
+                    errors.append(f"第{row_idx}行：填写了薪资数据但未填写薪资生效日期")
+                    continue
+                try:
+                    salary_effective_date = date.fromisoformat(salary_effective_str[:10])
+                except ValueError:
+                    errors.append(f"第{row_idx}行：薪资生效日期格式错误「{salary_effective_str}」，应为 YYYY-MM-DD")
+                    continue
+
+            existing = db.query(Employee).filter(Employee.id_card == id_card).first()
+            if not existing:
+                errors.append(f"第{row_idx}行：身份证号「{id_card}」（{name}）在系统中不存在，请先从钉钉同步员工后再导入")
+                continue
+
+            if cost_owner:
+                existing.cost_owner = cost_owner
+            updated += 1
+            emp_id = existing.id
+
+            if has_salary:
+                new_salary = EmployeeSalary(
+                    employee_id=emp_id,
+                    base_salary=base_salary or 0,
+                    performance_standard=performance_standard or 0,
+                    meal_allowance=meal_allowance or 0,
+                    transport_allowance=transport_allowance or 0,
+                    communication_allowance=communication_allowance or 0,
+                    computer_allowance=computer_allowance or 0,
+                    housing_allowance=housing_allowance or 0,
+                    effective_date=salary_effective_date,
+                    operator_id=current_user.id,
+                    change_reason="批量导入"
+                )
+                db.add(new_salary)
+                salary_created += 1
+        except Exception as e:
+            errors.append(f"第{row_idx}行：处理失败 - {str(e)}")
+
     db.commit()
-    write_log(db, "data_change", current_user.id, current_user.username, "employee", "delete", f"删除员工薪资记录 (employee_id={emp_id}, effective_date={eff_date})")
-    return {"message": "删除成功"}
+    wb.close()
+    write_log(db, "data_change", current_user.id, current_user.username, "employee", "import", 
+              f"批量导入员工补充信息：更新{updated}人，薪资记录{salary_created}条")
+
+    msg = f"导入完成：更新 {updated} 人"
+    if salary_created > 0:
+        msg += f"，新增薪资记录 {salary_created} 条"
+    return {
+        "message": msg,
+        "created": 0,
+        "updated": updated,
+        "salary_created": salary_created,
+        "errors": errors
+    }
 
 
 @router.post("/batch-delete")
@@ -640,166 +731,123 @@ def export_selected_employees(ids: List[int], db: Session = Depends(get_db), cur
     )
 
 
-@router.post("/import")
-async def import_employees(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user: UserInfo = Depends(get_current_user)
-):
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="仅支持 .xlsx 或 .xls 格式的 Excel 文件")
-
+@router.post("/salaries", response_model=SalaryOut)
+def create_employee_salary(salary: SalaryCreate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    employee = db.query(Employee).filter(Employee.id == salary.employee_id).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="员工不存在，无法创建薪资记录")
     try:
-        contents = await file.read()
-        wb = Workbook()
-        wb.close()
-        from openpyxl import load_workbook
-        wb = load_workbook(BytesIO(contents), read_only=True)
-        ws = wb.active
+        data = salary.model_dump()
+        data["operator_id"] = current_user.id
+        db_salary = EmployeeSalary(**data)
+        db.add(db_salary)
+        db.commit()
+        db.refresh(db_salary)
+        write_log(db, "data_change", current_user.id, current_user.username, "employee", "edit", f"新增员工薪资记录 (employee_id={salary.employee_id}, effective_date={salary.effective_date})")
+        return db_salary
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"无法读取 Excel 文件：{str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"薪资记录创建失败：{str(e)}")
 
-    rows = list(ws.iter_rows(values_only=True))
-    if len(rows) < 2:
-        raise HTTPException(status_code=400, detail="Excel 文件为空或只有表头，没有数据行")
 
-    headers = [str(h).strip() if h else "" for h in rows[0]]
-    header_map = {}
-    for i, h in enumerate(headers):
-        if "姓名" in h:
-            header_map["name"] = i
-        elif "性别" in h:
-            header_map["gender"] = i
-        elif "身份证" in h:
-            header_map["id_card"] = i
-        elif "电话" in h or "手机" in h or "联系" in h:
-            header_map["phone"] = i
-        elif "合同公司" in h or "公司" in h:
-            header_map["company"] = i
-        elif "部门" in h:
-            header_map["department"] = i
-        elif "职务" in h or "岗位" in h or "职位" in h:
-            header_map["position"] = i
-        elif "状态" in h or "用工" in h:
-            header_map["status"] = i
-        elif "入职" in h:
-            header_map["entry_date"] = i
-        elif "转正" in h:
-            header_map["regular_date"] = i
-        elif "地址" in h or "家庭" in h or "住址" in h:
-            header_map["home_address"] = i
-        elif "费用负责人" in h or "成本" in h:
-            header_map["cost_owner"] = i
-        elif "银行卡" in h:
-            header_map["bank_card"] = i
-        elif "开户行" in h:
-            header_map["bank_branch"] = i
+@router.get("/{employee_id}/salaries", response_model=List[SalaryOut])
+def get_employee_salaries(employee_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    salaries = db.query(EmployeeSalary).filter(
+        EmployeeSalary.employee_id == employee_id
+    ).order_by(EmployeeSalary.effective_date.desc(), EmployeeSalary.id.desc()).all()
+    result = []
+    for s in salaries:
+        item = {
+            "id": s.id, "employee_id": s.employee_id,
+            "base_salary": float(s.base_salary), "performance_standard": float(s.performance_standard),
+            "meal_allowance": float(s.meal_allowance or 0), "transport_allowance": float(s.transport_allowance or 0),
+            "communication_allowance": float(s.communication_allowance or 0),
+            "computer_allowance": float(s.computer_allowance or 0), "housing_allowance": float(s.housing_allowance or 0),
+            "effective_date": s.effective_date.isoformat() if s.effective_date else "",
+            "change_reason": s.change_reason, "created_at": s.created_at, "operator_name": None
+        }
+        if s.operator_id:
+            op = db.query(SysUser).filter(SysUser.id == s.operator_id).first()
+            item["operator_name"] = op.username if op else None
+        result.append(item)
+    return result
 
-    required = ["name", "gender", "id_card", "company", "department", "position", "status", "entry_date"]
-    missing = [k for k in required if k not in header_map]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Excel 表头缺少必要列：{', '.join(missing)}")
 
-    dict_items = db.query(SysDictBase).all()
-    company_map = {d.name: d.id for d in dict_items if d.category == "contract_company"}
-    dept_map = {d.name: d.id for d in dict_items if d.category == "department"}
-    position_map = {d.name: d.id for d in dict_items if d.category == "position"}
-    status_map = {d.name: d.id for d in dict_items if d.category == "employee_status"}
-
-    created = 0
-    updated = 0
-    errors = []
-
-    for row_idx, row in enumerate(rows[1:], start=2):
-        try:
-            name = str(row[header_map["name"]]).strip() if row[header_map["name"]] else ""
-            gender = str(row[header_map["gender"]]).strip() if row[header_map["gender"]] else ""
-            id_card = str(row[header_map["id_card"]]).strip() if row[header_map["id_card"]] else ""
-            phone = str(row[header_map["phone"]]).strip() if header_map.get("phone") is not None and row[header_map["phone"]] else None
-            company_name = str(row[header_map["company"]]).strip() if row[header_map["company"]] else ""
-            dept_name = str(row[header_map["department"]]).strip() if row[header_map["department"]] else ""
-            position_name = str(row[header_map["position"]]).strip() if row[header_map["position"]] else ""
-            status_name = str(row[header_map["status"]]).strip() if row[header_map["status"]] else ""
-            entry_date_str = str(row[header_map["entry_date"]]).strip() if row[header_map["entry_date"]] else ""
-            regular_date_str = str(row[header_map["regular_date"]]).strip() if header_map.get("regular_date") is not None and row[header_map["regular_date"]] else None
-            home_address = str(row[header_map["home_address"]]).strip() if header_map.get("home_address") is not None and row[header_map["home_address"]] else None
-            cost_owner = str(row[header_map["cost_owner"]]).strip() if header_map.get("cost_owner") is not None and row[header_map["cost_owner"]] else None
-            bank_card = str(row[header_map["bank_card"]]).strip() if header_map.get("bank_card") is not None and row[header_map["bank_card"]] else None
-            bank_branch = str(row[header_map["bank_branch"]]).strip() if header_map.get("bank_branch") is not None and row[header_map["bank_branch"]] else None
-
-            if not name or not gender or not id_card:
-                errors.append(f"第{row_idx}行：姓名、性别、身份证号不能为空")
-                continue
-
-            company_id = company_map.get(company_name)
-            dept_id = dept_map.get(dept_name)
-            pos_id = position_map.get(position_name)
-            stat_id = status_map.get(status_name)
-
-            if not company_id:
-                errors.append(f"第{row_idx}行：合同公司「{company_name}」在数据字典中不存在")
-                continue
-            if not dept_id:
-                errors.append(f"第{row_idx}行：部门「{dept_name}」在数据字典中不存在")
-                continue
-            if not pos_id:
-                errors.append(f"第{row_idx}行：职务「{position_name}」在数据字典中不存在")
-                continue
-            if not stat_id:
-                errors.append(f"第{row_idx}行：用工状态「{status_name}」在数据字典中不存在")
-                continue
-
-            try:
-                entry_date = date.fromisoformat(entry_date_str[:10]) if entry_date_str else None
-            except ValueError:
-                errors.append(f"第{row_idx}行：入职时间格式错误「{entry_date_str}」，应为 YYYY-MM-DD")
-                continue
-
-            regular_date = None
-            if regular_date_str:
-                try:
-                    regular_date = date.fromisoformat(regular_date_str[:10])
-                except ValueError:
-                    pass
-
-            existing = db.query(Employee).filter(Employee.id_card == id_card).first()
-            if existing:
-                existing.name = name
-                existing.gender = gender
-                existing.phone = phone
-                existing.contract_company_id = company_id
-                existing.department_id = dept_id
-                existing.position_id = pos_id
-                existing.status_id = stat_id
-                existing.cost_owner = cost_owner
-                existing.entry_date = entry_date
-                existing.regular_date = regular_date
-                existing.home_address = home_address
-                existing.bank_card = bank_card
-                existing.bank_branch = bank_branch
-                updated += 1
-            else:
-                count = db.query(Employee).count()
-                employee_no = f"E{count + 1:04d}"
-                new_emp = Employee(
-                    employee_no=employee_no, name=name, gender=gender, id_card=id_card,
-                    phone=phone, contract_company_id=company_id, department_id=dept_id,
-                    position_id=pos_id, status_id=stat_id, cost_owner=cost_owner,
-                    entry_date=entry_date, regular_date=regular_date,
-                    home_address=home_address, bank_card=bank_card, bank_branch=bank_branch
-                )
-                db.add(new_emp)
-                created += 1
-        except Exception as e:
-            errors.append(f"第{row_idx}行：处理失败 - {str(e)}")
-
+@router.delete("/salaries/{salary_id}")
+def delete_employee_salary(salary_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    sal = db.query(EmployeeSalary).filter(EmployeeSalary.id == salary_id).first()
+    if not sal:
+        raise HTTPException(status_code=404, detail="薪资记录不存在")
+    emp_id = sal.employee_id
+    eff_date = sal.effective_date
+    db.delete(sal)
     db.commit()
-    wb.close()
-    write_log(db, "data_change", current_user.id, current_user.username, "employee", "import", f"批量导入员工：新增{created}人，更新{updated}人")
+    write_log(db, "data_change", current_user.id, current_user.username, "employee", "delete", f"删除员工薪资记录 (employee_id={emp_id}, effective_date={eff_date})")
+    return {"message": "删除成功"}
 
-    return {
-        "message": f"导入完成：新增 {created} 人，更新 {updated} 人",
-        "created": created,
-        "updated": updated,
-        "errors": errors
-    }
+
+@router.get("/{employee_id}", response_model=EmployeeOut)
+def get_employee(employee_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    emp = db.query(Employee).filter(Employee.id == employee_id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="员工不存在")
+    return _enrich_employee(emp, db)
+
+
+@router.post("/", response_model=EmployeeOut)
+def create_employee(emp: EmployeeCreate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    existing = db.query(Employee).filter(Employee.id_card == emp.id_card).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="该身份证号已存在")
+
+    if emp.department_id:
+        dept = db.query(SysDictBase).filter(
+            SysDictBase.id == emp.department_id,
+            SysDictBase.category == 'department'
+        ).first()
+        if dept and dept.is_enabled == False:
+            raise HTTPException(status_code=400, detail=f"部门「{dept.name}」已被禁用，无法将员工分配到该部门")
+
+    count = db.query(Employee).count()
+    employee_no = f"E{count + 1:04d}"
+    db_emp = Employee(employee_no=employee_no, **emp.model_dump())
+    db.add(db_emp)
+    db.commit()
+    db.refresh(db_emp)
+    write_log(db, "data_change", current_user.id, current_user.username, "employee", "create", f"新增员工 {db_emp.name}({db_emp.employee_no})")
+    return _enrich_employee(db_emp, db)
+
+
+@router.put("/{employee_id}", response_model=EmployeeOut)
+def update_employee(employee_id: int, emp: EmployeeUpdate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    db_emp = db.query(Employee).filter(Employee.id == employee_id).first()
+    if not db_emp:
+        raise HTTPException(status_code=404, detail="员工不存在")
+
+    dept_id = emp.department_id if emp.department_id is not None else db_emp.department_id
+    if dept_id:
+        dept = db.query(SysDictBase).filter(
+            SysDictBase.id == dept_id,
+            SysDictBase.category == 'department'
+        ).first()
+        if dept and dept.is_enabled == False:
+            raise HTTPException(status_code=400, detail=f"部门「{dept.name}」已被禁用，无法将员工分配到该部门")
+
+    update_data = emp.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_emp, key, value)
+    db.commit()
+    db.refresh(db_emp)
+    write_log(db, "data_change", current_user.id, current_user.username, "employee", "edit", f"编辑员工 {db_emp.name}({db_emp.employee_no})")
+    return _enrich_employee(db_emp, db)
+
+
+@router.delete("/{employee_id}")
+def delete_employee(employee_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    db_emp = db.query(Employee).filter(Employee.id == employee_id).first()
+    if not db_emp:
+        raise HTTPException(status_code=404, detail="员工不存在")
+    db.delete(db_emp)
+    db.commit()
+    write_log(db, "data_change", current_user.id, current_user.username, "employee", "delete", f"删除员工 {db_emp.name}({db_emp.employee_no})")
+    return {"message": "删除成功"}

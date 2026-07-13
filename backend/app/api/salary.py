@@ -9,7 +9,6 @@ from openpyxl import Workbook, load_workbook
 from urllib.parse import quote
 import xlrd
 import uuid
-import zipfile
 from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.core.query_utils import filter_active_employees
@@ -1427,11 +1426,15 @@ async def upload_tax_excel(
 @router.get("/export-tax-template/{period}")
 def export_tax_template(
     period: str,
+    type: str = Query("salary", description="导出类型: salary(正常工资薪金), bonus(全年一次性奖金), severance(解除劳动合同一次性补偿金)"),
     hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"),
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
-    """导出报税系统模板格式的表格（正常工资+年终奖+补偿金），打包成ZIP"""
+    """导出报税系统模板格式的表格（单个Excel文件，按type参数区分）"""
+    if type not in ("salary", "bonus", "severance"):
+        raise HTTPException(status_code=400, detail="无效的导出类型，可选值: salary, bonus, severance")
+
     calcs = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()
     calc_map = {c.employee_id: c for c in calcs}
     employees = filter_active_employees(db.query(Employee), db, hide_status_id=hide_status_id).order_by(Employee.employee_no).all()
@@ -1460,11 +1463,16 @@ def export_tax_template(
         EmployeeSalaryAdjustment.period == period
     ).all()}
 
-    def _create_workbook_bytes(wb):
+    def _create_workbook_response(wb, filename):
         buf = BytesIO()
         wb.save(buf)
         buf.seek(0)
-        return buf.getvalue()
+        encoded_filename = quote(filename)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"}
+        )
 
     def _build_salary_workbook():
         wb = Workbook()
@@ -1554,17 +1562,9 @@ def export_tax_template(
             ws2.append([])
             for w in warnings:
                 ws2.append([w])
-        return _create_workbook_bytes(wb)
+        return _create_workbook_response(wb, f"正常工资薪金_{period}.xlsx")
 
     def _build_bonus_workbook():
-        bonus_emps = []
-        for emp in employees:
-            c = calc_map.get(emp.id)
-            amount = float(c.year_end_bonus_untaxed or 0) if c else 0
-            if amount > 0:
-                bonus_emps.append((emp, amount))
-        if not bonus_emps:
-            return None
         wb = Workbook()
         ws = wb.active
         ws.title = "全年一次性奖金收入"
@@ -1574,36 +1574,37 @@ def export_tax_template(
         ]
         ws.append(headers)
         warnings = []
-        for emp, amount in bonus_emps:
-            id_card = emp.id_card or ""
-            remarks = []
-            if not id_card:
-                remarks.append("证件号码缺失")
-            remark_str = f"{period}全年一次性奖金"
-            if remarks:
-                warnings.append(f"{emp.name}({emp.employee_no}): {', '.join(remarks)}")
-                remark_str += " | 警告: " + ", ".join(remarks)
-            ws.append([
-                emp.employee_no, emp.name, "居民身份证", id_card,
-                round(amount, 2), 0, 0, 0, 0, remark_str
-            ])
+        bonus_emps = []
+        for emp in employees:
+            c = calc_map.get(emp.id)
+            amount = float(c.year_end_bonus_untaxed or 0) if c else 0
+            if amount > 0:
+                bonus_emps.append((emp, amount))
+        if not bonus_emps:
+            warnings.append(f"{period} 没有全年一次性奖金数据，无需导入")
+        else:
+            for emp, amount in bonus_emps:
+                id_card = emp.id_card or ""
+                remarks = []
+                if not id_card:
+                    remarks.append("证件号码缺失")
+                remark_str = f"{period}全年一次性奖金"
+                if remarks:
+                    warnings.append(f"{emp.name}({emp.employee_no}): {', '.join(remarks)}")
+                    remark_str += " | 警告: " + ", ".join(remarks)
+                ws.append([
+                    emp.employee_no, emp.name, "居民身份证", id_card,
+                    round(amount, 2), 0, 0, 0, 0, remark_str
+                ])
         if warnings:
             ws2 = wb.create_sheet("数据缺失提示")
-            ws2.append(["以下员工存在必填字段缺失，请补充："])
+            ws2.append(["提示信息："])
             ws2.append([])
             for w in warnings:
                 ws2.append([w])
-        return _create_workbook_bytes(wb)
+        return _create_workbook_response(wb, f"全年一次性奖金_{period}.xlsx")
 
     def _build_severance_workbook():
-        comp_emps = []
-        for emp in employees:
-            c = calc_map.get(emp.id)
-            amount = float(c.compensation_tax or 0) if c else 0
-            if amount > 0:
-                comp_emps.append((emp, amount))
-        if not comp_emps:
-            return None
         wb = Workbook()
         ws = wb.active
         ws.title = "解除劳动合同一次性补偿金"
@@ -1613,44 +1614,39 @@ def export_tax_template(
         ]
         ws.append(headers)
         warnings = []
-        for emp, amount in comp_emps:
-            id_card = emp.id_card or ""
-            remarks = []
-            if not id_card:
-                remarks.append("证件号码缺失")
-            remark_str = f"{period}一次性补偿金"
-            if remarks:
-                warnings.append(f"{emp.name}({emp.employee_no}): {', '.join(remarks)}")
-                remark_str += " | 警告: " + ", ".join(remarks)
-            ws.append([
-                emp.employee_no, emp.name, "居民身份证", id_card,
-                round(amount, 2), 0, 0, 0, 0, remark_str
-            ])
+        comp_emps = []
+        for emp in employees:
+            c = calc_map.get(emp.id)
+            amount = float(c.compensation_tax or 0) if c else 0
+            if amount > 0:
+                comp_emps.append((emp, amount))
+        if not comp_emps:
+            warnings.append(f"{period} 没有解除劳动合同一次性补偿金数据，无需导入")
+        else:
+            for emp, amount in comp_emps:
+                id_card = emp.id_card or ""
+                remarks = []
+                if not id_card:
+                    remarks.append("证件号码缺失")
+                remark_str = f"{period}一次性补偿金"
+                if remarks:
+                    warnings.append(f"{emp.name}({emp.employee_no}): {', '.join(remarks)}")
+                    remark_str += " | 警告: " + ", ".join(remarks)
+                ws.append([
+                    emp.employee_no, emp.name, "居民身份证", id_card,
+                    round(amount, 2), 0, 0, 0, 0, remark_str
+                ])
         if warnings:
             ws2 = wb.create_sheet("数据缺失提示")
-            ws2.append(["以下员工存在必填字段缺失，请补充："])
+            ws2.append(["提示信息："])
             ws2.append([])
             for w in warnings:
                 ws2.append([w])
-        return _create_workbook_bytes(wb)
+        return _create_workbook_response(wb, f"解除劳动合同一次性补偿金_{period}.xlsx")
 
-    salary_bytes = _build_salary_workbook()
-    bonus_bytes = _build_bonus_workbook()
-    severance_bytes = _build_severance_workbook()
-
-    zip_buf = BytesIO()
-    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(f"正常工资薪金_{period}.xlsx", salary_bytes)
-        if bonus_bytes:
-            zf.writestr(f"全年一次性奖金_{period}.xlsx", bonus_bytes)
-        if severance_bytes:
-            zf.writestr(f"解除劳动合同一次性补偿金_{period}.xlsx", severance_bytes)
-    zip_buf.seek(0)
-
-    filename = f"报税导入模板_{period}.zip"
-    encoded_filename = quote(filename)
-    return StreamingResponse(
-        zip_buf,
-        media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"}
-    )
+    if type == "salary":
+        return _build_salary_workbook()
+    elif type == "bonus":
+        return _build_bonus_workbook()
+    elif type == "severance":
+        return _build_severance_workbook()

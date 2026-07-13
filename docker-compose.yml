@@ -2,22 +2,25 @@ version: "3.8"
 
 services:
   db:
-    image: m.daocloud.io/docker.io/library/postgres:16-alpine
+    image: postgres:16-alpine
     container_name: e9-salary-db
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
+      TZ: Asia/Shanghai
     ports:
       - "${DB_EXTERNAL_PORT}:5432"
     volumes:
-      - pgdata_e9:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - e9-salary-net
 
   backend:
     build:
@@ -25,25 +28,35 @@ services:
       dockerfile: Dockerfile
     container_name: e9-salary-backend
     environment:
+      TZ: Asia/Shanghai
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
-      SECRET_KEY: ${BACKEND_SECRET_KEY}
+      SECRET_KEY: ${SECRET_KEY}
       ALGORITHM: ${ALGORITHM}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
       CORS_ORIGINS: ${CORS_ORIGINS}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_API_URL: ${LLM_API_URL}
+      LLM_MODEL: ${LLM_MODEL}
       DINGTALK_CLIENT_ID: ${DINGTALK_CLIENT_ID}
       DINGTALK_CLIENT_SECRET: ${DINGTALK_CLIENT_SECRET}
       DINGTALK_AGENT_ID: ${DINGTALK_AGENT_ID}
       DINGTALK_ROBOT_CODE: ${DINGTALK_ROBOT_CODE}
       DINGTALK_SYNC_DEPT_NAMES: ${DINGTALK_SYNC_DEPT_NAMES}
     volumes:
-      - ./data:/app/data
+      - ./data/app:/app/data
       - ./backups:/backups
+      - ./temp:/app/temp
     ports:
-      - "${BACKEND_PORT}:8010"
+      - "${BACKEND_PORT}:8001"
     depends_on:
       db:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      - e9-salary-net
+    command: >
+      sh -c "python init_admin.py &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8001"
 
   frontend:
     build:
@@ -55,6 +68,9 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    networks:
+      - e9-salary-net
 
-volumes:
-  pgdata_e9:
+networks:
+  e9-salary-net:
+    driver: bridge

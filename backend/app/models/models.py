@@ -663,3 +663,23 @@ class ExportTemplate(Base):
     created_by = Column(Integer, ForeignKey("sys_users.id"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class SalaryPeriodStep(Base):
+    """月度算薪步骤确认状态表"""
+    __tablename__ = "salary_period_steps"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    period = Column(String(7), nullable=False, index=True, comment="核算月份 YYYYMM")
+    step_key = Column(String(50), nullable=False, comment="步骤标识: employee/attendance/performance/insurance/salary/approval/payment")
+    is_confirmed = Column(Boolean, default=False, comment="是否已确认")
+    is_force_confirmed = Column(Boolean, default=False, comment="是否强制确认（数据不全时确认）")
+    confirmed_by = Column(Integer, ForeignKey("sys_users.id"), nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
+    remark = Column(String(500), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        {"comment": "月度算薪步骤确认状态"}
+    )

@@ -2,8 +2,16 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# 从项目根目录加载 .env
-load_dotenv(Path(__file__).parent.parent.parent.parent / ".env")
+# 尝试从多个可能的位置加载 .env 文件
+_env_paths = [
+    Path(__file__).parent.parent.parent.parent / ".env",
+    Path.cwd() / ".env",
+    Path("/.env"),
+]
+for _env_path in _env_paths:
+    if _env_path.exists():
+        load_dotenv(_env_path)
+        break
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./e9_salary.db")
 SECRET_KEY = os.getenv("SECRET_KEY", "e9-salary-dev-secret-key-change-in-production")

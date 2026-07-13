@@ -13,6 +13,7 @@
         <el-input v-model="filterValue" placeholder="筛选值" size="small" clearable class="!w-36" @input="fetchData" @clear="fetchData" />
         <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)">新增</el-button>
         <el-button :icon="Upload" size="small" @click="showImport">导入</el-button>
+        <el-button type="info" :icon="Download" size="small" @click="downloadTemplate">下载模板</el-button>
         <el-button type="success" :icon="Download" size="small" @click="handleExport">导出</el-button>
         <el-tooltip content="仅同步「数据字典-部门」中已启动的部门员工" placement="bottom">
           <el-button type="warning" size="small" :loading="syncingRoster" @click="syncRoster">
@@ -583,9 +584,14 @@
           <el-button type="success" :loading="importing" :disabled="!importFile" @click="doImport">
             开始导入
           </el-button>
+          <el-button type="info" :icon="Download" @click="downloadTemplate">
+            下载导入模板
+          </el-button>
         </div>
         <div class="text-sm text-gray-500">
-          支持 .xlsx / .xls 格式，表头需包含：姓名、性别、身份证号、联系电话、合同公司、部门、职务、用工状态、入职时间、转正时间、家庭住址、费用负责人
+          <p class="mb-1">请先下载导入模板，按模板格式填写数据后再导入。</p>
+          <p class="text-orange-600 font-medium">注意：本模板仅用于补充钉钉同步不到的信息（费用负责人、薪资数据），员工必须先从钉钉同步后再导入。</p>
+          <p>必填项：姓名*、身份证号*；填写薪资数据时需同时填写「薪资生效日期」</p>
         </div>
         <div v-if="importResult" class="mt-3">
           <el-alert
@@ -1320,6 +1326,23 @@ async function handleExport() {
     ElMessage.success('导出成功')
   } catch (e) {
     ElMessage.error('导出失败')
+  }
+}
+
+async function downloadTemplate() {
+  try {
+    const res = await api.get('/employees/import-template', { responseType: 'blob' })
+    const url = window.URL.createObjectURL(new Blob([res.data]))
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', '员工档案导入模板.xlsx')
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('模板下载成功')
+  } catch (e) {
+    ElMessage.error('模板下载失败')
   }
 }
 

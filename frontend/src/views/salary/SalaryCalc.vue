@@ -676,26 +676,39 @@ function handleTaxFileChange(file) {
   taxFile.value = file.raw
 }
 
-async function handleExportTaxTemplate() {
-  try {
-    const params = {}
-    const hideStatusId = localStorage.getItem('employee_hide_status_id')
-    if (hideStatusId) {
-      params.hide_status_id = Number(hideStatusId)
-    }
-    const res = await api.get(`/salary/export-tax-template/${periodDate.value}`, { params, responseType: 'blob' })
-    const url = window.URL.createObjectURL(new Blob([res.data]))
-    const link = document.createElement('a')
-    link.href = url
-    link.setAttribute('download', `报税导入模板_${periodDate.value}.xlsx`)
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    window.URL.revokeObjectURL(url)
-    ElMessage.success('导出成功')
-  } catch (e) {
-    ElMessage.error('导出失败')
+async function downloadSingleTaxFile(type, filename) {
+  const params = { type }
+  const hideStatusId = localStorage.getItem('employee_hide_status_id')
+  if (hideStatusId) {
+    params.hide_status_id = Number(hideStatusId)
   }
+  const res = await api.get(`/salary/export-tax-template/${periodDate.value}`, { params, responseType: 'blob' })
+  const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', filename)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}
+
+async function handleExportTaxTemplate() {
+  const period = periodDate.value
+  const files = [
+    { type: 'salary', filename: `正常工资薪金_${period}.xlsx` },
+    { type: 'bonus', filename: `全年一次性奖金_${period}.xlsx` },
+    { type: 'severance', filename: `解除劳动合同一次性补偿金_${period}.xlsx` }
+  ]
+  for (let i = 0; i < files.length; i++) {
+    const { type, filename } = files[i]
+    await downloadSingleTaxFile(type, filename)
+    if (i < files.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 300))
+    }
+  }
+  ElMessage.success('报税模板导出成功，共3个文件')
 }
 
 async function doTaxImport() {

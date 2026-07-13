@@ -4,13 +4,13 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 import io
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from urllib.parse import quote
 from openpyxl import Workbook
 from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.core.query_utils import filter_active_employees, get_pending_resign_status_id
-from app.models.models import Employee, EmployeeSalary, SalaryCalculation, AttendanceRecord, SysDictBase, ExportTemplate
+from app.models.models import Employee, EmployeeSalary, SalaryCalculation, AttendanceRecord, SysDictBase, ExportTemplate, PerformanceScore, SocialInsurance, SalaryPeriodStep
 from app.api.auth import get_current_user, UserInfo
 from sqlalchemy import func
 
@@ -24,6 +24,17 @@ def _filter_active_without_pending_resign(query, db: Session):
     if pending_resign_ids:
         query = query.filter(Employee.status_id.notin_(pending_resign_ids))
     return query
+
+
+STEP_DEFINITIONS = [
+    {"key": "employee", "title": "员工档案", "description": "确认人员信息", "route": "/employees"},
+    {"key": "attendance", "title": "考勤数据", "description": "确认考勤数据", "route": "/attendance"},
+    {"key": "performance", "title": "绩效评分", "description": "录入绩效系数", "route": "/performance"},
+    {"key": "insurance", "title": "社保数据", "description": "确认社保公积金", "route": "/insurance"},
+    {"key": "salary", "title": "薪资计算", "description": "自动核算工资", "route": "/salary"},
+    {"key": "approval", "title": "审批流程", "description": "主管经理审核", "route": "/approval"},
+    {"key": "payment", "title": "工资发放", "description": "导出报表完成", "route": "/reports"},
+]
 
 
 @router.get("/stats")
@@ -47,46 +58,265 @@ def get_stats(
 
     latest_period = period or db.query(SalaryCalculation.period).order_by(SalaryCalculation.period.desc()).first()
     latest_period = latest_period[0] if latest_period else None
+    if not latest_period and period:
+        latest_period = period
 
     salary_stats = {}
+    att_stats = {}
+    perf_count = 0
+    si_count = 0
+    att_count = 0
+    att_missing = total_employees
+    perf_missing = total_employees
+    si_missing = total_employees
+    salary_completed_count = 0
+    salary_pending_count = total_employees
+    review_passed_count = 0
+
     if latest_period:
         calcs = db.query(SalaryCalculation).filter(
             SalaryCalculation.period == latest_period,
             SalaryCalculation.employee_id.in_(active_employee_ids)
         ).all()
-        completed = sum(1 for c in calcs if c.calculation_status == "核算完成")
+        completed_calcs = [c for c in calcs if c.calculation_status == "实发已核算"]
+        salary_completed_count = len(completed_calcs)
+        salary_pending_count = total_employees - salary_completed_count
+        review_passed_count = sum(1 for c in calcs if c.review_status == "审核通过")
         salary_stats = {
             "period": latest_period,
-            "total": len(active_employees),
-            "completed": completed,
-            "pending": len(active_employees) - completed,
-            "review_passed": sum(1 for c in calcs if c.review_status == "审核通过"),
+            "total": total_employees,
+            "completed": salary_completed_count,
+            "pending": salary_pending_count,
+            "review_passed": review_passed_count,
             "review_rejected": sum(1 for c in calcs if c.review_status == "审核驳回"),
             "avg_gross_salary": round(float(sum(c.gross_salary for c in calcs)) / len(calcs), 2) if calcs else 0,
             "avg_net_salary": round(float(sum(c.net_salary for c in calcs)) / len(calcs), 2) if calcs else 0,
         }
 
-    att_stats = {}
-    if latest_period:
         atts = db.query(AttendanceRecord).filter(
             AttendanceRecord.period == latest_period,
             AttendanceRecord.employee_id.in_(active_employee_ids)
         ).all()
+        att_count = len(atts)
+        att_missing = total_employees - att_count
         if atts:
             att_stats = {
                 "period": latest_period,
-                "total": len(atts),
+                "total": att_count,
                 "avg_rate": round(float(sum(a.attendance_rate for a in atts)) / len(atts) * 100, 1) if atts else 0,
                 "total_late": sum(a.late_count or 0 for a in atts),
                 "total_leave": sum((a.sick_leave_days or 0) + (a.personal_leave_days or 0) for a in atts),
             }
 
+        perfs = db.query(PerformanceScore).filter(
+            PerformanceScore.period == latest_period,
+            PerformanceScore.employee_id.in_(active_employee_ids),
+            PerformanceScore.final_score.isnot(None)
+        ).all()
+        perf_count = len(perfs)
+        perf_missing = total_employees - perf_count
+
+        sis = db.query(SocialInsurance).filter(
+            SocialInsurance.period == latest_period,
+            SocialInsurance.employee_id.in_(active_employee_ids)
+        ).all()
+        valid_si_employee_ids = set()
+        for si in sis:
+            personal_total = (
+                float(si.pension_personal or 0) +
+                float(si.unemployment_personal or 0) +
+                float(si.medical_personal or 0) +
+                float(si.hf_personal or 0)
+            )
+            if personal_total > 0:
+                valid_si_employee_ids.add(si.employee_id)
+        si_count = len(valid_si_employee_ids)
+        si_missing = total_employees - si_count
+
+    confirmed_steps = {}
+    if latest_period:
+        step_records = db.query(SalaryPeriodStep).filter(
+            SalaryPeriodStep.period == latest_period
+        ).all()
+        for sr in step_records:
+            confirmed_steps[sr.step_key] = {
+                "is_confirmed": sr.is_confirmed,
+                "is_force_confirmed": sr.is_force_confirmed,
+                "confirmed_at": str(sr.confirmed_at) if sr.confirmed_at else None,
+            }
+
+    steps_detail = []
+    for step_def in STEP_DEFINITIONS:
+        key = step_def["key"]
+        data_ready = False
+        missing_count = 0
+        can_confirm = total_employees > 0
+
+        if key == "employee":
+            data_ready = total_employees > 0
+            missing_count = 0 if data_ready else total_employees
+        elif key == "attendance":
+            data_ready = att_count >= total_employees and total_employees > 0
+            missing_count = att_missing
+        elif key == "performance":
+            data_ready = perf_count >= total_employees and total_employees > 0
+            missing_count = perf_missing
+        elif key == "insurance":
+            data_ready = si_count >= total_employees and total_employees > 0
+            missing_count = si_missing
+        elif key == "salary":
+            data_ready = salary_completed_count >= total_employees and total_employees > 0
+            missing_count = salary_pending_count
+        elif key == "approval":
+            data_ready = review_passed_count >= salary_completed_count and salary_completed_count > 0 and total_employees > 0
+            missing_count = salary_completed_count - review_passed_count if salary_completed_count > 0 else total_employees
+        elif key == "payment":
+            data_ready = review_passed_count >= total_employees and total_employees > 0
+            missing_count = total_employees - review_passed_count if review_passed_count < total_employees else 0
+
+        confirmed_info = confirmed_steps.get(key, {})
+        is_confirmed = confirmed_info.get("is_confirmed", False)
+        is_force_confirmed = confirmed_info.get("is_force_confirmed", False)
+
+        steps_detail.append({
+            "key": key,
+            "title": step_def["title"],
+            "description": step_def["description"],
+            "route": step_def["route"],
+            "data_ready": data_ready,
+            "missing_count": missing_count,
+            "can_confirm": can_confirm,
+            "is_confirmed": is_confirmed,
+            "is_force_confirmed": is_force_confirmed,
+            "confirmed_at": confirmed_info.get("confirmed_at"),
+        })
+
     return {
         "total_employees": total_employees,
         "status_breakdown": status_count,
         "salary_stats": salary_stats,
-        "attendance_stats": att_stats
+        "attendance_stats": att_stats,
+        "steps": steps_detail,
+        "period": latest_period
     }
+
+
+class StepConfirmRequest(BaseModel):
+    period: str
+    step_key: str
+    is_confirmed: bool
+    remark: Optional[str] = None
+
+
+@router.post("/steps/confirm")
+def confirm_step(
+    data: StepConfirmRequest,
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """确认或取消确认某个算薪步骤"""
+    valid_keys = [s["key"] for s in STEP_DEFINITIONS]
+    if data.step_key not in valid_keys:
+        raise HTTPException(status_code=400, detail=f"无效的步骤标识: {data.step_key}")
+
+    step_def = next(s for s in STEP_DEFINITIONS if s["key"] == data.step_key)
+    is_force = False
+
+    if data.is_confirmed:
+        query = db.query(Employee)
+        active_employees = _filter_active_without_pending_resign(query, db).all()
+        total_employees = len(active_employees)
+        active_employee_ids = [emp.id for emp in active_employees]
+
+        data_ready = True
+        if data.step_key == "employee":
+            data_ready = total_employees > 0
+        elif data.step_key == "attendance":
+            att_count = db.query(AttendanceRecord).filter(
+                AttendanceRecord.period == data.period,
+                AttendanceRecord.employee_id.in_(active_employee_ids)
+            ).count()
+            data_ready = att_count >= total_employees and total_employees > 0
+        elif data.step_key == "performance":
+            perf_count = db.query(PerformanceScore).filter(
+                PerformanceScore.period == data.period,
+                PerformanceScore.employee_id.in_(active_employee_ids),
+                PerformanceScore.final_score.isnot(None)
+            ).count()
+            data_ready = perf_count >= total_employees and total_employees > 0
+        elif data.step_key == "insurance":
+            sis = db.query(SocialInsurance).filter(
+                SocialInsurance.period == data.period,
+                SocialInsurance.employee_id.in_(active_employee_ids)
+            ).all()
+            valid_si_count = 0
+            for si in sis:
+                personal_total = (
+                    float(si.pension_personal or 0) +
+                    float(si.unemployment_personal or 0) +
+                    float(si.medical_personal or 0) +
+                    float(si.hf_personal or 0)
+                )
+                if personal_total > 0:
+                    valid_si_count += 1
+            data_ready = valid_si_count >= total_employees and total_employees > 0
+        elif data.step_key == "salary":
+            salary_count = db.query(SalaryCalculation).filter(
+                SalaryCalculation.period == data.period,
+                SalaryCalculation.employee_id.in_(active_employee_ids),
+                SalaryCalculation.calculation_status == "实发已核算"
+            ).count()
+            data_ready = salary_count >= total_employees and total_employees > 0
+        elif data.step_key == "approval":
+            salary_calcs = db.query(SalaryCalculation).filter(
+                SalaryCalculation.period == data.period,
+                SalaryCalculation.employee_id.in_(active_employee_ids)
+            ).all()
+            completed_count = sum(1 for c in salary_calcs if c.calculation_status == "实发已核算")
+            passed_count = sum(1 for c in salary_calcs if c.review_status == "审核通过")
+            data_ready = passed_count >= completed_count and completed_count > 0 and total_employees > 0
+        elif data.step_key == "payment":
+            salary_calcs = db.query(SalaryCalculation).filter(
+                SalaryCalculation.period == data.period,
+                SalaryCalculation.employee_id.in_(active_employee_ids)
+            ).all()
+            passed_count = sum(1 for c in salary_calcs if c.review_status == "审核通过")
+            data_ready = passed_count >= total_employees and total_employees > 0
+
+        is_force = not data_ready
+
+    step_record = db.query(SalaryPeriodStep).filter(
+        SalaryPeriodStep.period == data.period,
+        SalaryPeriodStep.step_key == data.step_key
+    ).first()
+
+    if data.is_confirmed:
+        if not step_record:
+            step_record = SalaryPeriodStep(
+                period=data.period,
+                step_key=data.step_key,
+            )
+            db.add(step_record)
+
+        step_record.is_confirmed = True
+        step_record.confirmed_by = current_user.id
+        step_record.confirmed_at = datetime.now()
+        step_record.is_force_confirmed = is_force
+        step_record.remark = data.remark
+        action_desc = f"确认{step_def['title']}" + ("（数据不全，强制确认）" if is_force else "")
+    else:
+        if step_record:
+            step_record.is_confirmed = False
+            step_record.is_force_confirmed = False
+            step_record.confirmed_by = None
+            step_record.confirmed_at = None
+            step_record.remark = None
+        action_desc = f"取消确认{step_def['title']}"
+
+    db.commit()
+    write_log(db, "data_change", current_user.id, current_user.username, "report", "edit", f"{action_desc} - {data.period}")
+
+    return {"message": "操作成功", "is_confirmed": data.is_confirmed, "is_force": is_force}
 
 
 @router.get("/roster")

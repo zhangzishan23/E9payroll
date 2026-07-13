@@ -46,6 +46,9 @@ frontend/src/views/AIAssistant.vue
 # 数据备份目录
 backups/
 
+# Docker 数据持久化目录
+data/
+
 # 文件上传临时目录
 temp/
 
