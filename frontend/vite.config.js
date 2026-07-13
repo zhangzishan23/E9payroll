@@ -9,7 +9,7 @@ export default defineConfig({
     port: 5180,
     proxy: {
       '/e9salary/api': {
-        target: 'http://127.0.0.1:8010',
+        target: 'http://127.0.0.1:8001',
         changeOrigin: true
       }
     }

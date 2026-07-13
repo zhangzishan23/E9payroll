@@ -28,9 +28,9 @@ class PerformanceOut(BaseModel):
     performance_standard: float = 0
     initial_score: Optional[float] = None
     final_score: Optional[float] = None
-    coefficient: float = 1.00
-    evaluated_performance: float = 0
-    performance_diff: float = 0
+    coefficient: Optional[float] = None
+    evaluated_performance: Optional[float] = None
+    performance_diff: Optional[float] = None
     score_diff: Optional[float] = None
     performance_category: Optional[str] = None
     score_reason: Optional[str] = None
@@ -38,7 +38,7 @@ class PerformanceOut(BaseModel):
     total_work_days: Optional[float] = None
     actual_work_days: Optional[float] = None
     attendance_rate: Optional[float] = None
-    actual_paid_performance: float = 0
+    actual_paid_performance: Optional[float] = None
     reviewer_id: Optional[int] = None
 
     class Config:
@@ -77,16 +77,16 @@ def _build_performance_out(p: Optional[PerformanceScore], emp: Employee, perf_st
                            period: str) -> PerformanceOut:
     initial = float(p.initial_score) if p and p.initial_score is not None else None
     final = float(p.final_score) if p and p.final_score is not None else None
-    coef = final if final is not None else 1.00
-    evaluated = round(perf_std * coef, 2)
-    diff = round(evaluated - perf_std, 2)
+    coef = final
+    evaluated = round(perf_std * coef, 2) if coef is not None else None
+    diff = round(evaluated - perf_std, 2) if evaluated is not None else None
     score_diff = round(final - initial, 2) if (initial is not None and final is not None) else None
 
     att_rate = None
-    actual_paid = 0.0
+    actual_paid = None
     if total_work_days and actual_work_days is not None and total_work_days > 0:
         att_rate = round(actual_work_days / total_work_days, 4)
-        actual_paid = round(evaluated * att_rate, 2)
+        actual_paid = round(evaluated * att_rate, 2) if evaluated is not None else None
 
     return PerformanceOut(
         id=p.id if p else None,
@@ -176,7 +176,7 @@ def get_performances(
             perf_std = float(sal.performance_standard) if sal else 0
             
             if att:
-                total_days = float(att.total_work_days) if att.total_work_days else standard_salary_days
+                total_days = float(att.adjusted_salary_days) if att.adjusted_salary_days else standard_salary_days
                 actual_days = float(att.actual_salary_days)
             else:
                 total_days = standard_salary_days
@@ -257,7 +257,7 @@ def create_performance(
     perf_std = float(sal.performance_standard) if sal else 0
     standard_salary_days = get_month_salary_days(db, perf.period)
     if att:
-        total_days = float(att.total_work_days) if att.total_work_days else standard_salary_days
+        total_days = float(att.adjusted_salary_days) if att.adjusted_salary_days else standard_salary_days
         actual_days = float(att.actual_salary_days)
     else:
         total_days = standard_salary_days
@@ -300,7 +300,7 @@ def update_performance(
     perf_std = float(sal.performance_standard) if sal else 0
     standard_salary_days = get_month_salary_days(db, perf.period)
     if att:
-        total_days = float(att.total_work_days) if att.total_work_days else standard_salary_days
+        total_days = float(att.adjusted_salary_days) if att.adjusted_salary_days else standard_salary_days
         actual_days = float(att.actual_salary_days)
     else:
         total_days = standard_salary_days
@@ -442,7 +442,7 @@ def export_performances(
         score_diff = round(final - initial, 2) if (initial is not None and final is not None) else None
         
         if att:
-            total_days = float(att.total_work_days) if att.total_work_days else standard_salary_days
+            total_days = float(att.adjusted_salary_days) if att.adjusted_salary_days else standard_salary_days
             actual_days = float(att.actual_salary_days)
         else:
             total_days = standard_salary_days

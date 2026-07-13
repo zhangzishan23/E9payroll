@@ -69,7 +69,7 @@
             <el-input-number v-model="editCache[row.employee_id].final_score" :min="0" :max="3" :precision="2" :step="0.1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.employee_id)" />
           </template>
           <template v-else>
-            <span :class="(getRowCoefficient(row)) >= 1 ? 'text-green-600' : 'text-red-600'" class="font-semibold">
+            <span v-if="getRowCoefficient(row) != null" :class="(getRowCoefficient(row)) >= 1 ? 'text-green-600' : 'text-red-600'" class="font-semibold">
               {{ getRowCoefficient(row).toFixed(2) }}
             </span>
           </template>
@@ -77,19 +77,19 @@
       </el-table-column>
       <el-table-column label="评价后绩效标准" width="130" align="right">
         <template #default="{ row }">
-          <span class="font-medium">{{ getRowEvaluated(row).toFixed(2) }}</span>
+          <span v-if="getRowEvaluated(row) != null" class="font-medium">{{ getRowEvaluated(row).toFixed(2) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="差额" width="100" align="right">
         <template #default="{ row }">
-          <span :class="getRowDiff(row) > 0 ? 'text-green-500' : getRowDiff(row) < 0 ? 'text-red-500' : ''">
+          <span v-if="getRowDiff(row) != null" :class="getRowDiff(row) > 0 ? 'text-green-500' : getRowDiff(row) < 0 ? 'text-red-500' : ''">
             {{ getRowDiff(row).toFixed(2) }}
           </span>
         </template>
       </el-table-column>
       <el-table-column label="实发绩效金额" width="120" align="right">
         <template #default="{ row }">
-          <span class="font-semibold text-purple-600">{{ getRowActualPaid(row).toFixed(2) }}</span>
+          <span v-if="getRowActualPaid(row) != null" class="font-semibold text-purple-600">{{ getRowActualPaid(row).toFixed(2) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="调整差异" width="100" align="center">
@@ -145,16 +145,15 @@
         </el-form-item>
         <el-form-item label="复评（绩效系数）" required>
           <el-input-number v-model="form.final_score" :min="0" :max="3" :precision="2" :step="0.1" class="w-full" />
-          <div class="text-xs text-gray-400 mt-1">工资核算将使用此值作为绩效系数，默认为1.00</div>
         </el-form-item>
         <el-form-item label="绩效奖金标准">
           <el-input :model-value="(formRow?.performance_standard || 0).toFixed(2)" disabled />
         </el-form-item>
         <el-form-item label="评价后绩效标准">
-          <el-input :model-value="((formRow?.performance_standard || 0) * (form.final_score || 1)).toFixed(2)" disabled />
+          <el-input :model-value="form.final_score != null ? ((formRow?.performance_standard || 0) * form.final_score).toFixed(2) : ''" disabled />
         </el-form-item>
         <el-form-item label="差额">
-          <el-input :model-value="((((formRow?.performance_standard || 0) * (form.final_score || 1)) - (formRow?.performance_standard || 0))).toFixed(2)" disabled />
+          <el-input :model-value="form.final_score != null ? ((((formRow?.performance_standard || 0) * form.final_score) - (formRow?.performance_standard || 0))).toFixed(2) : ''" disabled />
         </el-form-item>
         <el-form-item label="出勤率">
           <el-input :model-value="formRow?.attendance_rate != null ? ((formRow.attendance_rate * 100).toFixed(1) + '%') : '暂无考勤数据'" disabled />
@@ -162,8 +161,8 @@
         <el-form-item label="实发绩效金额">
           <el-input :model-value="getFormActualPaid().toFixed(2)" disabled />
         </el-form-item>
-        <el-form-item v-if="form.initial_score != null" label="调整差异">
-          <el-input :model-value="((form.final_score || 1) - (form.initial_score || 0)).toFixed(2)" disabled />
+        <el-form-item v-if="form.initial_score != null && form.final_score != null" label="调整差异">
+          <el-input :model-value="(form.final_score - (form.initial_score || 0)).toFixed(2)" disabled />
         </el-form-item>
         <el-form-item label="评分理由">
           <el-input v-model="form.score_reason" type="textarea" :rows="2" placeholder="请输入评分理由" />
@@ -307,7 +306,7 @@ const fieldLabels = {
 
 const form = reactive({
   period: defaultPeriod, employee_id: null,
-  initial_score: null, final_score: 1.00,
+  initial_score: null, final_score: null,
   performance_category: '', score_reason: '', review_note: ''
 })
 
@@ -337,9 +336,9 @@ function tableRowClassName({ row }) {
 function getCurrentVals(row) {
   const cache = editMode.value && editCache[row.employee_id] ? editCache[row.employee_id] : null
   const initial = cache ? cache.initial_score : row.initial_score
-  const final = cache ? (cache.final_score != null ? cache.final_score : 1) : (row.final_score != null ? Number(row.final_score) : 1)
+  const final = cache ? cache.final_score : (row.final_score != null ? Number(row.final_score) : null)
   const perfStd = Number(row.performance_standard) || 0
-  return { initial: initial != null ? Number(initial) : null, final: Number(final) || 1, perfStd }
+  return { initial: initial != null ? Number(initial) : null, final: final, perfStd }
 }
 
 function getRowPerfStd(row) {
@@ -348,23 +347,25 @@ function getRowPerfStd(row) {
 
 function getRowCoefficient(row) {
   const { final } = getCurrentVals(row)
-  return final
+  return final != null ? Number(final) : null
 }
 
 function getRowEvaluated(row) {
   const { final, perfStd } = getCurrentVals(row)
-  return perfStd * final
+  if (final == null) return null
+  return perfStd * Number(final)
 }
 
 function getRowDiff(row) {
   const { final, perfStd } = getCurrentVals(row)
-  return perfStd * final - perfStd
+  if (final == null) return null
+  return perfStd * Number(final) - perfStd
 }
 
 function getRowScoreDiff(row) {
   const { initial, final } = getCurrentVals(row)
-  if (initial == null) return null
-  return final - Number(initial)
+  if (initial == null || final == null) return null
+  return Number(final) - Number(initial)
 }
 
 function getRowAttendanceRate(row) {
@@ -376,13 +377,15 @@ function getRowAttendanceRate(row) {
 
 function getRowActualPaid(row) {
   const evaluated = getRowEvaluated(row)
+  if (evaluated == null) return null
   const attRate = getRowAttendanceRate(row)
   return evaluated * attRate
 }
 
 function getFormActualPaid() {
   const perfStd = Number(formRow.value?.performance_standard) || 0
-  const coef = Number(form.final_score) || 1
+  const coef = form.final_score != null ? Number(form.final_score) : null
+  if (coef == null) return 0
   const attRate = formRow.value?.attendance_rate != null ? Number(formRow.value.attendance_rate) : 0
   return perfStd * coef * attRate
 }
@@ -392,7 +395,7 @@ function initEditCache() {
     if (!row || !row.employee_id) return
     editCache[row.employee_id] = reactive({
       initial_score: row.initial_score ?? null,
-      final_score: row.final_score ?? 1.00,
+      final_score: row.final_score ?? null,
       performance_category: row.performance_category ?? '',
       score_reason: row.score_reason ?? '',
       review_note: row.review_note ?? ''
@@ -482,10 +485,19 @@ async function saveAllEdits() {
       const cache = editCache[row.employee_id]
       if (!cache) continue
       const payload = {}
+      const changedFields = new Set(row.changes.map(c => c.field))
       Object.keys(fieldLabels).forEach(field => {
-        if (cache[field] !== '' && cache[field] != null) payload[field] = cache[field]
-        else if (field === 'final_score') payload[field] = cache[field]
+        if (!changedFields.has(field)) return
+        const val = cache[field]
+        if (val !== '' && val != null) {
+          payload[field] = val
+        }
       })
+      if (!row.id && (payload.final_score == null)) {
+        ElMessage.warning(`员工「${row.employee_name}」未填写复评（绩效系数），跳过保存`)
+        failCount++
+        continue
+      }
       try {
         if (row.id) {
           await api.put(`/performance/${row.id}`, payload)
@@ -548,7 +560,7 @@ function showDialog(row) {
     Object.assign(form, {
       period: row.period, employee_id: row.employee_id,
       initial_score: row.initial_score,
-      final_score: row.final_score ?? 1.00,
+      final_score: row.final_score != null ? row.final_score : null,
       performance_category: row.performance_category || '',
       score_reason: row.score_reason || '',
       review_note: row.review_note || ''
@@ -556,7 +568,7 @@ function showDialog(row) {
   } else {
     Object.assign(form, {
       period: periodDate.value, employee_id: null,
-      initial_score: null, final_score: 1.00,
+      initial_score: null, final_score: null,
       performance_category: '', score_reason: '', review_note: ''
     })
   }
@@ -572,7 +584,7 @@ function showDialogForEmployee(row) {
   formRow.value = row
   Object.assign(form, {
     period: periodDate.value, employee_id: row.employee_id,
-    initial_score: null, final_score: 1.00,
+    initial_score: null, final_score: null,
     performance_category: '', score_reason: '', review_note: ''
   })
   dialogVisible.value = true

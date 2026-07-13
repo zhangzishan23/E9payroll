@@ -829,3 +829,136 @@ def cancel_smart_import_batch(
     """取消批量导入，清理临时文件"""
     cleanup_batch(batch_id)
     return {"message": "已取消"}
+
+
+def _get_prev_period(period: str) -> str:
+    """根据当前月份计算上月月份，如 202607 -> 202606, 202601 -> 202512"""
+    year = int(period[:4])
+    month = int(period[4:6])
+    if month == 1:
+        prev_year = year - 1
+        prev_month = 12
+    else:
+        prev_year = year
+        prev_month = month - 1
+    return f"{prev_year}{prev_month:02d}"
+
+
+@router.post("/copy-from-prev/{period}")
+def copy_from_prev_month(
+    period: str,
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """
+    用上月数据预填本月社保公积金：
+    - 只对本月无记录但上月有记录的员工复制数据
+    - 本月已有记录的员工完全跳过，不覆盖
+    """
+    prev_period = _get_prev_period(period)
+
+    prev_records = db.query(SocialInsurance).filter(
+        SocialInsurance.period == prev_period
+    ).all()
+
+    if not prev_records:
+        return {
+            "message": f"{prev_period[:4]}年{prev_period[4:6]}月没有社保公积金数据，无法预填",
+            "copied": 0,
+            "skipped": 0,
+            "prev_period": prev_period
+        }
+
+    existing_ids = {r.employee_id for r in db.query(SocialInsurance).filter(
+        SocialInsurance.period == period
+    ).all()}
+
+    copied = 0
+    skipped = 0
+
+    for prev in prev_records:
+        if prev.employee_id in existing_ids:
+            skipped += 1
+            continue
+
+        new_si = SocialInsurance(
+            period=period,
+            employee_id=prev.employee_id,
+            employee_social_insurance_no=prev.employee_social_insurance_no,
+            pension_personal_base=prev.pension_personal_base,
+            pension_company_base=prev.pension_company_base,
+            unemployment_personal_base=prev.unemployment_personal_base,
+            unemployment_company_base=prev.unemployment_company_base,
+            medical_personal_base=prev.medical_personal_base,
+            medical_company_base=prev.medical_company_base,
+            injury_company_base=prev.injury_company_base,
+            pension_personal=prev.pension_personal,
+            pension_company=prev.pension_company,
+            unemployment_personal=prev.unemployment_personal,
+            unemployment_company=prev.unemployment_company,
+            medical_personal=prev.medical_personal,
+            medical_company=prev.medical_company,
+            injury_company=prev.injury_company,
+            si_personal=prev.si_personal,
+            si_company=prev.si_company,
+            pension_personal_rate=prev.pension_personal_rate,
+            pension_company_rate=prev.pension_company_rate,
+            unemployment_personal_rate=prev.unemployment_personal_rate,
+            unemployment_company_rate=prev.unemployment_company_rate,
+            medical_personal_rate=prev.medical_personal_rate,
+            medical_company_rate=prev.medical_company_rate,
+            injury_company_rate=prev.injury_company_rate,
+            pension_total=prev.pension_total,
+            unemployment_total=prev.unemployment_total,
+            medical_total=prev.medical_total,
+            injury_total=prev.injury_total,
+            si_grand_total=prev.si_grand_total,
+            hf_base=prev.hf_base,
+            hf_personal=prev.hf_personal,
+            hf_company=prev.hf_company,
+            hf_personal_rate=prev.hf_personal_rate,
+            hf_company_rate=prev.hf_company_rate,
+            hf_total=prev.hf_total,
+            grand_total=prev.grand_total,
+        )
+        db.add(new_si)
+        copied += 1
+
+    db.commit()
+
+    write_log(
+        db, "data_change", current_user.id, current_user.username,
+        "social_insurance", "copy_from_prev",
+        f"从上月({prev_period})预填社保公积金到{period}: 新增{copied}条, 跳过已有{skipped}条"
+    )
+
+    return {
+        "message": f"预填完成：从{prev_period[:4]}年{prev_period[4:6]}月复制了{copied}条数据，{skipped}条已有数据被跳过",
+        "copied": copied,
+        "skipped": skipped,
+        "prev_period": prev_period
+    }
+
+
+@router.get("/prev-month-data/{period}/{employee_id}")
+def get_prev_month_data(
+    period: str,
+    employee_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """获取指定员工上月的社保数据，用于单条录入时预填表单"""
+    prev_period = _get_prev_period(period)
+    prev = db.query(SocialInsurance).filter(
+        SocialInsurance.period == prev_period,
+        SocialInsurance.employee_id == employee_id
+    ).first()
+
+    if not prev:
+        return {"has_data": False, "prev_period": prev_period}
+
+    return {
+        "has_data": True,
+        "prev_period": prev_period,
+        "data": SocialInsuranceOut.model_validate(prev).model_dump()
+    }

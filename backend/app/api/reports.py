@@ -31,9 +31,9 @@ STEP_DEFINITIONS = [
     {"key": "attendance", "title": "考勤数据", "description": "确认考勤数据", "route": "/attendance"},
     {"key": "performance", "title": "绩效评分", "description": "录入绩效系数", "route": "/performance"},
     {"key": "insurance", "title": "社保数据", "description": "确认社保公积金", "route": "/insurance"},
-    {"key": "salary", "title": "薪资计算", "description": "自动核算工资", "route": "/salary"},
-    {"key": "approval", "title": "审批流程", "description": "主管经理审核", "route": "/approval"},
-    {"key": "payment", "title": "工资发放", "description": "导出报表完成", "route": "/reports"},
+    {"key": "tax", "title": "个税申报", "description": "导出报税并导入个税结果", "route": "/salary"},
+    {"key": "salary", "title": "薪资计算", "description": "核算应发与实发工资", "route": "/salary"},
+    {"key": "payment", "title": "工资发放", "description": "审核通过后导出报表完成", "route": "/reports"},
 ]
 
 
@@ -56,10 +56,10 @@ def get_stats(
         dict_item = db.query(SysDictBase).filter(SysDictBase.id == status_id).first()
         status_count[dict_item.name if dict_item else "未知"] = count
 
-    latest_period = period or db.query(SalaryCalculation.period).order_by(SalaryCalculation.period.desc()).first()
-    latest_period = latest_period[0] if latest_period else None
-    if not latest_period and period:
-        latest_period = period
+    latest_period = period
+    if not latest_period:
+        latest_period_row = db.query(SalaryCalculation.period).order_by(SalaryCalculation.period.desc()).first()
+        latest_period = latest_period_row[0] if latest_period_row else None
 
     salary_stats = {}
     att_stats = {}
@@ -71,6 +71,8 @@ def get_stats(
     si_missing = total_employees
     salary_completed_count = 0
     salary_pending_count = total_employees
+    tax_imported_count = 0
+    tax_missing_count = total_employees
     review_passed_count = 0
 
     if latest_period:
@@ -78,19 +80,25 @@ def get_stats(
             SalaryCalculation.period == latest_period,
             SalaryCalculation.employee_id.in_(active_employee_ids)
         ).all()
-        completed_calcs = [c for c in calcs if c.calculation_status == "实发已核算"]
-        salary_completed_count = len(completed_calcs)
+        gross_completed_calcs = [c for c in calcs if c.calculation_status in ("应发已核算", "实发已核算")]
+        salary_completed_count = len(gross_completed_calcs)
         salary_pending_count = total_employees - salary_completed_count
+        tax_imported_count = sum(1 for c in calcs if c.tax_deduction is not None)
+        tax_missing_count = total_employees - tax_imported_count
         review_passed_count = sum(1 for c in calcs if c.review_status == "审核通过")
+        gross_values = [float(c.gross_salary) for c in calcs if c.gross_salary is not None]
+        net_values = [float(c.net_salary) for c in calcs if c.net_salary is not None]
         salary_stats = {
             "period": latest_period,
             "total": total_employees,
             "completed": salary_completed_count,
             "pending": salary_pending_count,
+            "tax_imported": tax_imported_count,
+            "tax_missing": tax_missing_count,
             "review_passed": review_passed_count,
             "review_rejected": sum(1 for c in calcs if c.review_status == "审核驳回"),
-            "avg_gross_salary": round(float(sum(c.gross_salary for c in calcs)) / len(calcs), 2) if calcs else 0,
-            "avg_net_salary": round(float(sum(c.net_salary for c in calcs)) / len(calcs), 2) if calcs else 0,
+            "avg_gross_salary": round(sum(gross_values) / len(gross_values), 2) if gross_values else 0,
+            "avg_net_salary": round(sum(net_values) / len(net_values), 2) if net_values else 0,
         }
 
         atts = db.query(AttendanceRecord).filter(
@@ -100,10 +108,11 @@ def get_stats(
         att_count = len(atts)
         att_missing = total_employees - att_count
         if atts:
+            valid_att_rates = [float(a.attendance_rate) for a in atts if a.attendance_rate is not None]
             att_stats = {
                 "period": latest_period,
                 "total": att_count,
-                "avg_rate": round(float(sum(a.attendance_rate for a in atts)) / len(atts) * 100, 1) if atts else 0,
+                "avg_rate": round(sum(valid_att_rates) / len(valid_att_rates) * 100, 1) if valid_att_rates else 0,
                 "total_late": sum(a.late_count or 0 for a in atts),
                 "total_leave": sum((a.sick_leave_days or 0) + (a.personal_leave_days or 0) for a in atts),
             }
@@ -146,6 +155,12 @@ def get_stats(
             }
 
     steps_detail = []
+    prerequisite_keys_for_salary = ["employee", "attendance", "performance", "insurance", "tax"]
+    prerequisites_confirmed_for_salary = all(confirmed_steps.get(pk, {}).get("is_confirmed", False) for pk in prerequisite_keys_for_salary)
+    prerequisite_keys_for_tax = ["employee", "attendance", "performance", "insurance"]
+    prerequisites_confirmed_for_tax = all(confirmed_steps.get(pk, {}).get("is_confirmed", False) for pk in prerequisite_keys_for_tax)
+    prerequisite_keys_for_payment = ["employee", "attendance", "performance", "insurance", "tax", "salary"]
+    prerequisites_confirmed_for_payment = all(confirmed_steps.get(pk, {}).get("is_confirmed", False) for pk in prerequisite_keys_for_payment)
     for step_def in STEP_DEFINITIONS:
         key = step_def["key"]
         data_ready = False
@@ -164,15 +179,30 @@ def get_stats(
         elif key == "insurance":
             data_ready = si_count >= total_employees and total_employees > 0
             missing_count = si_missing
+        elif key == "tax":
+            if not prerequisites_confirmed_for_tax:
+                data_ready = False
+                missing_count = 0
+                can_confirm = False
+            else:
+                data_ready = True
+                missing_count = tax_missing_count
         elif key == "salary":
-            data_ready = salary_completed_count >= total_employees and total_employees > 0
-            missing_count = salary_pending_count
-        elif key == "approval":
-            data_ready = review_passed_count >= salary_completed_count and salary_completed_count > 0 and total_employees > 0
-            missing_count = salary_completed_count - review_passed_count if salary_completed_count > 0 else total_employees
+            if not prerequisites_confirmed_for_salary:
+                data_ready = False
+                missing_count = 0
+                can_confirm = False
+            else:
+                data_ready = salary_completed_count >= total_employees and total_employees > 0 and tax_imported_count >= total_employees
+                missing_count = salary_pending_count if salary_pending_count > 0 else (total_employees - tax_imported_count)
         elif key == "payment":
-            data_ready = review_passed_count >= total_employees and total_employees > 0
-            missing_count = total_employees - review_passed_count if review_passed_count < total_employees else 0
+            if not prerequisites_confirmed_for_payment:
+                data_ready = False
+                missing_count = 0
+                can_confirm = False
+            else:
+                data_ready = review_passed_count >= total_employees and total_employees > 0
+                missing_count = total_employees - review_passed_count if review_passed_count < total_employees else 0
 
         confirmed_info = confirmed_steps.get(key, {})
         is_confirmed = confirmed_info.get("is_confirmed", False)
@@ -189,6 +219,7 @@ def get_stats(
             "is_confirmed": is_confirmed,
             "is_force_confirmed": is_force_confirmed,
             "confirmed_at": confirmed_info.get("confirmed_at"),
+            "prerequisites_met": prerequisites_confirmed_for_salary if key == "salary" else (prerequisites_confirmed_for_tax if key == "tax" else (prerequisites_confirmed_for_payment if key == "payment" else None)),
         })
 
     return {
@@ -260,22 +291,80 @@ def confirm_step(
                 if personal_total > 0:
                     valid_si_count += 1
             data_ready = valid_si_count >= total_employees and total_employees > 0
-        elif data.step_key == "salary":
-            salary_count = db.query(SalaryCalculation).filter(
-                SalaryCalculation.period == data.period,
-                SalaryCalculation.employee_id.in_(active_employee_ids),
-                SalaryCalculation.calculation_status == "实发已核算"
+        elif data.step_key == "tax":
+            prerequisite_keys = ["employee", "attendance", "performance", "insurance"]
+            confirmed_prereqs = db.query(SalaryPeriodStep).filter(
+                SalaryPeriodStep.period == data.period,
+                SalaryPeriodStep.step_key.in_(prerequisite_keys),
+                SalaryPeriodStep.is_confirmed == True
             ).count()
-            data_ready = salary_count >= total_employees and total_employees > 0
-        elif data.step_key == "approval":
+            if confirmed_prereqs < len(prerequisite_keys):
+                unconfirmed = []
+                for pk in prerequisite_keys:
+                    rec = db.query(SalaryPeriodStep).filter(
+                        SalaryPeriodStep.period == data.period,
+                        SalaryPeriodStep.step_key == pk,
+                        SalaryPeriodStep.is_confirmed == True
+                    ).first()
+                    if not rec:
+                        pd = next(s for s in STEP_DEFINITIONS if s["key"] == pk)
+                        unconfirmed.append(pd["title"])
+                raise HTTPException(status_code=400, detail=f"请先确认以下步骤后再确认个税申报：{', '.join(unconfirmed)}")
+            data_ready = True
+        elif data.step_key == "salary":
+            prerequisite_keys = ["employee", "attendance", "performance", "insurance", "tax"]
+            confirmed_prereqs = db.query(SalaryPeriodStep).filter(
+                SalaryPeriodStep.period == data.period,
+                SalaryPeriodStep.step_key.in_(prerequisite_keys),
+                SalaryPeriodStep.is_confirmed == True
+            ).count()
+            if confirmed_prereqs < len(prerequisite_keys):
+                unconfirmed = []
+                for pk in prerequisite_keys:
+                    rec = db.query(SalaryPeriodStep).filter(
+                        SalaryPeriodStep.period == data.period,
+                        SalaryPeriodStep.step_key == pk,
+                        SalaryPeriodStep.is_confirmed == True
+                    ).first()
+                    if not rec:
+                        pd = next(s for s in STEP_DEFINITIONS if s["key"] == pk)
+                        unconfirmed.append(pd["title"])
+                raise HTTPException(status_code=400, detail=f"请先确认以下步骤后再确认薪资计算：{', '.join(unconfirmed)}")
             salary_calcs = db.query(SalaryCalculation).filter(
                 SalaryCalculation.period == data.period,
                 SalaryCalculation.employee_id.in_(active_employee_ids)
             ).all()
-            completed_count = sum(1 for c in salary_calcs if c.calculation_status == "实发已核算")
-            passed_count = sum(1 for c in salary_calcs if c.review_status == "审核通过")
-            data_ready = passed_count >= completed_count and completed_count > 0 and total_employees > 0
+            completed_count = sum(1 for c in salary_calcs if c.calculation_status in ("应发已核算", "实发已核算"))
+            tax_imported_count = sum(1 for c in salary_calcs if c.tax_deduction is not None)
+            net_completed = sum(1 for c in salary_calcs if c.calculation_status == "实发已核算")
+            data_ready = net_completed >= total_employees and total_employees > 0 and tax_imported_count >= total_employees
+            if not data_ready:
+                missing = []
+                if tax_imported_count < total_employees:
+                    missing.append(f"个税结果未全部导入（{tax_imported_count}/{total_employees}）")
+                if completed_count < total_employees:
+                    missing.append(f"薪资未全部核算（{completed_count}/{total_employees}）")
+                if net_completed < total_employees and completed_count >= total_employees:
+                    missing.append(f"实发工资未全部计算（{net_completed}/{total_employees}）")
         elif data.step_key == "payment":
+            prerequisite_keys = ["employee", "attendance", "performance", "insurance", "tax", "salary"]
+            confirmed_prereqs = db.query(SalaryPeriodStep).filter(
+                SalaryPeriodStep.period == data.period,
+                SalaryPeriodStep.step_key.in_(prerequisite_keys),
+                SalaryPeriodStep.is_confirmed == True
+            ).count()
+            if confirmed_prereqs < len(prerequisite_keys):
+                unconfirmed = []
+                for pk in prerequisite_keys:
+                    rec = db.query(SalaryPeriodStep).filter(
+                        SalaryPeriodStep.period == data.period,
+                        SalaryPeriodStep.step_key == pk,
+                        SalaryPeriodStep.is_confirmed == True
+                    ).first()
+                    if not rec:
+                        pd = next(s for s in STEP_DEFINITIONS if s["key"] == pk)
+                        unconfirmed.append(pd["title"])
+                raise HTTPException(status_code=400, detail=f"请先确认以下步骤后再确认工资发放：{', '.join(unconfirmed)}")
             salary_calcs = db.query(SalaryCalculation).filter(
                 SalaryCalculation.period == data.period,
                 SalaryCalculation.employee_id.in_(active_employee_ids)
@@ -496,7 +585,7 @@ def export_salary(period: str, db: Session = Depends(get_db), current_user: User
                 float(c.gross_salary or 0), float(c.social_insurance_personal or 0),
                 float(c.housing_fund_personal or 0), float(c.si_hf_total or 0),
                 float(c.last_month_untaxed or 0), float(c.travel_untaxed or 0),
-                float(c.tax_deduction or 0), float(c.net_salary or 0),
+                float(c.tax_deduction) if c.tax_deduction is not None else "", float(c.net_salary or 0),
                 float(c.actual_taxable or 0),
                 float(c.severance_pay or 0), float(c.compensation_tax or 0),
                 float(c.year_end_bonus_untaxed or 0),
@@ -923,8 +1012,10 @@ def _get_emp_dict_maps(emps, db):
 
 def _safe_float(val, default=0.0):
     """安全转换为浮点数"""
+    if val is None:
+        return default
     try:
-        return float(val or default)
+        return float(val)
     except (TypeError, ValueError):
         return default
 
@@ -974,7 +1065,8 @@ def _build_salary_row_data(emp, calc, dict_name_map):
             _safe_float(getattr(calc, 'si_hf_total', 0))
         )
         row_data["salary_after_si_hf"] = round(salary_after_si_hf, 2)
-        row_data["tax_deduction"] = _safe_float(getattr(calc, 'tax_deduction', 0))
+        tax_val = getattr(calc, 'tax_deduction', None)
+        row_data["tax_deduction"] = _safe_float(tax_val, None) if tax_val is not None else None
         row_data["posttax_adjustment"] = _safe_float(getattr(calc, 'posttax_adjustment', 0))
         row_data["posttax_adjustment_reason"] = getattr(calc, 'posttax_adjustment_reason', "") or ""
         row_data["severance_pay"] = _safe_float(getattr(calc, 'severance_pay', 0))
@@ -1022,7 +1114,7 @@ def _build_salary_row_data(emp, calc, dict_name_map):
         row_data["social_insurance_personal"] = 0
         row_data["si_hf_total"] = 0
         row_data["salary_after_si_hf"] = 0
-        row_data["tax_deduction"] = 0
+        row_data["tax_deduction"] = None
         row_data["posttax_adjustment"] = 0
         row_data["posttax_adjustment_reason"] = ""
         row_data["severance_pay"] = 0

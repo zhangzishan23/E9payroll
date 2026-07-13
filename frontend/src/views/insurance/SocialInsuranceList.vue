@@ -12,6 +12,7 @@
       <el-button :icon="Upload" size="small" @click="showImportOld">单文件导入</el-button>
       <el-button type="primary" :icon="Upload" size="small" @click="showSmartImport">智能导入</el-button>
       <el-button type="success" :icon="Download" size="small" @click="handleExport">导出</el-button>
+      <el-button type="warning" :icon="CopyDocument" size="small" :loading="copying" @click="handleCopyFromPrev">用上月数据预填</el-button>
       <el-button type="danger" :icon="Delete" size="small" :disabled="!validSelectedCount" @click="handleBatchDelete">
         删除{{ validSelectedCount ? `(${validSelectedCount})` : '' }}
       </el-button>
@@ -745,7 +746,7 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Download, Upload, Delete, InfoFilled, UploadFilled, WarningFilled } from '@element-plus/icons-vue'
+import { Plus, Download, Upload, Delete, InfoFilled, UploadFilled, WarningFilled, CopyDocument } from '@element-plus/icons-vue'
 import api from '../../api'
 
 const route = useRoute()
@@ -787,6 +788,7 @@ const saving = ref(false)
 const savingEdits = ref(false)
 const importing = ref(false)
 const smartImporting = ref(false)
+const copying = ref(false)
 const dialogVisible = ref(false)
 const importVisibleOld = ref(false)
 const smartImportVisible = ref(false)
@@ -853,7 +855,7 @@ const editFields = ['pension_personal_base', 'pension_company_base',
   'grand_total']
 
 const form = reactive({
-  period: defaultPeriod, employee_id: null,
+  period: defaultPeriod, employee_id: null, employee_social_insurance_no: '',
   pension_personal_base: 0, pension_company_base: 0,
   unemployment_personal_base: 0, unemployment_company_base: 0,
   medical_personal_base: 0, medical_company_base: 0,
@@ -1084,10 +1086,12 @@ function showDialog(row) {
   if (row) {
     form.period = row.period || periodDate.value
     form.employee_id = row.employee_id
+    form.employee_social_insurance_no = row.employee_social_insurance_no || ''
     editFields.forEach(f => { form[f] = row[f] ?? 0 })
   } else {
     form.period = periodDate.value
     form.employee_id = null
+    form.employee_social_insurance_no = ''
     editFields.forEach(f => { form[f] = 0 })
   }
   dialogVisible.value = true
@@ -1100,7 +1104,24 @@ function showDialogForEmployee(row) {
   formEmployeeNo.value = row.employee_no
   form.period = periodDate.value
   form.employee_id = row.employee_id
+  form.employee_social_insurance_no = ''
   editFields.forEach(f => { form[f] = 0 })
+
+  api.get(`/social-insurance/prev-month-data/${periodDate.value}/${row.employee_id}`).then(res => {
+    if (res.data.has_data && res.data.data) {
+      const prevData = res.data.data
+      editFields.forEach(f => {
+        if (prevData[f] != null) {
+          form[f] = prevData[f]
+        }
+      })
+      if (prevData.employee_social_insurance_no) {
+        form.employee_social_insurance_no = prevData.employee_social_insurance_no
+      }
+      ElMessage.info(`已自动预填${res.data.prev_period.substring(0,4)}年${res.data.prev_period.substring(4,6)}月数据，请核对修改`)
+    }
+  }).catch(() => {})
+
   dialogVisible.value = true
 }
 
@@ -1110,6 +1131,7 @@ async function handleSave() {
     const payload = {
       period: periodDate.value,
       employee_id: form.employee_id,
+      employee_social_insurance_no: form.employee_social_insurance_no || null,
     }
     editFields.forEach(f => { payload[f] = form[f] })
 
@@ -1299,6 +1321,49 @@ function goToTemplateConfig() {
       period: periodDate.value
     }
   })
+}
+
+async function handleCopyFromPrev() {
+  const prevYear = periodDate.value.substring(0, 4)
+  const prevMonth = periodDate.value.substring(4, 6)
+  let prevPeriod
+  if (prevMonth === '01') {
+    prevPeriod = `${parseInt(prevYear) - 1}12`
+  } else {
+    prevPeriod = `${prevYear}${String(parseInt(prevMonth) - 1).padStart(2, '0')}`
+  }
+  const prevLabel = `${prevPeriod.substring(0,4)}年${prevPeriod.substring(4,6)}月`
+  const currLabel = `${prevYear}年${prevMonth}月`
+
+  try {
+    await ElMessageBox.confirm(
+      `确认将${prevLabel}的社保公积金数据复制到${currLabel}？\n\n注意：本月已有数据的员工不会被覆盖，只会为尚无数据的员工预填。`,
+      '用上月数据预填',
+      {
+        confirmButtonText: '确认预填',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+  } catch {
+    return
+  }
+
+  copying.value = true
+  try {
+    const res = await api.post(`/social-insurance/copy-from-prev/${periodDate.value}`)
+    if (res.data.copied > 0) {
+      ElMessage.success(res.data.message)
+      await fetchData()
+    } else {
+      ElMessage.warning(res.data.message)
+    }
+  } catch (e) {
+    const msg = e.response?.data?.detail || '预填失败'
+    ElMessage.error(msg)
+  } finally {
+    copying.value = false
+  }
 }
 
 async function handleExport() {

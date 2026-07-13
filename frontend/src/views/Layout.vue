@@ -1,13 +1,14 @@
 <template>
-  <div class="min-h-screen flex relative" @mouseleave="handleMouseLeave">
-    <div 
+  <div class="min-h-screen flex relative">
+    <div
+      v-if="!sidebarPinned && !sidebarVisible"
       class="fixed left-0 top-0 h-full w-2 z-50"
       @mouseenter="handleEdgeEnter"
     ></div>
 
-    <div 
-      class="fixed left-0 top-0 h-full z-40 transition-all duration-300 ease-in-out overflow-hidden"
-      :class="sidebarVisible ? 'w-56' : 'w-0'"
+    <div
+      class="fixed left-0 top-0 h-full w-56 z-40 transition-transform duration-300 ease-in-out"
+      :class="(sidebarVisible || sidebarPinned) ? 'translate-x-0' : '-translate-x-full'"
       @mouseenter="handleSidebarEnter"
       @mouseleave="handleSidebarLeave"
     >
@@ -20,9 +21,9 @@
         @select="handleSelect"
       >
         <div class="absolute top-3 right-3 z-50">
-          <el-button 
+          <el-button
             :type="sidebarPinned ? 'primary' : 'default'"
-            size="small" 
+            size="small"
             circle
             @click.stop="togglePin"
             :title="sidebarPinned ? '取消固定' : '固定侧边栏'"
@@ -87,13 +88,13 @@
         </el-sub-menu>
 
         <div class="px-4 pt-6 pb-4 space-y-2">
-          <div 
+          <div
             class="w-full px-4 py-2 text-center cursor-pointer border border-gray-200 rounded-md hover:bg-gray-50 transition-colors"
             @click="router.push('/profile')"
           >
             个人中心
           </div>
-          <div 
+          <div
             class="w-full px-4 py-2 text-center cursor-pointer border border-gray-200 rounded-md hover:bg-gray-50 transition-colors"
             @click="handleLogout"
           >
@@ -103,9 +104,9 @@
       </el-menu>
     </div>
 
-    <div 
+    <div
       class="flex-1 p-6 overflow-auto transition-all duration-300 ease-in-out"
-      :class="(sidebarVisible && !sidebarPinned) ? 'ml-56' : (sidebarPinned ? 'ml-56' : 'ml-4')"
+      :class="(sidebarVisible || sidebarPinned) ? 'ml-56' : 'ml-4'"
     >
       <router-view />
     </div>
@@ -144,36 +145,36 @@ const activeMenu = computed(() => {
 
 const defaultOpeneds = ['system']
 
-function handleEdgeEnter() {
+function scheduleHide() {
+  if (hideTimer) clearTimeout(hideTimer)
+  hideTimer = setTimeout(() => {
+    if (!sidebarPinned.value) {
+      sidebarVisible.value = false
+    }
+  }, 500)
+}
+
+function cancelHide() {
   if (hideTimer) {
     clearTimeout(hideTimer)
     hideTimer = null
   }
+}
+
+function handleEdgeEnter() {
+  cancelHide()
   if (!sidebarPinned.value) {
     sidebarVisible.value = true
   }
 }
 
 function handleSidebarEnter() {
-  if (hideTimer) {
-    clearTimeout(hideTimer)
-    hideTimer = null
-  }
+  cancelHide()
 }
 
 function handleSidebarLeave() {
   if (!sidebarPinned.value) {
-    hideTimer = setTimeout(() => {
-      sidebarVisible.value = false
-    }, 300)
-  }
-}
-
-function handleMouseLeave() {
-  if (!sidebarPinned.value) {
-    hideTimer = setTimeout(() => {
-      sidebarVisible.value = false
-    }, 300)
+    scheduleHide()
   }
 }
 
@@ -182,6 +183,7 @@ function togglePin() {
   localStorage.setItem(STORAGE_KEY, String(sidebarPinned.value))
   if (sidebarPinned.value) {
     sidebarVisible.value = true
+    cancelHide()
   }
 }
 
@@ -194,4 +196,3 @@ function handleLogout() {
   router.push('/login')
 }
 </script>
-

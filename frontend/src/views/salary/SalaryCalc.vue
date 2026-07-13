@@ -16,7 +16,7 @@
           <el-button
             size="small"
             :type="editMode ? 'danger' : 'primary'"
-            :disabled="!hasCalculatedResults"
+            :disabled="!hasResults"
             @click="toggleEditMode"
           >
             {{ editMode ? '退出' : '编辑' }}
@@ -25,10 +25,10 @@
             <el-button type="success" size="small" :loading="savingEdits" @click="confirmEdits">确认</el-button>
             <el-button size="small" @click="cancelEdits">取消</el-button>
           </template>
-          <el-button type="danger" size="small" :disabled="!hasCalculatedResults || isSubmitting" @click="batchSubmitApproval">审核</el-button>
+          <el-button type="danger" size="small" :disabled="!hasResults || isSubmitting" @click="batchSubmitApproval">审核</el-button>
           <el-button type="info" size="small" :disabled="!hasResults" @click="handleExport">导出</el-button>
           <el-button type="danger" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">删除</el-button>
-          <el-button type="warning" size="small" :disabled="!hasCalculatedResults" @click="showTaxImport">报税</el-button>
+          <el-button type="warning" size="small" :disabled="!hasResults" @click="showTaxImport">报税导入</el-button>
           <el-button type="success" size="small" :disabled="!hasResults" @click="handleExportTaxTemplate">导出报税模板</el-button>
         </div>
       </div>
@@ -135,11 +135,11 @@
             </template>
             <template v-else>
               <template v-if="col.type === 'percent'">
-                {{ row[col.key] != null && row[col.key] !== 0 ? (row[col.key] * 100).toFixed(1) + '%' : '' }}
+                {{ row[col.key] != null ? (row[col.key] * 100).toFixed(1) + '%' : '' }}
               </template>
               <template v-else-if="col.type === 'money'">
                 <span
-                  v-if="row[col.key] != null && row[col.key] !== 0"
+                  v-if="row[col.key] != null"
                   :class="{
                     'font-semibold text-blue-600': col.key === 'gross_salary',
                     'font-semibold text-green-600': col.key === 'net_salary'
@@ -150,7 +150,7 @@
                 {{ formatValue(row[col.key]) }}
               </template>
               <template v-else>
-                {{ row[col.key] || '' }}
+                {{ row[col.key] != null ? row[col.key] : '' }}
               </template>
             </template>
           </template>
@@ -208,6 +208,33 @@
             已选择文件：{{ taxFile.name }}
           </div>
         </el-tab-pane>
+        <el-tab-pane label="临时性差旅补贴导入" name="travel">
+          <div class="mb-3 text-sm text-gray-500">
+            上传财务提供的差旅补贴Excel文件（支持.xls/.xlsx格式），系统自动识别「明细」（Sheet1）或「数据透视表」（Sheet2）工作表，按员工汇总报税应纳税所得额
+          </div>
+          <el-upload
+            ref="travelUploadRef"
+            :auto-upload="false"
+            :limit="1"
+            accept=".xls,.xlsx"
+            :on-change="handleTravelFileChange"
+            :on-exceed="() => ElMessage.warning('只能上传一个文件')"
+            drag
+          >
+            <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+            <div class="el-upload__text">
+              将Excel文件拖到此处，或<em>点击上传</em>
+            </div>
+            <template #tip>
+              <div class="el-upload__tip text-left">
+                支持两种格式：明细表（Sheet1）或数据透视表（Sheet2），系统自动识别
+              </div>
+            </template>
+          </el-upload>
+          <div v-if="travelFile" class="mt-2 text-sm text-green-600">
+            已选择文件：{{ travelFile.name }}
+          </div>
+        </el-tab-pane>
         <el-tab-pane label="手动粘贴数据" name="manual">
           <div class="mb-3 text-sm text-gray-500">
             请粘贴财务提供的报税数据（格式：员工编号,上月未报税,差旅未报税,补偿金报税），每行一条
@@ -218,7 +245,7 @@
       <template #footer>
         <el-button @click="taxImportVisible = false">取消</el-button>
         <el-button type="primary" :loading="taxImporting" @click="doTaxImport">
-          {{ taxImportTab === 'excel' ? '解析并导入Excel' : '导入数据' }}
+          {{ taxImportTab === 'excel' ? '解析并导入个税' : taxImportTab === 'travel' ? '解析并导入差旅补贴' : '导入数据' }}
         </el-button>
       </template>
     </el-dialog>
@@ -227,13 +254,13 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { Download, Delete, UploadFilled } from '@element-plus/icons-vue'
 import api from '../../api'
 import { SALARY_COLUMNS, SALARY_EDITABLE_FIELDS, getSalaryFieldLabel } from '../../config/columns'
 
 function formatValue(val, decimals = null) {
-  if (val == null || val === 0 || val === 0.0) return ''
+  if (val == null) return ''
   if (typeof val === 'number' && decimals != null) {
     return val.toFixed(decimals)
   }
@@ -241,7 +268,7 @@ function formatValue(val, decimals = null) {
 }
 
 function formatMoney(val) {
-  if (val == null || val === 0 || val === 0.0) return ''
+  if (val == null) return ''
   return Number(val).toFixed(2)
 }
 
@@ -275,7 +302,6 @@ const periodDate = ref(defaultPeriod)
 const filterField = ref('')
 const filterValue = ref('')
 const checking = ref(false)
-const calculating = ref(false)
 const savingEdits = ref(false)
 const loading = ref(false)
 const isSubmitting = ref(false)
@@ -297,9 +323,26 @@ function getFieldLabel(key) {
   return getSalaryFieldLabel(key)
 }
 
-const canCalculate = computed(() => true)
 const hasResults = computed(() => results.value.length > 0)
-const hasCalculatedResults = computed(() => results.value.some(r => r.id != null))
+
+async function ensureRecordsExist() {
+  const hasUncreated = results.value.some(r => r.id == null)
+  if (!hasUncreated) return true
+  const loading = ElLoading.service({ text: '正在准备数据...' })
+  try {
+    const params = {}
+    const hideStatusId = localStorage.getItem('employee_hide_status_id')
+    if (hideStatusId) params.hide_status_id = Number(hideStatusId)
+    await api.post(`/salary/ensure-records/${periodDate.value}`, null, { params })
+    await fetchResults()
+    return true
+  } catch (e) {
+    ElMessage.error('准备数据失败：' + (e.response?.data?.detail || e.message))
+    return false
+  } finally {
+    loading.close()
+  }
+}
 
 function tableRowClassName({ row }) {
   if (editMode.value && row.id && changedSet[row.id]) return 'row-changed'
@@ -311,17 +354,19 @@ function initEditCache() {
   results.value.forEach(row => {
     if (!row || !row.id) return
     editCache[row.id] = reactive({
-      commission_bonus: row.commission_bonus ?? 0,
-      pretax_adjustment: row.pretax_adjustment ?? 0,
+      commission_bonus: row.commission_bonus ?? null,
+      pretax_adjustment: row.pretax_adjustment ?? null,
       pretax_adjustment_reason: row.pretax_adjustment_reason ?? '',
-      posttax_adjustment: row.posttax_adjustment ?? 0,
+      posttax_adjustment: row.posttax_adjustment ?? null,
       posttax_adjustment_reason: row.posttax_adjustment_reason ?? '',
-      severance_pay: row.severance_pay ?? 0,
-      year_end_bonus_untaxed: row.year_end_bonus_untaxed ?? 0,
-      last_month_untaxed: row.last_month_untaxed ?? 0,
-      travel_untaxed: row.travel_untaxed ?? 0,
-      compensation_tax: row.compensation_tax ?? 0,
-      tax_deduction: row.tax_deduction ?? 0
+      severance_pay: row.severance_pay ?? null,
+      year_end_bonus_untaxed: row.year_end_bonus_untaxed ?? null,
+      last_month_untaxed: row.last_month_untaxed ?? null,
+      travel_untaxed: row.travel_untaxed ?? null,
+      compensation_tax: row.compensation_tax ?? null,
+      tax_deduction: row.tax_deduction ?? null,
+      special_deduction: row.special_deduction ?? null,
+      performance_coefficient: row.performance_coefficient ?? null
     })
   })
 }
@@ -329,11 +374,16 @@ function initEditCache() {
 function markChanged(rowId, field) {
   const row = results.value.find(r => r.id === rowId)
   if (!row) return
-  const oldVal = row[field] ?? 0
-  const newVal = editCache[rowId]?.[field] ?? 0
-  const changed = typeof oldVal === 'number' && typeof newVal === 'number'
-    ? Math.abs(oldVal - newVal) >= 0.001
-    : String(oldVal) !== String(newVal)
+  const oldVal = row[field]
+  const newVal = editCache[rowId]?.[field]
+  const changed = (() => {
+    if (oldVal == null && newVal == null) return false
+    if (oldVal == null || newVal == null) return oldVal !== newVal
+    if (typeof oldVal === 'number' && typeof newVal === 'number') {
+      return Math.abs(oldVal - newVal) >= 0.001
+    }
+    return String(oldVal) !== String(newVal)
+  })()
   if (!changed) {
     if (changedSet[rowId]) {
       delete changedSet[rowId][field]
@@ -345,7 +395,7 @@ function markChanged(rowId, field) {
   }
 }
 
-function toggleEditMode() {
+async function toggleEditMode() {
   try {
     if (editMode.value) {
       editMode.value = false
@@ -357,6 +407,8 @@ function toggleEditMode() {
       }
       return
     }
+    const ok = await ensureRecordsExist()
+    if (!ok) return
     initEditCache()
     editMode.value = true
   } catch (e) {
@@ -388,13 +440,13 @@ async function confirmEdits() {
     if (!row) return
     const changes = []
     Object.keys(changedSet[id]).forEach(field => {
-      const oldVal = row[field] ?? 0
-      const newVal = editCache[id]?.[field] ?? 0
+      const oldVal = row[field]
+      const newVal = editCache[id]?.[field]
       changes.push({
         field,
         label: getFieldLabel(field) || field,
-        old: typeof oldVal === 'number' ? oldVal.toFixed(2) : String(oldVal),
-        new: typeof newVal === 'number' ? newVal.toFixed(2) : String(newVal)
+        old: oldVal == null ? '(空)' : (typeof oldVal === 'number' ? oldVal.toFixed(2) : String(oldVal)),
+        new: newVal == null ? '(空)' : (typeof newVal === 'number' ? newVal.toFixed(2) : String(newVal))
       })
     })
     if (changes.length) {
@@ -423,7 +475,8 @@ async function saveAllEdits() {
       if (!cache) continue
       const payload = {}
       Object.keys(changedSet[id] || {}).forEach(field => {
-        payload[field] = cache[field]
+        const val = cache[field]
+        payload[field] = val === undefined ? null : val
       })
       try {
         await api.put(`/salary/results/${id}`, payload)
@@ -475,32 +528,7 @@ async function checkCompleteness() {
   }
 }
 
-async function startCalculate() {
-  await ElMessageBox.confirm(`确认开始核算 ${periodDate.value} 月份薪资？`, '确认核算', {
-    type: 'info', confirmButtonText: '确认核算', cancelButtonText: '取消'
-  })
-  calculating.value = true
-  try {
-    const params = {}
-    const hideStatusId = localStorage.getItem('employee_hide_status_id')
-    if (hideStatusId) {
-      params.hide_status_id = Number(hideStatusId)
-    }
-    const res = await api.post(`/salary/calculate/${periodDate.value}`, null, { params })
-    summary.value = res.data
-    ElMessage.success('核算完成')
-    await fetchResults()
-  } catch (e) {
-    if (e.response?.status === 400) {
-      ElMessage.warning('该周期已有核算记录，正在加载已有结果')
-      await fetchResults()
-    }
-  } finally {
-    calculating.value = false
-  }
-}
-
-async function fetchResults(autoCalc = true) {
+async function fetchResults() {
   loading.value = true
   try {
     const params = {}
@@ -508,27 +536,8 @@ async function fetchResults(autoCalc = true) {
     if (hideStatusId) {
       params.hide_status_id = Number(hideStatusId)
     }
-    let res = await api.get(`/salary/results/${periodDate.value}`, { params })
+    const res = await api.get(`/salary/results/${periodDate.value}`, { params })
     let data = res.data
-    
-    if (autoCalc && data.length > 0) {
-      const hasCalculated = data.some(r => r.id != null)
-      if (!hasCalculated) {
-        loading.value = false
-        calculating.value = true
-        try {
-          await api.post(`/salary/calculate/${periodDate.value}`, null, { params })
-          try {
-            await api.post(`/salary/calculate-net/${periodDate.value}`)
-          } catch {}
-          res = await api.get(`/salary/results/${periodDate.value}`, { params })
-          data = res.data
-        } finally {
-          calculating.value = false
-          loading.value = true
-        }
-      }
-    }
     
     if (filterField.value && filterValue.value) {
       const fv = filterValue.value.toLowerCase()
@@ -594,6 +603,11 @@ async function batchSubmitApproval() {
 
   isSubmitting.value = true
   try {
+    const ok = await ensureRecordsExist()
+    if (!ok) {
+      isSubmitting.value = false
+      return
+    }
     const res = await api.post('/approval/submit', { period: periodDate.value })
     ElMessage.success(`提交成功！审批流水号：${res.data.approval_no}`)
     await fetchResults()
@@ -661,19 +675,29 @@ const taxData = ref('')
 const taxImportTab = ref('excel')
 const taxFile = ref(null)
 const taxUploadRef = ref(null)
+const travelFile = ref(null)
+const travelUploadRef = ref(null)
 
 function showTaxImport() {
   taxData.value = ''
   taxFile.value = null
+  travelFile.value = null
   taxImportTab.value = 'excel'
   if (taxUploadRef.value) {
     taxUploadRef.value.clearFiles()
+  }
+  if (travelUploadRef.value) {
+    travelUploadRef.value.clearFiles()
   }
   taxImportVisible.value = true
 }
 
 function handleTaxFileChange(file) {
   taxFile.value = file.raw
+}
+
+function handleTravelFileChange(file) {
+  travelFile.value = file.raw
 }
 
 async function downloadSingleTaxFile(type, filename) {
@@ -729,7 +753,27 @@ async function doTaxImport() {
       try {
         await api.post(`/salary/calculate-net/${periodDate.value}`)
       } catch {}
-      await fetchResults(false)
+      await fetchResults()
+    } catch (e) {
+      ElMessage.error(e.response?.data?.detail || '导入失败，请确认文件格式正确')
+    } finally {
+      taxImporting.value = false
+    }
+  } else if (taxImportTab.value === 'travel') {
+    if (!travelFile.value) {
+      ElMessage.warning('请先选择要上传的Excel文件')
+      return
+    }
+    const formData = new FormData()
+    formData.append('file', travelFile.value)
+    taxImporting.value = true
+    try {
+      const res = await api.post(`/salary/import-travel-untaxed/${periodDate.value}`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      ElMessage.success(res.data.message)
+      taxImportVisible.value = false
+      await fetchResults()
     } catch (e) {
       ElMessage.error(e.response?.data?.detail || '导入失败，请确认文件格式正确')
     } finally {
@@ -764,7 +808,7 @@ async function doTaxImport() {
       try {
         await api.post(`/salary/calculate-net/${periodDate.value}`)
       } catch {}
-      await fetchResults(false)
+      await fetchResults()
     } catch (e) {
       ElMessage.error('导入失败')
     } finally {

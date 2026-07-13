@@ -16,6 +16,7 @@ def run_migrations():
         _run_pg_migrations()
         _run_pg_nullable_migration()
         _run_attendance_precision_migration()
+        _run_salary_nullable_migration()
     _run_salary_export_migrations()
 
 
@@ -305,3 +306,14 @@ def _run_salary_export_migrations():
                 conn.execute(text(
                     f"ALTER TABLE salary_calculations ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
                 ))
+
+
+def _run_salary_nullable_migration():
+    """PostgreSQL: 将薪资表的个税字段改为允许NULL（未报税时留空）"""
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE salary_calculations ALTER COLUMN tax_deduction DROP NOT NULL"
+        ))
+        conn.execute(text(
+            "ALTER TABLE salary_calculations ALTER COLUMN tax_deduction DROP DEFAULT"
+        ))
