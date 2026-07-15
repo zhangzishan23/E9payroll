@@ -14,6 +14,9 @@
       <el-button type="warning" size="small" :loading="syncingAttendance" @click="syncAttendance">
         <el-icon class="mr-1"><Refresh /></el-icon>同步钉钉
       </el-button>
+      <el-button type="success" size="small" :loading="checkingWriteOff" @click="openMissedPunchCheck">
+        <el-icon class="mr-1"><Check /></el-icon>缺卡核销
+      </el-button>
       <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">
         删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
       </el-button>
@@ -22,6 +25,21 @@
       <el-button size="small" :type="editMode ? 'warning' : 'default'" @click="toggleEditMode">
         {{ editMode ? '退出编辑' : '编辑' }}
       </el-button>
+      <el-divider direction="vertical" />
+      <el-tooltip content="锁定后的数据在同步钉钉或导入时不会被覆盖" placement="top">
+        <el-button size="small" type="warning" :disabled="!selectedRows.length" @click="batchLockRows">
+          <el-icon class="mr-1"><Lock /></el-icon>锁定选中{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
+        </el-button>
+      </el-tooltip>
+      <el-button size="small" :disabled="!selectedRows.length" @click="batchUnlockRows">
+        解锁选中{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
+      </el-button>
+      <ColumnSetting
+        :columns="TABLE_COLUMNS"
+        :default-visible-keys="DEFAULT_VISIBLE_COLUMNS"
+        v-model="visibleColumns"
+        storage-key="attendance_table_columns"
+      />
       <template v-if="editMode">
         <el-button type="primary" size="small" :loading="savingEdits" :disabled="changedSet.size === 0" @click="confirmEdits">
           保存{{ changedSet.size ? `(${changedSet.size})` : '' }}
@@ -44,26 +62,44 @@
     </el-alert>
 
     <el-table :data="records" border stripe v-loading="loading" max-height="600" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
-      <el-table-column type="selection" width="45" />
-      <el-table-column type="index" label="序号" width="50" />
-      <el-table-column prop="employee_name" label="员工姓名" width="80" fixed show-overflow-tooltip />
-      <el-table-column prop="contract_company" label="合同主体" width="120" show-overflow-tooltip />
-      <el-table-column prop="department" label="部门" width="100" show-overflow-tooltip />
-      <el-table-column prop="salary_start_date" label="计薪开始日期" width="110">
-        <template #default="{ row }">{{ formatDate(row.salary_start_date) }}</template>
-      </el-table-column>
-      <el-table-column prop="salary_end_date" label="计薪截至日期" width="110">
-        <template #default="{ row }">{{ formatDate(row.salary_end_date) }}</template>
-      </el-table-column>
-      <el-table-column prop="total_work_days" label="当月总计薪天数" width="115">
+      <el-table-column v-if="isColumnVisible('selection')" type="selection" width="45" />
+      <el-table-column v-if="isColumnVisible('index')" type="index" label="序号" width="50" />
+      <el-table-column v-if="isColumnVisible('employee_name')" prop="employee_name" label="员工姓名" width="80" fixed show-overflow-tooltip />
+      <el-table-column v-if="isColumnVisible('contract_company')" prop="contract_company" label="合同主体" width="120" show-overflow-tooltip />
+      <el-table-column v-if="isColumnVisible('department')" prop="department" label="部门" width="100" show-overflow-tooltip />
+      <el-table-column v-if="isColumnVisible('lock_status')" label="锁定状态" width="95" align="center">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
-            <el-input-number v-model="editCache[row.id].total_work_days" :min="0" :max="31" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
-          </template>
-          <template v-else>{{ formatNum(row.total_work_days) }}</template>
+          <el-tooltip v-if="row.is_row_locked" content="整行已锁定，同步/导入时不会被覆盖" placement="top">
+            <span class="text-red-500 flex items-center justify-center gap-0.5">
+              <el-icon><Lock /></el-icon> 已锁定
+            </span>
+          </el-tooltip>
+          <el-tooltip v-else-if="row.locked_fields && Object.keys(row.locked_fields).length" content="部分字段已锁定" placement="top">
+            <span class="text-orange-500 flex items-center justify-center gap-0.5">
+              <el-icon><Lock /></el-icon> 部分锁定
+            </span>
+          </el-tooltip>
+          <span v-else class="text-gray-400">未锁定</span>
         </template>
       </el-table-column>
-      <el-table-column prop="adjusted_salary_days" label="应计薪天数" width="95">
+      <el-table-column v-if="isColumnVisible('salary_start_date')" prop="salary_start_date" label="计薪开始日期" width="110">
+        <template #default="{ row }">{{ formatDate(row.salary_start_date) }}</template>
+      </el-table-column>
+      <el-table-column v-if="isColumnVisible('salary_end_date')" prop="salary_end_date" label="计薪截至日期" width="110">
+        <template #default="{ row }">{{ formatDate(row.salary_end_date) }}</template>
+      </el-table-column>
+      <el-table-column v-if="isColumnVisible('total_work_days')" prop="total_work_days" label="当月总计薪天数" width="115">
+        <template #default="{ row }">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'total_work_days')">
+            <el-input-number v-model="editCache[row.id].total_work_days" :min="0" :max="31" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+          </template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'total_work_days') }">{{ formatNum(row.total_work_days) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'total_work_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
+        </template>
+      </el-table-column>
+      <el-table-column v-if="isColumnVisible('adjusted_salary_days')" prop="adjusted_salary_days" label="应计薪天数" width="95">
         <template #default="{ row }">
           <span :class="{ 'text-red-600 font-bold': isDaysMismatch(row) }">
             {{ formatNum(row.adjusted_salary_days) }}
@@ -71,199 +107,281 @@
           </span>
         </template>
       </el-table-column>
-      <el-table-column prop="actual_salary_days" label="计薪天数" width="85">
+      <el-table-column v-if="isColumnVisible('actual_salary_days')" prop="actual_salary_days" label="计薪天数" width="85">
         <template #default="{ row }">{{ formatNum(row.actual_salary_days) }}</template>
       </el-table-column>
-      <el-table-column prop="attendance_rate" label="出勤率" width="80">
+      <el-table-column v-if="isColumnVisible('attendance_rate')" prop="attendance_rate" label="出勤率" width="80">
         <template #default="{ row }">{{ row.attendance_rate != null ? (row.attendance_rate * 100).toFixed(1) + '%' : '' }}</template>
       </el-table-column>
-      <el-table-column prop="half_day_missed_punch" label="半天缺卡（次数）" width="115">
+      <el-table-column v-if="isColumnVisible('half_day_missed_punch')" prop="half_day_missed_punch" label="半天缺卡（次数）" width="115">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'half_day_missed_punch')">
             <el-input-number v-model="editCache[row.id].half_day_missed_punch" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatInt(row.half_day_missed_punch, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'half_day_missed_punch') }">{{ formatInt(row.half_day_missed_punch, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'half_day_missed_punch')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="absenteeism_days" label="全天缺卡（天数）" width="115">
+      <el-table-column v-if="isColumnVisible('absenteeism_days')" prop="absenteeism_days" label="全天缺卡（天数）" width="115">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'absenteeism_days')">
             <el-input-number v-model="editCache[row.id].absenteeism_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatNum(row.absenteeism_days, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'absenteeism_days') }">{{ formatNum(row.absenteeism_days, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'absenteeism_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="late_count" label="迟到次数" width="80">
+      <el-table-column v-if="isColumnVisible('late_count')" prop="late_count" label="迟到次数" width="80">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'late_count')">
             <el-input-number v-model="editCache[row.id].late_count" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatInt(row.late_count, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'late_count') }">{{ formatInt(row.late_count, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'late_count')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="late_duration" label="迟到时长（分钟）" width="115">
+      <el-table-column v-if="isColumnVisible('late_duration')" prop="late_duration" label="迟到时长（分钟）" width="115">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'late_duration')">
             <el-input-number v-model="editCache[row.id].late_duration" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatInt(row.late_duration, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'late_duration') }">{{ formatInt(row.late_duration, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'late_duration')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="severe_late_count" label="严重迟到次数" width="100">
+      <el-table-column v-if="isColumnVisible('severe_late_count')" prop="severe_late_count" label="严重迟到次数" width="100">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'severe_late_count')">
             <el-input-number v-model="editCache[row.id].severe_late_count" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatInt(row.severe_late_count, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'severe_late_count') }">{{ formatInt(row.severe_late_count, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'severe_late_count')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="severe_late_duration" label="严重迟到时长（分钟）" width="130">
+      <el-table-column v-if="isColumnVisible('severe_late_duration')" prop="severe_late_duration" label="严重迟到时长（分钟）" width="130">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'severe_late_duration')">
             <el-input-number v-model="editCache[row.id].severe_late_duration" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatInt(row.severe_late_duration, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'severe_late_duration') }">{{ formatInt(row.severe_late_duration, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'severe_late_duration')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="early_count" label="早退次数" width="80">
+      <el-table-column v-if="isColumnVisible('early_count')" prop="early_count" label="早退次数" width="80">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'early_count')">
             <el-input-number v-model="editCache[row.id].early_count" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatInt(row.early_count, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'early_count') }">{{ formatInt(row.early_count, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'early_count')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="early_duration" label="早退时长（分钟）" width="115">
+      <el-table-column v-if="isColumnVisible('early_duration')" prop="early_duration" label="早退时长（分钟）" width="115">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'early_duration')">
             <el-input-number v-model="editCache[row.id].early_duration" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatInt(row.early_duration, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'early_duration') }">{{ formatInt(row.early_duration, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'early_duration')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="total_overtime" label="加班（小时）" width="90">
+      <el-table-column v-if="isColumnVisible('total_overtime')" prop="total_overtime" label="加班（小时）" width="90">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'total_overtime')">
             <el-input-number v-model="editCache[row.id].total_overtime" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatNum(row.total_overtime, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'total_overtime') }">{{ formatNum(row.total_overtime, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'total_overtime')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="late_to_personal_leave_days" label="迟到转事假" width="95">
+      <el-table-column v-if="isColumnVisible('late_to_personal_leave_days')" prop="late_to_personal_leave_days" label="迟到转事假" width="95">
         <template #default="{ row }">{{ formatNum(row.late_to_personal_leave_days, true) }}</template>
       </el-table-column>
-      <el-table-column prop="personal_leave_days" label="事假" width="70">
+      <el-table-column v-if="isColumnVisible('personal_leave_days')" prop="personal_leave_days" label="事假" width="70">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'personal_leave_days')">
             <el-input-number v-model="editCache[row.id].personal_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatNum(row.personal_leave_days, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'personal_leave_days') }">{{ formatNum(row.personal_leave_days, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'personal_leave_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="full_pay_sick_days" label="全薪病假" width="80">
+      <el-table-column v-if="isColumnVisible('full_pay_sick_days')" prop="full_pay_sick_days" label="全薪病假" width="80">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'full_pay_sick_days')">
             <el-input-number v-model="editCache[row.id].full_pay_sick_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatNum(row.full_pay_sick_days, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'full_pay_sick_days') }">{{ formatNum(row.full_pay_sick_days, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'full_pay_sick_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="reduced_pay_sick_days" label="减薪病假" width="80">
+      <el-table-column v-if="isColumnVisible('reduced_pay_sick_days')" prop="reduced_pay_sick_days" label="减薪病假" width="80">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'reduced_pay_sick_days')">
             <el-input-number v-model="editCache[row.id].reduced_pay_sick_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatNum(row.reduced_pay_sick_days, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'reduced_pay_sick_days') }">{{ formatNum(row.reduced_pay_sick_days, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'reduced_pay_sick_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="statutory_sick_days" label="法定病假" width="80">
+      <el-table-column v-if="isColumnVisible('statutory_sick_days')" prop="statutory_sick_days" label="法定病假" width="80">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'statutory_sick_days')">
             <el-input-number v-model="editCache[row.id].statutory_sick_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatNum(row.statutory_sick_days, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'statutory_sick_days') }">{{ formatNum(row.statutory_sick_days, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'statutory_sick_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="compensatory_leave_days" label="调休" width="70">
+      <el-table-column v-if="isColumnVisible('compensatory_leave_days')" prop="compensatory_leave_days" label="调休" width="70">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'compensatory_leave_days')">
             <el-input-number v-model="editCache[row.id].compensatory_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatNum(row.compensatory_leave_days, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'compensatory_leave_days') }">{{ formatNum(row.compensatory_leave_days, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'compensatory_leave_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="annual_leave_days" label="年假" width="70">
+      <el-table-column v-if="isColumnVisible('annual_leave_days')" prop="annual_leave_days" label="年假" width="70">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'annual_leave_days')">
             <el-input-number v-model="editCache[row.id].annual_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatNum(row.annual_leave_days, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'annual_leave_days') }">{{ formatNum(row.annual_leave_days, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'annual_leave_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="prenatal_checkup_days" label="产检假" width="70">
+      <el-table-column v-if="isColumnVisible('prenatal_checkup_days')" prop="prenatal_checkup_days" label="产检假" width="70">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'prenatal_checkup_days')">
             <el-input-number v-model="editCache[row.id].prenatal_checkup_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatNum(row.prenatal_checkup_days, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'prenatal_checkup_days') }">{{ formatNum(row.prenatal_checkup_days, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'prenatal_checkup_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="maternity_leave_days" label="产假" width="70">
+      <el-table-column v-if="isColumnVisible('maternity_leave_days')" prop="maternity_leave_days" label="产假" width="70">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'maternity_leave_days')">
             <el-input-number v-model="editCache[row.id].maternity_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatNum(row.maternity_leave_days, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'maternity_leave_days') }">{{ formatNum(row.maternity_leave_days, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'maternity_leave_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="paternity_leave_days" label="陪产假" width="70">
+      <el-table-column v-if="isColumnVisible('paternity_leave_days')" prop="paternity_leave_days" label="陪产假" width="70">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'paternity_leave_days')">
             <el-input-number v-model="editCache[row.id].paternity_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatNum(row.paternity_leave_days, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'paternity_leave_days') }">{{ formatNum(row.paternity_leave_days, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'paternity_leave_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="marriage_leave_days" label="婚假" width="70">
+      <el-table-column v-if="isColumnVisible('marriage_leave_days')" prop="marriage_leave_days" label="婚假" width="70">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'marriage_leave_days')">
             <el-input-number v-model="editCache[row.id].marriage_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatNum(row.marriage_leave_days, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'marriage_leave_days') }">{{ formatNum(row.marriage_leave_days, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'marriage_leave_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="funeral_leave_days" label="丧假" width="70">
+      <el-table-column v-if="isColumnVisible('funeral_leave_days')" prop="funeral_leave_days" label="丧假" width="70">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'funeral_leave_days')">
             <el-input-number v-model="editCache[row.id].funeral_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatNum(row.funeral_leave_days, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'funeral_leave_days') }">{{ formatNum(row.funeral_leave_days, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'funeral_leave_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="engineering_compensatory_days" label="调休-工程交付（天）" width="140">
+      <el-table-column v-if="isColumnVisible('engineering_compensatory_days')" prop="engineering_compensatory_days" label="调休-工程交付（天）" width="140">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'engineering_compensatory_days')">
             <el-input-number v-model="editCache[row.id].engineering_compensatory_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
-          <template v-else>{{ formatNum(row.engineering_compensatory_days, true) }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'engineering_compensatory_days') }">{{ formatNum(row.engineering_compensatory_days, true) }}</span>
+            <el-icon v-if="isFieldLocked(row, 'engineering_compensatory_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column prop="leave_total_days" label="合计" width="70">
+      <el-table-column v-if="isColumnVisible('leave_total_days')" prop="leave_total_days" label="合计" width="70">
         <template #default="{ row }">{{ formatNum(row.leave_total_days, true) }}</template>
       </el-table-column>
-      <el-table-column prop="remark" label="备注" min-width="130" show-overflow-tooltip>
+      <el-table-column v-if="isColumnVisible('remark')" prop="remark" label="备注" min-width="130" show-overflow-tooltip>
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
+          <template v-if="editMode && editCache[row.id] && !isFieldLocked(row, 'remark')">
             <el-input v-model="editCache[row.id].remark" size="small" class="cell-input" @input="markChanged(row.id)" />
           </template>
-          <template v-else>{{ row.remark || '' }}</template>
+          <template v-else>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'remark') }">{{ row.remark || '' }}</span>
+            <el-icon v-if="isFieldLocked(row, 'remark')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="120" fixed="right">
+      <el-table-column v-if="isColumnVisible('action')" label="操作" width="160" fixed="right">
         <template #default="{ row }">
           <div class="action-cell">
-            <el-button v-if="row.id && !editMode" type="primary" link size="small" @click="showDialog(row)">编辑</el-button>
-            <el-button v-else-if="!row.id && !editMode" type="success" link size="small" @click="showDialogForEmployee(row)">录入</el-button>
+            <template v-if="!editMode">
+              <el-button v-if="row.id" type="primary" link size="small" @click="showDialog(row)">编辑</el-button>
+              <el-button v-else type="success" link size="small" @click="showDialogForEmployee(row)">录入</el-button>
+              <el-divider direction="vertical" />
+              <el-tooltip v-if="row.is_row_locked" content="点击解锁" placement="top">
+                <el-button type="warning" link size="small" @click="toggleRowLock(row, false)">
+                  <el-icon><Unlock /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-tooltip v-else content="点击锁定整行（同步/导入时不覆盖）" placement="top">
+                <el-button type="info" link size="small" @click="toggleRowLock(row, true)">
+                  <el-icon><Lock /></el-icon>
+                </el-button>
+              </el-tooltip>
+            </template>
+            <template v-else>
+              <span v-if="row.is_row_locked" class="text-gray-400 text-xs">已锁定，不可编辑</span>
+            </template>
           </div>
         </template>
       </el-table-column>
@@ -545,14 +663,141 @@
         <el-button @click="calendarVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 缺卡核销预览弹窗 -->
+    <el-dialog v-model="writeOffVisible" title="缺卡核销（特殊申请自动清零）" width="900px" append-to-body top="5vh">
+      <div v-loading="checkingWriteOff" class="mb-4">
+        <div v-if="writeOffResult" class="mb-4">
+          <el-alert type="info" :closable="false" show-icon class="mb-3">
+            <template #title>
+              查询范围：{{ writeOffResult.apply_range }} 期间提交的审批通过的考勤特殊申请
+            </template>
+          </el-alert>
+          
+          <div class="flex gap-4 mb-4">
+            <el-statistic title="有缺卡记录员工" :value="writeOffResult.summary.total_miss_employees" />
+            <el-statistic title="✅ 申请次数匹配" :value="writeOffResult.summary.matched" class="text-green-600" />
+            <el-statistic title="⚠️ 次数不匹配" :value="writeOffResult.summary.mismatched" class="text-orange-600" />
+            <el-statistic title="❌ 无申请" :value="writeOffResult.summary.no_apply" class="text-red-600" />
+          </div>
+
+          <el-tabs v-model="writeOffActiveTab">
+            <el-tab-pane :label="`✅ 可核销 (${writeOffResult.matched.length})`" name="matched">
+              <div v-if="writeOffResult.matched.length === 0" class="text-gray-400 text-center py-8">
+                暂无可以自动核销的员工
+              </div>
+              <el-table v-else :data="writeOffResult.matched" border stripe max-height="350" @selection-change="handleWriteOffSelection">
+                <el-table-column type="selection" width="45" />
+                <el-table-column prop="employee_name" label="员工姓名" width="100" />
+                <el-table-column label="系统缺卡" width="200">
+                  <template #default="{ row }">
+                    <span>半天缺卡: {{ row.half_day_missed_punch }}次</span><br/>
+                    <span>全天缺卡: {{ row.absenteeism_days }}天 ({{ row.absenteeism_days * 2 }}次)</span><br/>
+                    <b class="text-blue-600">合计: {{ row.total_missed }}次</b>
+                  </template>
+                </el-table-column>
+                <el-table-column label="申请明细" min-width="300">
+                  <template #default="{ row }">
+                    <div v-for="(apply, idx) in row.applies" :key="idx" class="mb-2 pb-2 border-b last:border-0">
+                      <div class="text-sm">
+                        <span class="text-green-600 font-medium">申请{{ idx+1 }} ({{ apply.apply_count }}次)</span>
+                        <span class="text-gray-400 text-xs ml-2">{{ apply.create_time }}</span>
+                      </div>
+                      <div class="text-xs text-gray-600 mt-1">{{ apply.description }}</div>
+                    </div>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-tab-pane>
+            
+            <el-tab-pane :label="`⚠️ 次数不匹配 (${writeOffResult.mismatched.length})`" name="mismatched">
+              <div v-if="writeOffResult.mismatched.length === 0" class="text-gray-400 text-center py-8">
+                无不匹配记录
+              </div>
+              <el-table v-else :data="writeOffResult.mismatched" border stripe max-height="350">
+                <el-table-column prop="employee_name" label="员工姓名" width="100" />
+                <el-table-column label="系统缺卡" width="150">
+                  <template #default="{ row }">
+                    <b>{{ row.total_missed }}次</b><br/>
+                    <span class="text-xs text-gray-500">半天{{ row.half_day_missed_punch }}+全天{{ row.absenteeism_days }}天</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="申请次数" width="100">
+                  <template #default="{ row }">
+                    <b class="text-orange-600">{{ row.total_apply_count }}次</b>
+                  </template>
+                </el-table-column>
+                <el-table-column label="差额" width="80">
+                  <template #default="{ row }">
+                    <span :class="row.total_apply_count - row.total_missed > 0 ? 'text-red-500' : 'text-orange-500'">
+                      {{ row.total_apply_count - row.total_missed > 0 ? '+' : '' }}{{ row.total_apply_count - row.total_missed }}
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="申请说明" min-width="300" show-overflow-tooltip>
+                  <template #default="{ row }">
+                    <div v-for="(apply, idx) in row.applies" :key="idx" class="text-sm">
+                      {{ apply.description }}
+                    </div>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-tab-pane>
+            
+            <el-tab-pane :label="`❌ 无申请 (${writeOffResult.no_apply.length})`" name="no_apply">
+              <div v-if="writeOffResult.no_apply.length === 0" class="text-gray-400 text-center py-8">
+                所有缺卡员工均有申请记录
+              </div>
+              <el-table v-else :data="writeOffResult.no_apply" border stripe max-height="350">
+                <el-table-column prop="employee_name" label="员工姓名" width="120" />
+                <el-table-column label="系统缺卡次数" width="200">
+                  <template #default="{ row }">
+                    <b class="text-red-500">{{ row.total_missed }}次</b>
+                    <span class="text-xs text-gray-500 ml-2">
+                      (半天{{ row.half_day_missed_punch }}次 + 全天{{ row.absenteeism_days }}天)
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="提示" min-width="200">
+                  <template #default>
+                    <span class="text-gray-500 text-sm">未查询到审批通过的考勤特殊申请，请人工确认</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-tab-pane>
+          </el-tabs>
+        </div>
+      </div>
+      
+      <template #footer>
+        <el-button @click="writeOffVisible = false">关闭</el-button>
+        <el-button 
+          type="primary" 
+          :disabled="!writeOffResult || writeOffResult.matched.length === 0 || selectedWriteOffRows.length === 0"
+          :loading="writingOff"
+          @click="confirmWriteOff"
+        >
+          核销选中的 {{ selectedWriteOffRows.length }} 人
+        </el-button>
+        <el-button 
+          type="success" 
+          :disabled="!writeOffResult || writeOffResult.matched.length === 0"
+          :loading="writingOffAll"
+          @click="confirmWriteOffAll"
+        >
+          一键核销全部匹配 ({{ writeOffResult?.matched.length || 0 }}人)
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Download, Upload, Delete, Refresh, MagicStick, RefreshRight, WarningFilled } from '@element-plus/icons-vue'
+import { Plus, Download, Upload, Delete, Refresh, MagicStick, RefreshRight, WarningFilled, Lock, Unlock, Check } from '@element-plus/icons-vue'
 import api from '../../api'
+import ColumnSetting from '../../components/ColumnSetting.vue'
 
 function getDefaultPeriod() {
   const now = new Date()
@@ -573,6 +818,58 @@ function getDefaultPeriod() {
 }
 
 const defaultPeriod = getDefaultPeriod()
+
+const TABLE_COLUMNS = [
+  { key: 'selection', label: '选择', required: true },
+  { key: 'index', label: '序号', required: true },
+  { key: 'employee_name', label: '员工姓名', required: true },
+  { key: 'contract_company', label: '合同主体' },
+  { key: 'department', label: '部门' },
+  { key: 'lock_status', label: '锁定状态' },
+  { key: 'salary_start_date', label: '计薪开始日期' },
+  { key: 'salary_end_date', label: '计薪截至日期' },
+  { key: 'total_work_days', label: '当月总计薪天数' },
+  { key: 'adjusted_salary_days', label: '应计薪天数', required: true },
+  { key: 'actual_salary_days', label: '计薪天数' },
+  { key: 'attendance_rate', label: '出勤率' },
+  { key: 'half_day_missed_punch', label: '半天缺卡' },
+  { key: 'absenteeism_days', label: '全天缺卡' },
+  { key: 'late_count', label: '迟到次数' },
+  { key: 'late_duration', label: '迟到时长' },
+  { key: 'severe_late_count', label: '严重迟到次数' },
+  { key: 'severe_late_duration', label: '严重迟到时长' },
+  { key: 'early_count', label: '早退次数' },
+  { key: 'early_duration', label: '早退时长' },
+  { key: 'total_overtime', label: '加班小时' },
+  { key: 'late_to_personal_leave_days', label: '迟到转事假' },
+  { key: 'personal_leave_days', label: '事假' },
+  { key: 'full_pay_sick_days', label: '全薪病假' },
+  { key: 'reduced_pay_sick_days', label: '减薪病假' },
+  { key: 'statutory_sick_days', label: '法定病假' },
+  { key: 'compensatory_leave_days', label: '调休' },
+  { key: 'annual_leave_days', label: '年假' },
+  { key: 'prenatal_checkup_days', label: '产检假' },
+  { key: 'maternity_leave_days', label: '产假' },
+  { key: 'paternity_leave_days', label: '陪产假' },
+  { key: 'marriage_leave_days', label: '婚假' },
+  { key: 'funeral_leave_days', label: '丧假' },
+  { key: 'engineering_compensatory_days', label: '调休-工程交付' },
+  { key: 'leave_total_days', label: '合计', required: true },
+  { key: 'remark', label: '备注' },
+  { key: 'action', label: '操作', required: true }
+]
+
+const DEFAULT_VISIBLE_COLUMNS = [
+  'selection', 'index', 'employee_name', 'department', 'lock_status', 'total_work_days',
+  'adjusted_salary_days', 'actual_salary_days', 'attendance_rate', 'late_count',
+  'absenteeism_days', 'total_overtime', 'personal_leave_days', 'leave_total_days', 'action'
+]
+
+const visibleColumns = ref([])
+
+function isColumnVisible(key) {
+  return visibleColumns.value.includes(key)
+}
 
 const loading = ref(false)
 const saving = ref(false)
@@ -611,6 +908,15 @@ const recalculating = ref(false)
 const yearCalendarDays = ref([])
 const yearSummary = ref({})
 const touchedPeriods = ref(new Set())
+
+// 缺卡核销相关
+const writeOffVisible = ref(false)
+const checkingWriteOff = ref(false)
+const writingOff = ref(false)
+const writingOffAll = ref(false)
+const writeOffResult = ref(null)
+const writeOffActiveTab = ref('matched')
+const selectedWriteOffRows = ref([])
 
 const displayCalendarYear = computed(() => {
   if (!calendarYearPicker.value) return new Date().getFullYear()
@@ -785,6 +1091,7 @@ function tableRowClassName({ row }) {
   const classes = []
   if (editMode.value && row.id && changedSet.value.has(row.id)) classes.push('row-changed')
   if (isDaysMismatch(row)) classes.push('row-mismatch')
+  if (row.is_row_locked) classes.push('row-locked')
   return classes.join(' ')
 }
 
@@ -1025,6 +1332,91 @@ async function handleBatchDelete() {
   }
 }
 
+function isFieldLocked(row, field) {
+  if (row.is_row_locked) return true
+  if (row.locked_fields && row.locked_fields[field]) return true
+  return false
+}
+
+async function toggleRowLock(row, lock) {
+  if (!row.id) {
+    ElMessage.warning('请先录入该员工考勤数据后再锁定')
+    return
+  }
+  const action = lock ? '锁定' : '解锁'
+  try {
+    const formData = new FormData()
+    formData.append('locked', lock ? 'true' : 'false')
+    await api.post(`/attendance/${row.id}/lock-row`, formData)
+    ElMessage.success(`${action}成功`)
+    await fetchData()
+  } catch (e) {
+    ElMessage.error(`${action}失败：` + (e.response?.data?.detail || e.message))
+  }
+}
+
+async function batchLockRows() {
+  const lockableRows = selectedRows.value.filter(r => r.id && !r.is_row_locked)
+  if (!lockableRows.length) {
+    ElMessage.warning('选中的记录中没有可锁定的已录入数据')
+    return
+  }
+  await ElMessageBox.confirm(
+    `确定要锁定选中的 ${lockableRows.length} 条考勤记录吗？锁定后的数据在同步钉钉或导入时不会被覆盖。`,
+    '批量锁定确认',
+    { type: 'warning', confirmButtonText: '确定锁定', cancelButtonText: '取消' }
+  )
+  let successCount = 0, failCount = 0
+  for (const row of lockableRows) {
+    try {
+      const formData = new FormData()
+      formData.append('locked', 'true')
+      await api.post(`/attendance/${row.id}/lock-row`, formData)
+      successCount++
+    } catch {
+      failCount++
+    }
+  }
+  if (failCount === 0) {
+    ElMessage.success(`成功锁定 ${successCount} 条记录`)
+  } else {
+    ElMessage.warning(`部分成功：${successCount} 条已锁定，${failCount} 条失败`)
+  }
+  selectedRows.value = []
+  await fetchData()
+}
+
+async function batchUnlockRows() {
+  const unlockableRows = selectedRows.value.filter(r => r.id && r.is_row_locked)
+  if (!unlockableRows.length) {
+    ElMessage.warning('选中的记录中没有已锁定的数据')
+    return
+  }
+  await ElMessageBox.confirm(
+    `确定要解锁选中的 ${unlockableRows.length} 条考勤记录吗？解锁后同步或导入时可能会覆盖这些数据。`,
+    '批量解锁确认',
+    { type: 'warning', confirmButtonText: '确定解锁', cancelButtonText: '取消' }
+  )
+  let successCount = 0, failCount = 0
+  for (const row of unlockableRows) {
+    try {
+      const formData = new FormData()
+      formData.append('locked', 'false')
+      await api.post(`/attendance/${row.id}/lock-row`, formData)
+      successCount++
+    } catch {
+      failCount++
+    }
+  }
+  if (failCount === 0) {
+    ElMessage.success(`成功解锁 ${successCount} 条记录`)
+  } else {
+    ElMessage.warning(`部分成功：${successCount} 条已解锁，${failCount} 条失败`)
+  }
+  selectedRows.value = []
+  await fetchData()
+}
+
 function showImport() {
   importFile.value = null; fileList.value = []; importResult.value = null; importVisible.value = true
 }
@@ -1198,6 +1590,87 @@ async function onCalendarClose() {
   await fetchData()
 }
 
+// ==================== 缺卡核销 ====================
+
+async function openMissedPunchCheck() {
+  writeOffVisible.value = true
+  writeOffResult.value = null
+  writeOffActiveTab.value = 'matched'
+  selectedWriteOffRows.value = []
+  checkingWriteOff.value = true
+  try {
+    const res = await api.get('/attendance/missed-punch-check', { params: { period: periodDate.value } })
+    writeOffResult.value = res.data
+    // 默认选中所有可核销的
+    selectedWriteOffRows.value = [...res.data.matched]
+  } catch (e) {
+    ElMessage.error('查询缺卡申请失败：' + (e.response?.data?.detail || e.message))
+    writeOffVisible.value = false
+  } finally {
+    checkingWriteOff.value = false
+  }
+}
+
+function handleWriteOffSelection(selection) {
+  selectedWriteOffRows.value = selection
+}
+
+async function confirmWriteOff() {
+  if (selectedWriteOffRows.value.length === 0) {
+    ElMessage.warning('请先选择要核销的员工')
+    return
+  }
+  await ElMessageBox.confirm(
+    `确定要核销选中的 ${selectedWriteOffRows.value.length} 名员工的缺卡记录吗？\n核销后半天缺卡和全天缺卡将被清零，并记录核销备注。`,
+    '确认核销',
+    { type: 'warning', confirmButtonText: '确定核销', cancelButtonText: '取消' }
+  )
+  writingOff.value = true
+  try {
+    const formData = new URLSearchParams()
+    formData.append('period', periodDate.value)
+    formData.append('apply_all', 'false')
+    const empIds = selectedWriteOffRows.value.map(r => r.employee_id).join(',')
+    formData.append('employee_ids', empIds)
+    const res = await api.post('/attendance/missed-punch-write-off', formData, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+    ElMessage.success(res.data.message)
+    writeOffVisible.value = false
+    await fetchData()
+  } catch (e) {
+    ElMessage.error('核销失败：' + (e.response?.data?.detail || e.message))
+  } finally {
+    writingOff.value = false
+  }
+}
+
+async function confirmWriteOffAll() {
+  if (!writeOffResult.value || writeOffResult.value.matched.length === 0) return
+  const count = writeOffResult.value.matched.length
+  await ElMessageBox.confirm(
+    `确定要一键核销所有 ${count} 名匹配员工的缺卡记录吗？\n核销后半天缺卡和全天缺卡将被清零，并记录核销备注。`,
+    '确认一键核销',
+    { type: 'warning', confirmButtonText: '确定核销全部', cancelButtonText: '取消' }
+  )
+  writingOffAll.value = true
+  try {
+    const formData = new URLSearchParams()
+    formData.append('period', periodDate.value)
+    formData.append('apply_all', 'true')
+    const res = await api.post('/attendance/missed-punch-write-off', formData, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+    ElMessage.success(res.data.message)
+    writeOffVisible.value = false
+    await fetchData()
+  } catch (e) {
+    ElMessage.error('核销失败：' + (e.response?.data?.detail || e.message))
+  } finally {
+    writingOffAll.value = false
+  }
+}
+
 onMounted(() => { fetchData() })
 </script>
 
@@ -1210,6 +1683,9 @@ onMounted(() => { fetchData() })
 :deep(.row-changed) { background-color: #fef3c7 !important; }
 :deep(.row-mismatch) { background-color: #fef2f2 !important; }
 :deep(.row-mismatch:hover) > td { background-color: #fee2e2 !important; }
+:deep(.row-locked) { background-color: #f0f9ff !important; }
+:deep(.row-locked:hover) > td { background-color: #e0f2fe !important; }
+:deep(.row-locked td) { color: #64748b; }
 
 /* 年度工作日历样式 */
 .year-calendar-grid {

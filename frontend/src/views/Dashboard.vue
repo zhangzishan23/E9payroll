@@ -12,7 +12,7 @@
               <span class="px-2 py-0.5 bg-blue-100 text-blue-600 text-xs rounded-full font-medium">智能化薪资核算</span>
             </div>
             <p class="text-gray-600 mt-1">你好，{{ authStore.user?.display_name || '用户' }} 👋 今天是 {{ today }}</p>
-            <p class="text-blue-600 text-sm mt-0.5 font-medium">{{ currentPeriodDisplay }} 工资核算进行中</p>
+            <p class="text-blue-600 text-sm mt-0.5 font-medium">{{ currentPeriodDisplay }} 工资计算进行中</p>
           </div>
         </div>
         <div class="flex items-center gap-2">
@@ -47,7 +47,7 @@
             v-for="(step, index) in salarySteps"
             :key="step.key"
             class="flex flex-col items-center cursor-pointer group"
-            style="width: 12.5%;"
+            style="width: 14.28%;"
           >
             <div class="relative">
               <div
@@ -87,7 +87,7 @@
       <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         <div class="apple-card p-5 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-blue-300" @click="goTo('/salary')">
           <el-icon class="text-4xl text-blue-500 mb-3"><Money /></el-icon>
-          <div class="font-semibold">薪资核算</div>
+          <div class="font-semibold">薪资计算</div>
           <div class="text-xs text-gray-500 mt-1">计算当月工资</div>
         </div>
         <div class="apple-card p-5 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-green-300" @click="goTo('/attendance')">
@@ -131,14 +131,10 @@
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <div class="apple-card p-6">
         <h3 class="text-lg font-semibold text-gray-700 mb-4">📊 数据概览</h3>
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-3 gap-4">
           <div class="text-center p-4 bg-blue-50 rounded-lg">
             <div class="text-3xl font-bold text-blue-600">{{ stats.total_employees }}</div>
             <div class="text-sm text-gray-500 mt-1">在职员工</div>
-          </div>
-          <div class="text-center p-4 bg-green-50 rounded-lg">
-            <div class="text-3xl font-bold text-green-600">{{ stats.salary_completed }}/{{ stats.salary_total }}</div>
-            <div class="text-sm text-gray-500 mt-1">薪资已核算</div>
           </div>
           <div class="text-center p-4 bg-purple-50 rounded-lg">
             <div class="text-2xl font-bold text-purple-600">{{ fmtMoney(stats.avg_gross) }}</div>
@@ -154,15 +150,7 @@
       <div class="apple-card p-6">
         <h3 class="text-lg font-semibold text-gray-700 mb-4">⚠️ 待办提醒</h3>
         <div class="space-y-3">
-          <div v-if="stats.salary_completed < stats.salary_total && stats.salary_total > 0" class="flex items-center gap-3 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-            <el-icon class="text-yellow-500 text-xl"><WarningFilled /></el-icon>
-            <div class="flex-1">
-              <div class="font-medium text-sm">薪资核算未完成</div>
-              <div class="text-xs text-gray-500">还有 {{ stats.salary_total - stats.salary_completed }} 人未计算工资</div>
-            </div>
-            <el-button type="primary" size="small" text @click="goTo('/salary')">去处理</el-button>
-          </div>
-          <div v-if="stats.salary_completed === stats.salary_total && stats.tax_missing > 0 && stats.salary_total > 0" class="flex items-center gap-3 p-3 bg-amber-50 rounded-lg border border-amber-200">
+          <div v-if="stats.salary_total > 0 && stats.tax_missing > 0" class="flex items-center gap-3 p-3 bg-amber-50 rounded-lg border border-amber-200">
             <el-icon class="text-amber-500 text-xl"><Document /></el-icon>
             <div class="flex-1">
               <div class="font-medium text-sm">个税待申报导入</div>
@@ -170,11 +158,11 @@
             </div>
             <el-button type="warning" size="small" text @click="goTo('/salary')">去处理</el-button>
           </div>
-          <div v-if="stats.review_passed < stats.salary_completed && stats.salary_completed > 0 && stats.tax_missing === 0" class="flex items-center gap-3 p-3 bg-orange-50 rounded-lg border border-orange-200">
+          <div v-if="stats.salary_total > 0 && stats.tax_missing === 0 && stats.review_passed < stats.salary_total" class="flex items-center gap-3 p-3 bg-orange-50 rounded-lg border border-orange-200">
             <el-icon class="text-orange-500 text-xl"><Clock /></el-icon>
             <div class="flex-1">
               <div class="font-medium text-sm">薪资待审批</div>
-              <div class="text-xs text-gray-500">{{ stats.salary_completed - stats.review_passed }} 人薪资待审核</div>
+              <div class="text-xs text-gray-500">{{ stats.salary_total - stats.review_passed }} 人薪资待审核</div>
             </div>
             <el-button type="primary" size="small" text @click="goTo('/approval')">去审批</el-button>
           </div>
@@ -186,7 +174,7 @@
             </div>
             <el-button type="danger" size="small" text @click="goTo('/reports')">查看详情</el-button>
           </div>
-          <div v-if="stats.salary_completed === stats.salary_total && stats.salary_total > 0 && stats.tax_missing === 0 && stats.review_passed === stats.salary_completed" class="flex items-center gap-3 p-3 bg-green-50 rounded-lg border border-green-200">
+          <div v-if="stats.salary_total > 0 && stats.tax_missing === 0 && stats.review_passed === stats.salary_total" class="flex items-center gap-3 p-3 bg-green-50 rounded-lg border border-green-200">
             <el-icon class="text-green-500 text-xl"><CircleCheck /></el-icon>
             <div class="flex-1">
               <div class="font-medium text-sm">🎉 本月薪资已完成审批</div>
@@ -272,7 +260,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
-import { Money, Calendar, CreditCard, TrendCharts, Checked, Document, User, Setting, WarningFilled, Clock, CircleClose, CircleCheck, Finished, Check, Download, UploadFilled } from '@element-plus/icons-vue'
+import { Money, Calendar, CreditCard, TrendCharts, Checked, Document, User, Setting, Clock, CircleClose, CircleCheck, Finished, Check, Download, UploadFilled } from '@element-plus/icons-vue'
 import api from '../api'
 import { getDefaultPeriod, formatPeriodDisplay } from '../utils/date.js'
 import { useAuthStore } from '../stores/auth'
@@ -308,11 +296,10 @@ const contractWarning = reactive({
 })
 
 const hasAnyTodo = computed(() => {
-  return (stats.salary_completed < stats.salary_total && stats.salary_total > 0) ||
-    (stats.salary_completed === stats.salary_total && stats.tax_missing > 0 && stats.salary_total > 0) ||
-    (stats.review_passed < stats.salary_completed && stats.salary_completed > 0 && stats.tax_missing === 0) ||
+  return (stats.salary_total > 0 && stats.tax_missing > 0) ||
+    (stats.salary_total > 0 && stats.tax_missing === 0 && stats.review_passed < stats.salary_total) ||
     contractWarning.list.length > 0 ||
-    (stats.salary_completed === stats.salary_total && stats.salary_total > 0 && stats.tax_missing === 0 && stats.review_passed === stats.salary_completed)
+    (stats.salary_total > 0 && stats.tax_missing === 0 && stats.review_passed === stats.salary_total)
 })
 
 function fmtMoney(val) {
@@ -372,7 +359,7 @@ function getStepDesc(step) {
 async function handleStepClick(step) {
   if (!step.can_confirm) {
     if (step.key === 'salary' && step.prerequisites_met === false) {
-      ElMessage.warning('请先确认前序步骤（员工档案、考勤数据、绩效评分、社保数据）后再确认薪资计算')
+      ElMessage.warning('请先确认前序步骤（员工档案、考勤数据、绩效评分、社保数据、个税申报）后再确认薪资计算')
     } else {
       ElMessage.warning('暂无员工数据，请先添加员工')
     }

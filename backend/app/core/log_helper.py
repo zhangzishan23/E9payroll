@@ -1,5 +1,19 @@
+from contextvars import ContextVar
 from sqlalchemy.orm import Session
 from app.models.models import SysLog
+
+# 存储当前请求上下文的客户端 IP
+_current_request_ip: ContextVar[str | None] = ContextVar("_current_request_ip", default=None)
+
+
+def set_current_request_ip(ip: str | None) -> None:
+    """在中间件中调用，记录当前请求的客户端 IP"""
+    _current_request_ip.set(ip)
+
+
+def get_current_request_ip() -> str | None:
+    """获取当前请求上下文的客户端 IP"""
+    return _current_request_ip.get()
 
 
 def write_log(
@@ -22,7 +36,8 @@ def write_log(
             action=action,
             target=target,
             detail=detail,
-            result=result
+            result=result,
+            ip_address=get_current_request_ip()
         )
         db.add(log)
         db.commit()

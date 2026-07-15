@@ -117,6 +117,7 @@ class SalaryCalcOut(BaseModel):
     actual_taxable: Optional[float] = None
     special_deduction: Optional[float] = None
     salary_after_si_hf: Optional[float] = None
+    remark: Optional[str] = None
     review_status: str = ""
     calculation_status: str = ""
     data_completeness: str = ""
@@ -139,6 +140,7 @@ class SalaryCalcUpdate(BaseModel):
     compensation_tax: Optional[float] = None
     severance_pay: Optional[float] = None
     year_end_bonus_untaxed: Optional[float] = None
+    remark: Optional[str] = None
     review_status: Optional[str] = None
 
 
@@ -281,6 +283,22 @@ def ensure_salary_records(
     current_user: UserInfo = Depends(get_current_user)
 ):
     result = _perform_gross_calculation(db, period, hide_status_id)
+    
+    # 为没有薪资档案的员工也创建基本记录，确保所有员工都可进入编辑模式
+    query = db.query(Employee)
+    active_employees = filter_active_employees(query, db, hide_status_id=hide_status_id).all()
+    existing = {c.employee_id for c in db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()}
+    for emp in active_employees:
+        if emp.id not in existing:
+            calc = SalaryCalculation(
+                period=period,
+                employee_id=emp.id,
+                calculation_status="待核算",
+                review_status=""
+            )
+            db.add(calc)
+            result["success_count"] += 1
+    
     db.commit()
     write_log(db, "data_change", current_user.id, current_user.username, "salary", "create", f"确保薪资记录存在 (period={period}, updated={result['success_count']})")
     return {"created_count": result["success_count"], "total": result["total_employees"]}
@@ -436,10 +454,8 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
             posttax_calc = _safe_float(posttax_adj_final) or 0
             last_month_calc = _safe_float(last_month_untaxed_val) or 0
             travel_calc = _safe_float(travel_untaxed_final) or 0
-            comp_tax_calc = _safe_float(compensation_tax_final) or 0
-            year_end_calc = _safe_float(year_end_bonus_untaxed_val) or 0
 
-            actual_taxable = round(gross_salary + pretax_calc + last_month_calc + travel_calc + comp_tax_calc + year_end_calc, 2)
+            actual_taxable = round(gross_salary + pretax_calc + last_month_calc + travel_calc, 2)
             salary_after_si_hf_val = round(gross_salary + pretax_calc - si_hf_total, 2)
             if tax_deduction_val is not None:
                 net_salary = round(gross_salary + pretax_calc - si_hf_total - tax_deduction_val + posttax_calc, 2)
@@ -741,9 +757,7 @@ def _build_employee_salary_data(
 
         lm = last_month_untaxed_val or 0
         tu = travel_untaxed_val or 0
-        ct = compensation_tax_val or 0
-        ye = year_end_bonus_untaxed_val or 0
-        actual_taxable_val = round(gross_salary_val + pa + lm + tu + ct + ye, 2)
+        actual_taxable_val = round(gross_salary_val + pa + lm + tu, 2)
 
     return {
         'contract_company': contract_company_name,
@@ -902,6 +916,7 @@ def get_calculation_results(
             **data,
             pretax_adjustment_reason=c.pretax_adjustment_reason if c else None,
             posttax_adjustment_reason=c.posttax_adjustment_reason if c else None,
+            remark=c.remark if c else None,
             review_status=c.review_status if c else "",
             calculation_status=c.calculation_status if c else ("待提交" if sal else "待完善"),
             data_completeness=c.data_completeness if c else ("待完善" if not sal else "完整"),
@@ -993,7 +1008,7 @@ def update_calculation_result(
         else:
             calc.net_salary = round(gross + pretax - sh + posttax, 2)
             calc.calculation_status = "应发已核算"
-        calc.actual_taxable = round(gross + pretax + last_month_untaxed + travel_untaxed + compensation_tax + year_end_bonus, 2)
+        calc.actual_taxable = round(gross + pretax + last_month_untaxed + travel_untaxed, 2)
 
     net_val = _safe_float(calc.net_salary)
     if net_val is not None and net_val < 0:
@@ -1051,6 +1066,7 @@ def update_calculation_result(
         year_end_bonus_untaxed=calc.year_end_bonus_untaxed,
         actual_taxable=calc.actual_taxable,
         special_deduction=calc.special_deduction,
+        remark=calc.remark,
         review_status=calc.review_status or "",
         calculation_status=calc.calculation_status or "",
         data_completeness=calc.data_completeness or "",
@@ -1127,7 +1143,7 @@ def calculate_net_salary(period: str, db: Session = Depends(get_db), current_use
                 tax_imported_count += 1
             else:
                 calc.net_salary = round(gross + pretax - sh + posttax, 2)
-            calc.actual_taxable = round(gross + pretax + last_month_untaxed + travel_untaxed + compensation_tax + year_end_bonus, 2)
+            calc.actual_taxable = round(gross + pretax + last_month_untaxed + travel_untaxed, 2)
 
         calc.calculation_status = "实发已核算" if tax is not None else "应发已核算"
         if gross is not None:
@@ -1912,7 +1928,7 @@ def export_tax_template(
             if remarks:
                 warnings.append(f"{emp.name}({emp.employee_no}): {', '.join(remarks)}")
             ws.append([
-                emp.employee_no, emp.name, "居民身份证", id_card,
+                "", emp.name, "居民身份证", id_card,
                 round(taxable_income, 2), 0,
                 round(pension, 2), round(medical, 2), round(unemployment, 2), round(housing, 2),
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -1953,7 +1969,7 @@ def export_tax_template(
                 if remarks:
                     warnings.append(f"{emp.name}({emp.employee_no}): {', '.join(remarks)}")
                 ws.append([
-                    emp.employee_no, emp.name, "居民身份证", id_card,
+                    "", emp.name, "居民身份证", id_card,
                     round(amount, 2), 0, 0, 0, 0, ""
                 ])
         if warnings:
@@ -1991,7 +2007,7 @@ def export_tax_template(
                 if remarks:
                     warnings.append(f"{emp.name}({emp.employee_no}): {', '.join(remarks)}")
                 ws.append([
-                    emp.employee_no, emp.name, "居民身份证", id_card,
+                    "", emp.name, "居民身份证", id_card,
                     round(amount, 2), 0, 0, 0, 0, ""
                 ])
         if warnings:

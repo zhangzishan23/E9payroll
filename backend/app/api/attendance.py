@@ -150,6 +150,9 @@ class AttendanceOut(BaseModel):
     engineering_compensatory_days: Optional[float] = None
     leave_total_days: Optional[float] = None
     remark: Optional[str] = None
+    is_row_locked: Optional[bool] = False
+    locked_fields: Optional[dict] = None
+    special_apply_ids: Optional[list] = None
 
     class Config:
         from_attributes = True
@@ -229,6 +232,9 @@ class AttendanceOut(BaseModel):
                 engineering_compensatory_days=float(att.engineering_compensatory_days),
                 leave_total_days=leave_total,
                 remark=att.remark,
+                is_row_locked=att.is_row_locked or False,
+                locked_fields=att.locked_fields or {},
+                special_apply_ids=att.special_apply_ids or [],
             )
         else:
             contract_company = ""
@@ -525,6 +531,139 @@ def create_attendance(att: AttendanceCreate, db: Session = Depends(get_db), curr
     return AttendanceOut.from_record(db_att, emp, db=db, name_map=name_map)
 
 
+# ==================== 特殊申请 API ====================
+
+@router.get("/special-applies")
+def get_special_applies(
+    period: str = Query(..., description="核算周期 YYYYMM"),
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """获取指定月份的特殊申请审批单（从钉钉拉取）"""
+    try:
+        from app.services import dingtalk_service
+        applies = dingtalk_service.get_month_special_applies(period)
+        
+        # 补充申请人姓名
+        emp_by_dingtalk = {}
+        for emp in db.query(Employee).filter(Employee.dingtalk_user_id.isnot(None)).all():
+            emp_by_dingtalk[emp.dingtalk_user_id] = emp
+        
+        result = []
+        for apply in applies:
+            user_id = apply["originator_user_id"]
+            emp = emp_by_dingtalk.get(user_id)
+            result.append({
+                **apply,
+                "applicant_name": emp.name if emp else user_id,
+                "employee_id": emp.id if emp else None,
+            })
+        
+        return {"period": period, "applies": result, "total": len(result)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"获取特殊申请失败: {str(e)}")
+
+
+@router.post("/apply-special-applies")
+def apply_special_applies(
+    period: str = Form(...),
+    apply_ids: Optional[str] = Form(None, description="逗号分隔的申请单ID，为空则应用所有"),
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """将特殊申请应用到考勤记录"""
+    try:
+        from app.services import dingtalk_service
+        applies = dingtalk_service.get_month_special_applies(period)
+        
+        if apply_ids:
+            target_ids = set(apply_ids.split(","))
+            applies = [a for a in applies if a["instance_id"] in target_ids]
+        
+        stats = dingtalk_service.apply_special_applies_to_attendance(db, period, applies)
+        write_log(db, "data_change", current_user.id, current_user.username, "attendance", "apply_apply", f"应用特殊申请到考勤：成功{stats['applied']}个，更新{stats['updated']}人 (period={period})")
+        return {
+            "message": f"应用完成：成功处理 {stats['applied']} 个申请单，更新 {stats['updated']} 名员工考勤",
+            **stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"应用特殊申请失败: {str(e)}")
+
+
+# ==================== 缺卡自动核销 API ====================
+
+@router.get("/missed-punch-check")
+def check_missed_punch(
+    period: str = Query(..., description="核算周期 YYYYMM"),
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """
+    检查指定月份有缺卡记录的员工是否有审批通过的考勤特殊申请
+    返回比对结果（匹配、不匹配、无申请），供用户预览确认
+    """
+    try:
+        from app.services import dingtalk_service
+        result = dingtalk_service.check_missed_punch_applies(db, period)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"检查缺卡申请失败: {str(e)}")
+
+
+@router.post("/missed-punch-write-off")
+def write_off_missed_punch(
+    period: str = Form(..., description="核算周期 YYYYMM"),
+    apply_all: bool = Form(False, description="是否核销所有匹配的员工"),
+    employee_ids: Optional[str] = Form(None, description="逗号分隔的员工ID列表，指定核销部分员工"),
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """
+    执行缺卡核销：将匹配员工的半天缺卡和全天缺卡清零
+    """
+    try:
+        from app.services import dingtalk_service
+        
+        emp_ids = None
+        if employee_ids:
+            emp_ids = [int(x.strip()) for x in employee_ids.split(",") if x.strip()]
+        
+        result = dingtalk_service.apply_missed_punch_write_off(
+            db, period,
+            employee_ids=emp_ids,
+            apply_all_matched=apply_all
+        )
+        
+        write_log(
+            db, "data_change", current_user.id, current_user.username,
+            "attendance", "missed_punch_write_off",
+            f"缺卡核销：更新{result['updated_count']}人 (period={period})"
+        )
+        
+        return {
+            "message": f"核销完成，共更新 {result['updated_count']} 名员工的缺卡记录",
+            **result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"缺卡核销失败: {str(e)}")
+
+
+# ==================== 批量删除 ====================
+
+@router.post("/batch-delete")
+def batch_delete_attendance(ids: List[int], db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    if not ids:
+        raise HTTPException(status_code=400, detail="请提供要删除的考勤记录ID列表")
+    records = db.query(AttendanceRecord).filter(AttendanceRecord.id.in_(ids)).all()
+    if not records:
+        raise HTTPException(status_code=404, detail="未找到指定的考勤记录")
+    for r in records:
+        db.delete(r)
+    db.commit()
+    write_log(db, "data_change", current_user.id, current_user.username, "attendance", "delete", f"批量删除 {len(records)} 条考勤记录")
+    return {"message": f"成功删除 {len(records)} 条考勤记录", "deleted_count": len(records)}
+
+
 # ==================== 编辑 ====================
 
 @router.put("/{record_id}", response_model=AttendanceOut)
@@ -546,22 +685,6 @@ def update_attendance(record_id: int, data: AttendanceUpdate, db: Session = Depe
     emp = db.query(Employee).filter(Employee.id == att.employee_id).first()
     name_map = _batch_load_dict_names(db)
     return AttendanceOut.from_record(att, emp, db=db, name_map=name_map)
-
-
-# ==================== 批量删除 ====================
-
-@router.post("/batch-delete")
-def batch_delete_attendance(ids: List[int], db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    if not ids:
-        raise HTTPException(status_code=400, detail="请提供要删除的考勤记录ID列表")
-    records = db.query(AttendanceRecord).filter(AttendanceRecord.id.in_(ids)).all()
-    if not records:
-        raise HTTPException(status_code=404, detail="未找到指定的考勤记录")
-    for r in records:
-        db.delete(r)
-    db.commit()
-    write_log(db, "data_change", current_user.id, current_user.username, "attendance", "delete", f"批量删除 {len(records)} 条考勤记录")
-    return {"message": f"成功删除 {len(records)} 条考勤记录", "deleted_count": len(records)}
 
 
 # ==================== 导入 ====================
@@ -708,37 +831,54 @@ async def import_attendance(
             ).first()
 
             if existing:
-                existing.total_work_days = total_work
-                existing.adjusted_salary_days = adjusted
-                existing.actual_salary_days = actual_salary
-                existing.attendance_rate = att_rate
-                existing.actual_work_days = actual_salary
-                existing.late_count = late_count_val
-                existing.late_duration = late_duration_val
-                existing.severe_late_count = get_int("severe_late_count")
-                existing.severe_late_duration = get_int("severe_late_duration")
-                existing.early_count = get_int("early_count")
-                existing.early_duration = get_int("early_duration")
-                existing.half_day_missed_punch = get_int("half_day_missed_punch")
-                existing.absenteeism_days = get_float("absenteeism_days")
-                existing.total_overtime = get_float("total_overtime")
-                existing.late_to_personal_leave_days = late_leave
-                existing.personal_leave_days = personal
-                existing.full_pay_sick_days = full_sick
-                existing.reduced_pay_sick_days = reduced_sick
-                existing.statutory_sick_days = stat_sick
-                existing.compensatory_leave_days = comp
-                existing.annual_leave_days = annual
-                existing.prenatal_checkup_days = prenatal
-                existing.maternity_leave_days = maternity
-                existing.paternity_leave_days = paternity
-                existing.marriage_leave_days = marriage
-                existing.funeral_leave_days = funeral
-                existing.engineering_compensatory_days = eng
-                existing.leave_total_days = leave_total
-                existing.remark = get_str("remark")
-                existing.salary_start_date = start_date
-                existing.salary_end_date = end_date
+                # 跳过整行锁定的记录
+                if existing.is_row_locked:
+                    continue
+                
+                locked_fields = existing.locked_fields or {}
+                
+                # 定义字段导入映射（字段名 -> 值）
+                import_data = {
+                    "total_work_days": total_work,
+                    "adjusted_salary_days": adjusted,
+                    "actual_salary_days": actual_salary,
+                    "attendance_rate": att_rate,
+                    "actual_work_days": actual_salary,
+                    "late_count": late_count_val,
+                    "late_duration": late_duration_val,
+                    "severe_late_count": get_int("severe_late_count"),
+                    "severe_late_duration": get_int("severe_late_duration"),
+                    "early_count": get_int("early_count"),
+                    "early_duration": get_int("early_duration"),
+                    "half_day_missed_punch": get_int("half_day_missed_punch"),
+                    "absenteeism_days": get_float("absenteeism_days"),
+                    "total_overtime": get_float("total_overtime"),
+                    "late_to_personal_leave_days": late_leave,
+                    "personal_leave_days": personal,
+                    "full_pay_sick_days": full_sick,
+                    "reduced_pay_sick_days": reduced_sick,
+                    "statutory_sick_days": stat_sick,
+                    "compensatory_leave_days": comp,
+                    "annual_leave_days": annual,
+                    "prenatal_checkup_days": prenatal,
+                    "maternity_leave_days": maternity,
+                    "paternity_leave_days": paternity,
+                    "marriage_leave_days": marriage,
+                    "funeral_leave_days": funeral,
+                    "engineering_compensatory_days": eng,
+                    "leave_total_days": leave_total,
+                    "salary_start_date": start_date,
+                    "salary_end_date": end_date,
+                }
+                remark_val = get_str("remark")
+                if remark_val is not None:
+                    import_data["remark"] = remark_val
+                
+                # 只更新未锁定的字段
+                for field, value in import_data.items():
+                    if not locked_fields.get(field):
+                        setattr(existing, field, value)
+                
                 updated += 1
             else:
                 new_att = AttendanceRecord(
@@ -999,3 +1139,60 @@ def get_salary_calendar(
         "total_salary_days": total_salary_days,
         "override_count": sum(1 for d in days if d["is_overridden"]),
     }
+
+
+# ==================== 数据锁定 API ====================
+
+@router.post("/{record_id}/lock-row")
+def lock_row(
+    record_id: int,
+    locked: bool = Form(True),
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """锁定/解锁整行考勤记录"""
+    att = db.query(AttendanceRecord).filter(AttendanceRecord.id == record_id).first()
+    if not att:
+        raise HTTPException(status_code=404, detail="考勤记录不存在")
+    
+    att.is_row_locked = locked
+    if locked:
+        att.locked_fields = {}
+    db.commit()
+    
+    action = "锁定" if locked else "解锁"
+    write_log(db, "data_change", current_user.id, current_user.username, "attendance", "lock_row", f"{action}考勤行 (id={record_id})")
+    
+    emp = db.query(Employee).filter(Employee.id == att.employee_id).first()
+    name_map = _batch_load_dict_names(db)
+    return AttendanceOut.from_record(att, emp, db=db, name_map=name_map)
+
+
+@router.post("/{record_id}/lock-field")
+def lock_field(
+    record_id: int,
+    field: str = Form(...),
+    locked: bool = Form(True),
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """锁定/解锁单个单元格（字段）"""
+    att = db.query(AttendanceRecord).filter(AttendanceRecord.id == record_id).first()
+    if not att:
+        raise HTTPException(status_code=404, detail="考勤记录不存在")
+    
+    if att.is_row_locked:
+        raise HTTPException(status_code=400, detail="整行已锁定，无需单独锁定字段")
+    
+    locked_fields = att.locked_fields or {}
+    locked_fields[field] = locked
+    locked_fields = {k: v for k, v in locked_fields.items() if v}
+    att.locked_fields = locked_fields
+    db.commit()
+    
+    action = "锁定" if locked else "解锁"
+    write_log(db, "data_change", current_user.id, current_user.username, "attendance", "lock_field", f"{action}考勤字段 {field} (id={record_id})")
+    
+    emp = db.query(Employee).filter(Employee.id == att.employee_id).first()
+    name_map = _batch_load_dict_names(db)
+    return AttendanceOut.from_record(att, emp, db=db, name_map=name_map)

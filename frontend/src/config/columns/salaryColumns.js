@@ -85,7 +85,7 @@ export const SALARY_COLUMNS = [
     tooltip: '未报税补偿金，需单独使用补偿金报税模版申报' },
   { key: 'year_end_bonus_untaxed', label: '未报税年终奖', width: 100, type: 'money', editable: true,
     tooltip: '未报税年终奖，需单独使用年终奖报税模版申报' },
-  { key: 'remark', label: '备注', width: 200, type: 'text' },
+  { key: 'remark', label: '备注', width: 200, type: 'text', editable: true },
 ]
 
 export const SALARY_EDITABLE_FIELDS = [
@@ -93,7 +93,7 @@ export const SALARY_EDITABLE_FIELDS = [
   'posttax_adjustment', 'posttax_adjustment_reason',
   'severance_pay', 'year_end_bonus_untaxed',
   'last_month_untaxed', 'travel_untaxed', 'compensation_tax',
-  'tax_deduction'
+  'tax_deduction', 'remark'
 ]
 
 export function getSalaryFieldLabel(key) {

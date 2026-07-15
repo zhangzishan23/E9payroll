@@ -39,6 +39,12 @@
         <el-button size="small" :type="editMode ? 'warning' : 'default'" @click="toggleEditMode">
           {{ editMode ? '退出编辑' : '编辑' }}
         </el-button>
+        <ColumnSetting
+          :columns="TABLE_COLUMNS"
+          :default-visible-keys="DEFAULT_VISIBLE_COLUMNS"
+          v-model="visibleColumns"
+          storage-key="employee_table_columns"
+        />
         <template v-if="editMode">
           <el-button type="primary" size="small" :loading="savingEdits" :disabled="changedSet.size === 0" @click="confirmEdits">
             保存{{ changedSet.size ? `(${changedSet.size})` : '' }}
@@ -48,9 +54,9 @@
       </div>
 
       <el-table :data="employees" border stripe v-loading="loading" class="w-full" @selection-change="handleSelectionChange">
-        <el-table-column type="selection" width="55" />
-        <el-table-column prop="employee_no" label="员工编号" width="100" fixed />
-        <el-table-column prop="name" label="姓名" width="100" fixed>
+        <el-table-column v-if="isColumnVisible('selection')" type="selection" width="55" />
+        <el-table-column v-if="isColumnVisible('employee_no')" prop="employee_no" label="员工编号" width="100" fixed />
+        <el-table-column v-if="isColumnVisible('name')" prop="name" label="姓名" width="100" fixed>
           <template #default="{ row }">
             <template v-if="editMode">
               <el-input v-model="editCache[row.id].name" size="small" class="cell-input" @change="markChanged(row.id)" />
@@ -58,7 +64,7 @@
             <template v-else>{{ row.name }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="gender" label="性别" width="70">
+        <el-table-column v-if="isColumnVisible('gender')" prop="gender" label="性别" width="70">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-select v-model="editCache[row.id].gender" size="small" class="cell-select" @change="markChanged(row.id)">
@@ -69,7 +75,7 @@
             <template v-else>{{ row.gender }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="contract_company_name" label="合同公司" width="110">
+        <el-table-column v-if="isColumnVisible('contract_company_name')" prop="contract_company_name" label="合同公司" width="110">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-select v-model="editCache[row.id].contract_company_id" size="small" class="cell-select" @change="markChanged(row.id)">
@@ -79,7 +85,7 @@
             <template v-else>{{ row.contract_company_name }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="department_name" label="部门" width="100">
+        <el-table-column v-if="isColumnVisible('department_name')" prop="department_name" label="部门" width="100">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-select v-model="editCache[row.id].department_id" size="small" class="cell-select" @change="markChanged(row.id)">
@@ -89,7 +95,7 @@
             <template v-else>{{ row.department_name }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="position_name" label="职务" width="90">
+        <el-table-column v-if="isColumnVisible('position_name')" prop="position_name" label="职务" width="90">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-select v-model="editCache[row.id].position_id" size="small" class="cell-select" @change="markChanged(row.id)">
@@ -99,7 +105,7 @@
             <template v-else>{{ row.position_name }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="status_name" label="状态" width="80">
+        <el-table-column v-if="isColumnVisible('status_name')" prop="status_name" label="状态" width="80">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-select v-model="editCache[row.id].status_id" size="small" class="cell-select" @change="markChanged(row.id)">
@@ -109,7 +115,7 @@
             <template v-else>{{ row.status_name }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="cost_owner" label="费用负责人" width="100">
+        <el-table-column v-if="isColumnVisible('cost_owner')" prop="cost_owner" label="费用负责人" width="100">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-input v-model="editCache[row.id].cost_owner" size="small" class="cell-input" @change="markChanged(row.id)" />
@@ -117,7 +123,7 @@
             <template v-else>{{ row.cost_owner }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="phone" label="联系电话" width="120">
+        <el-table-column v-if="isColumnVisible('phone')" prop="phone" label="联系电话" width="120">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-input v-model="editCache[row.id].phone" size="small" class="cell-input" @change="markChanged(row.id)" />
@@ -125,7 +131,7 @@
             <template v-else>{{ row.phone }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="home_address" label="家庭住址" width="180">
+        <el-table-column v-if="isColumnVisible('home_address')" prop="home_address" label="家庭住址" width="180">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-input v-model="editCache[row.id].home_address" size="small" class="cell-input" @change="markChanged(row.id)" />
@@ -135,7 +141,7 @@
             </template>
           </template>
         </el-table-column>
-        <el-table-column prop="entry_date" label="入职时间" width="120">
+        <el-table-column v-if="isColumnVisible('entry_date')" prop="entry_date" label="入职时间" width="120">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-date-picker v-model="editCache[row.id].entry_date" type="date" size="small" class="cell-date" value-format="YYYY-MM-DD" @change="markChanged(row.id)" />
@@ -143,7 +149,7 @@
             <template v-else>{{ row.entry_date }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="regular_date" label="转正时间" width="120">
+        <el-table-column v-if="isColumnVisible('regular_date')" prop="regular_date" label="转正时间" width="120">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-date-picker v-model="editCache[row.id].regular_date" type="date" size="small" class="cell-date" value-format="YYYY-MM-DD" @change="markChanged(row.id)" />
@@ -151,7 +157,7 @@
             <template v-else>{{ row.regular_date || '' }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="base_salary" label="基本工资" width="100">
+        <el-table-column v-if="isColumnVisible('base_salary')" prop="base_salary" label="基本工资" width="100">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-input-number v-model="editCache[row.id].base_salary" :min="0" :precision="2" size="small" class="cell-number" controls-position="right" @change="markChanged(row.id)" />
@@ -159,7 +165,7 @@
             <template v-else>{{ row.base_salary != null ? row.base_salary : '' }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="performance_standard" label="绩效标准" width="100">
+        <el-table-column v-if="isColumnVisible('performance_standard')" prop="performance_standard" label="绩效标准" width="100">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-input-number v-model="editCache[row.id].performance_standard" :min="0" :precision="2" size="small" class="cell-number" controls-position="right" @change="markChanged(row.id)" />
@@ -167,7 +173,7 @@
             <template v-else>{{ row.performance_standard != null ? row.performance_standard : '' }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="meal_allowance" label="餐补" width="85">
+        <el-table-column v-if="isColumnVisible('meal_allowance')" prop="meal_allowance" label="餐补" width="85">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-input-number v-model="editCache[row.id].meal_allowance" :min="0" :precision="2" size="small" class="cell-number" controls-position="right" @change="markChanged(row.id)" />
@@ -175,7 +181,7 @@
             <template v-else>{{ row.meal_allowance != null ? row.meal_allowance : '' }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="transport_allowance" label="交通补贴" width="95">
+        <el-table-column v-if="isColumnVisible('transport_allowance')" prop="transport_allowance" label="交通补贴" width="95">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-input-number v-model="editCache[row.id].transport_allowance" :min="0" :precision="2" size="small" class="cell-number" controls-position="right" @change="markChanged(row.id)" />
@@ -183,7 +189,7 @@
             <template v-else>{{ row.transport_allowance != null ? row.transport_allowance : '' }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="communication_allowance" label="通讯补贴" width="95">
+        <el-table-column v-if="isColumnVisible('communication_allowance')" prop="communication_allowance" label="通讯补贴" width="95">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-input-number v-model="editCache[row.id].communication_allowance" :min="0" :precision="2" size="small" class="cell-number" controls-position="right" @change="markChanged(row.id)" />
@@ -191,7 +197,7 @@
             <template v-else>{{ row.communication_allowance != null ? row.communication_allowance : '' }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="computer_allowance" label="电脑补贴" width="95">
+        <el-table-column v-if="isColumnVisible('computer_allowance')" prop="computer_allowance" label="电脑补贴" width="95">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-input-number v-model="editCache[row.id].computer_allowance" :min="0" :precision="2" size="small" class="cell-number" controls-position="right" @change="markChanged(row.id)" />
@@ -199,7 +205,7 @@
             <template v-else>{{ row.computer_allowance != null ? row.computer_allowance : '' }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="housing_allowance" label="住房补贴" width="95">
+        <el-table-column v-if="isColumnVisible('housing_allowance')" prop="housing_allowance" label="住房补贴" width="95">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-input-number v-model="editCache[row.id].housing_allowance" :min="0" :precision="2" size="small" class="cell-number" controls-position="right" @change="markChanged(row.id)" />
@@ -207,12 +213,12 @@
             <template v-else>{{ row.housing_allowance != null ? row.housing_allowance : '' }}</template>
           </template>
         </el-table-column>
-        <el-table-column label="月薪标准" width="100">
+        <el-table-column v-if="isColumnVisible('monthly_standard')" label="月薪标准" width="100">
           <template #default="{ row }">
             {{ monthlyStandard(row) }}
           </template>
         </el-table-column>
-        <el-table-column prop="salary_effective_date" label="薪资生效日" width="120">
+        <el-table-column v-if="isColumnVisible('salary_effective_date')" prop="salary_effective_date" label="薪资生效日" width="120">
           <template #default="{ row }">
             <template v-if="editMode">
               <el-date-picker v-model="editCache[row.id].salary_effective_date" type="date" size="small" class="cell-date" value-format="YYYY-MM-DD" @change="markChanged(row.id)" />
@@ -221,36 +227,36 @@
           </template>
         </el-table-column>
         <!-- 钉钉同步字段（只读） -->
-        <el-table-column prop="id_card" label="证件号码" width="180" />
-        <el-table-column prop="birth_date" label="出生日期" width="110" />
-        <el-table-column prop="nation" label="民族" width="70" />
-        <el-table-column prop="education" label="学历" width="80" />
-        <el-table-column prop="graduate_school" label="毕业院校" width="150" />
-        <el-table-column prop="graduate_date" label="毕业时间" width="110" />
-        <el-table-column prop="major" label="所学专业" width="130" />
-        <el-table-column prop="cert1" label="资格证/职称证1" width="140" />
-        <el-table-column prop="cert2" label="资格证/职称证2" width="140" />
-        <el-table-column prop="marital_status" label="婚姻状况" width="80" />
-        <el-table-column prop="children_status" label="子女情况" width="90" />
-        <el-table-column prop="political_status" label="政治面貌" width="90" />
-        <el-table-column prop="native_place" label="籍贯" width="100" />
-        <el-table-column prop="residence_type" label="户籍类型" width="90" />
-        <el-table-column prop="census_address" label="户籍地址" width="180" />
-        <el-table-column prop="emergency_contact_name" label="紧急联系人" width="110" />
-        <el-table-column prop="emergency_contact_relation" label="联系人关系" width="100" />
-        <el-table-column prop="emergency_contact_phone" label="联系人电话" width="120" />
-        <el-table-column prop="contract_start_date" label="现合同起始日" width="120" />
-        <el-table-column prop="contract_end_date" label="现合同到期日" width="120" />
-        <el-table-column prop="insurance_start_date" label="五险一金起购日" width="130" />
-        <el-table-column prop="insurance_location" label="社保公积金地" width="120" />
-        <el-table-column prop="recruitment_channel" label="招聘渠道" width="100" />
-        <el-table-column prop="hobby" label="特长爱好" width="120" />
-        <el-table-column prop="commercial_insurance_type" label="商业保险类型" width="120" />
-        <el-table-column prop="first_work_date" label="首次工作时间" width="120" />
-        <el-table-column prop="bank_branch_detail" label="开户行支行" width="130" />
-        <el-table-column prop="contract_type" label="合同类型" width="90" />
-        <el-table-column prop="remark" label="备注" width="150" />
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column v-if="isColumnVisible('id_card')" prop="id_card" label="证件号码" width="180" />
+        <el-table-column v-if="isColumnVisible('birth_date')" prop="birth_date" label="出生日期" width="110" />
+        <el-table-column v-if="isColumnVisible('nation')" prop="nation" label="民族" width="70" />
+        <el-table-column v-if="isColumnVisible('education')" prop="education" label="学历" width="80" />
+        <el-table-column v-if="isColumnVisible('graduate_school')" prop="graduate_school" label="毕业院校" width="150" />
+        <el-table-column v-if="isColumnVisible('graduate_date')" prop="graduate_date" label="毕业时间" width="110" />
+        <el-table-column v-if="isColumnVisible('major')" prop="major" label="所学专业" width="130" />
+        <el-table-column v-if="isColumnVisible('cert1')" prop="cert1" label="资格证/职称证1" width="140" />
+        <el-table-column v-if="isColumnVisible('cert2')" prop="cert2" label="资格证/职称证2" width="140" />
+        <el-table-column v-if="isColumnVisible('marital_status')" prop="marital_status" label="婚姻状况" width="80" />
+        <el-table-column v-if="isColumnVisible('children_status')" prop="children_status" label="子女情况" width="90" />
+        <el-table-column v-if="isColumnVisible('political_status')" prop="political_status" label="政治面貌" width="90" />
+        <el-table-column v-if="isColumnVisible('native_place')" prop="native_place" label="籍贯" width="100" />
+        <el-table-column v-if="isColumnVisible('residence_type')" prop="residence_type" label="户籍类型" width="90" />
+        <el-table-column v-if="isColumnVisible('census_address')" prop="census_address" label="户籍地址" width="180" />
+        <el-table-column v-if="isColumnVisible('emergency_contact_name')" prop="emergency_contact_name" label="紧急联系人" width="110" />
+        <el-table-column v-if="isColumnVisible('emergency_contact_relation')" prop="emergency_contact_relation" label="联系人关系" width="100" />
+        <el-table-column v-if="isColumnVisible('emergency_contact_phone')" prop="emergency_contact_phone" label="联系人电话" width="120" />
+        <el-table-column v-if="isColumnVisible('contract_start_date')" prop="contract_start_date" label="现合同起始日" width="120" />
+        <el-table-column v-if="isColumnVisible('contract_end_date')" prop="contract_end_date" label="现合同到期日" width="120" />
+        <el-table-column v-if="isColumnVisible('insurance_start_date')" prop="insurance_start_date" label="五险一金起购日" width="130" />
+        <el-table-column v-if="isColumnVisible('insurance_location')" prop="insurance_location" label="社保公积金地" width="120" />
+        <el-table-column v-if="isColumnVisible('recruitment_channel')" prop="recruitment_channel" label="招聘渠道" width="100" />
+        <el-table-column v-if="isColumnVisible('hobby')" prop="hobby" label="特长爱好" width="120" />
+        <el-table-column v-if="isColumnVisible('commercial_insurance_type')" prop="commercial_insurance_type" label="商业保险类型" width="120" />
+        <el-table-column v-if="isColumnVisible('first_work_date')" prop="first_work_date" label="首次工作时间" width="120" />
+        <el-table-column v-if="isColumnVisible('bank_branch_detail')" prop="bank_branch_detail" label="开户行支行" width="130" />
+        <el-table-column v-if="isColumnVisible('contract_type')" prop="contract_type" label="合同类型" width="90" />
+        <el-table-column v-if="isColumnVisible('remark')" prop="remark" label="备注" width="150" />
+        <el-table-column v-if="isColumnVisible('action')" label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <div class="action-cell">
             <el-button type="primary" link size="small" @click="showDialog(row)">详细编辑</el-button>
@@ -635,6 +641,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Download, Upload, Delete, ArrowLeft, Refresh } from '@element-plus/icons-vue'
 import api from '../../api'
+import ColumnSetting from '../../components/ColumnSetting.vue'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -672,6 +679,73 @@ const editCache = reactive({})
 const changedSet = ref(new Set())
 const confirmVisible = ref(false)
 const confirmList = ref([])
+
+const TABLE_COLUMNS = [
+  { key: 'selection', label: '选择', required: true },
+  { key: 'employee_no', label: '员工编号', required: true },
+  { key: 'name', label: '姓名', required: true },
+  { key: 'gender', label: '性别' },
+  { key: 'contract_company_name', label: '合同公司' },
+  { key: 'department_name', label: '部门' },
+  { key: 'position_name', label: '职务' },
+  { key: 'status_name', label: '状态' },
+  { key: 'cost_owner', label: '费用负责人' },
+  { key: 'phone', label: '联系电话' },
+  { key: 'home_address', label: '家庭住址' },
+  { key: 'entry_date', label: '入职时间' },
+  { key: 'regular_date', label: '转正时间' },
+  { key: 'base_salary', label: '基本工资' },
+  { key: 'performance_standard', label: '绩效标准' },
+  { key: 'meal_allowance', label: '餐补' },
+  { key: 'transport_allowance', label: '交通补贴' },
+  { key: 'communication_allowance', label: '通讯补贴' },
+  { key: 'computer_allowance', label: '电脑补贴' },
+  { key: 'housing_allowance', label: '住房补贴' },
+  { key: 'monthly_standard', label: '月薪标准' },
+  { key: 'salary_effective_date', label: '薪资生效日' },
+  { key: 'id_card', label: '证件号码' },
+  { key: 'birth_date', label: '出生日期' },
+  { key: 'nation', label: '民族' },
+  { key: 'education', label: '学历' },
+  { key: 'graduate_school', label: '毕业院校' },
+  { key: 'graduate_date', label: '毕业时间' },
+  { key: 'major', label: '所学专业' },
+  { key: 'cert1', label: '资格证/职称证1' },
+  { key: 'cert2', label: '资格证/职称证2' },
+  { key: 'marital_status', label: '婚姻状况' },
+  { key: 'children_status', label: '子女情况' },
+  { key: 'political_status', label: '政治面貌' },
+  { key: 'native_place', label: '籍贯' },
+  { key: 'residence_type', label: '户籍类型' },
+  { key: 'census_address', label: '户籍地址' },
+  { key: 'emergency_contact_name', label: '紧急联系人' },
+  { key: 'emergency_contact_relation', label: '联系人关系' },
+  { key: 'emergency_contact_phone', label: '联系人电话' },
+  { key: 'contract_start_date', label: '现合同起始日' },
+  { key: 'contract_end_date', label: '现合同到期日' },
+  { key: 'insurance_start_date', label: '五险一金起购日' },
+  { key: 'insurance_location', label: '社保公积金地' },
+  { key: 'recruitment_channel', label: '招聘渠道' },
+  { key: 'hobby', label: '特长爱好' },
+  { key: 'commercial_insurance_type', label: '商业保险类型' },
+  { key: 'first_work_date', label: '首次工作时间' },
+  { key: 'bank_branch_detail', label: '开户行支行' },
+  { key: 'contract_type', label: '合同类型' },
+  { key: 'remark', label: '备注' },
+  { key: 'action', label: '操作', required: true },
+]
+
+const DEFAULT_VISIBLE_COLUMNS = [
+  'selection', 'employee_no', 'name', 'gender', 'contract_company_name',
+  'department_name', 'position_name', 'status_name', 'cost_owner',
+  'phone', 'entry_date', 'base_salary', 'action'
+]
+
+const visibleColumns = ref([])
+
+function isColumnVisible(key) {
+  return visibleColumns.value.includes(key)
+}
 
 const fieldLabels = {
   name: '姓名',

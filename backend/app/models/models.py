@@ -299,6 +299,11 @@ class AttendanceRecord(Base):
     verify_status = Column(String(20), nullable=True)
     remark = Column(String(500), nullable=True)
 
+    # === 数据锁定 ===
+    is_row_locked = Column(Boolean, default=False, comment="整行锁定：锁定后同步时不更新该员工任何考勤数据")
+    locked_fields = Column(JSON, nullable=True, comment="单元格锁定：JSON格式，如{'late_count': true, 'personal_leave_days': true}，锁定的字段在同步时不更新")
+    special_apply_ids = Column(JSON, nullable=True, comment="已应用的特殊申请单ID列表，避免重复应用")
+
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

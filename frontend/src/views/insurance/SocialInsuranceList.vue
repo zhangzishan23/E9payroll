@@ -20,6 +20,12 @@
       <el-button size="small" :type="editMode ? 'warning' : 'default'" @click="toggleEditMode">
         {{ editMode ? '退出编辑' : '编辑' }}
       </el-button>
+      <ColumnSetting
+        :columns="SI_TABLE_COLUMNS"
+        :default-visible-keys="SI_DEFAULT_VISIBLE"
+        v-model="siVisibleColumns"
+        storage-key="social_insurance_table_columns"
+      />
       <template v-if="editMode">
         <el-button type="primary" size="small" :loading="savingEdits" :disabled="changedSet.size === 0" @click="confirmEdits">
           保存{{ changedSet.size ? `(${changedSet.size})` : '' }}
@@ -34,13 +40,13 @@
     </div>
 
     <el-table :data="filteredRecords" border stripe v-loading="loading" max-height="700" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
-      <el-table-column type="selection" width="55" :selectable="row => row.id != null" />
-      <el-table-column prop="employee_no" label="员工编号" width="100" fixed />
-      <el-table-column prop="employee_name" label="员工姓名" width="80" fixed />
-      <el-table-column prop="employee_social_insurance_no" label="个人社保号" width="130" />
+      <el-table-column v-if="isSiColumnVisible('selection')" type="selection" width="55" :selectable="row => row.id != null" />
+      <el-table-column v-if="isSiColumnVisible('employee_no')" prop="employee_no" label="员工编号" width="100" fixed />
+      <el-table-column v-if="isSiColumnVisible('employee_name')" prop="employee_name" label="员工姓名" width="80" fixed />
+      <el-table-column v-if="isSiColumnVisible('employee_social_insurance_no')" prop="employee_social_insurance_no" label="个人社保号" width="130" />
 
       <!-- 养老保险 -->
-      <el-table-column label="养老保险" min-width="450">
+      <el-table-column v-if="isSiColumnVisible('pension_group')" label="养老保险" min-width="450">
         <el-table-column prop="pension_personal_base" label="基数(个人)" width="100">
           <template #default="{ row }">
             <template v-if="editMode && editCache[row.id]">
@@ -92,7 +98,7 @@
       </el-table-column>
 
       <!-- 失业保险 -->
-      <el-table-column label="失业保险" min-width="450">
+      <el-table-column v-if="isSiColumnVisible('unemployment_group')" label="失业保险" min-width="450">
         <el-table-column prop="unemployment_personal_base" label="基数(个人)" width="100">
           <template #default="{ row }">
             <template v-if="editMode && editCache[row.id]">
@@ -144,7 +150,7 @@
       </el-table-column>
 
       <!-- 医疗保险 -->
-      <el-table-column label="医疗保险" min-width="450">
+      <el-table-column v-if="isSiColumnVisible('medical_group')" label="医疗保险" min-width="450">
         <el-table-column prop="medical_personal_base" label="基数(个人)" width="100">
           <template #default="{ row }">
             <template v-if="editMode && editCache[row.id]">
@@ -196,7 +202,7 @@
       </el-table-column>
 
       <!-- 工伤保险 -->
-      <el-table-column label="工伤保险" min-width="300">
+      <el-table-column v-if="isSiColumnVisible('injury_group')" label="工伤保险" min-width="300">
         <el-table-column prop="injury_company_base" label="基数(单位)" width="100">
           <template #default="{ row }">
             <template v-if="editMode && editCache[row.id]">
@@ -224,7 +230,7 @@
       </el-table-column>
 
       <!-- 社保合计 -->
-      <el-table-column label="社保合计" min-width="350">
+      <el-table-column v-if="isSiColumnVisible('si_totals_group')" label="社保合计" min-width="350">
         <el-table-column prop="pension_total" label="养老合计" width="100">
           <template #default="{ row }">
             <template v-if="editMode && editCache[row.id]">
@@ -259,7 +265,7 @@
         </el-table-column>
       </el-table-column>
 
-      <el-table-column prop="si_personal" label="社保个人合计" width="110">
+      <el-table-column v-if="isSiColumnVisible('si_personal')" prop="si_personal" label="社保个人合计" width="110">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].si_personal" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
@@ -267,7 +273,7 @@
           <template v-else>{{ row.si_personal != null ? row.si_personal : '' }}</template>
         </template>
       </el-table-column>
-      <el-table-column prop="si_company" label="社保公司合计" width="110">
+      <el-table-column v-if="isSiColumnVisible('si_company')" prop="si_company" label="社保公司合计" width="110">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].si_company" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
@@ -275,7 +281,7 @@
           <template v-else>{{ row.si_company != null ? row.si_company : '' }}</template>
         </template>
       </el-table-column>
-      <el-table-column prop="si_grand_total" label="社保总合计" width="110">
+      <el-table-column v-if="isSiColumnVisible('si_grand_total')" prop="si_grand_total" label="社保总合计" width="110">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].si_grand_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
@@ -285,7 +291,7 @@
       </el-table-column>
 
       <!-- 公积金 -->
-      <el-table-column label="公积金" min-width="450">
+      <el-table-column v-if="isSiColumnVisible('hf_group')" label="公积金" min-width="450">
         <el-table-column prop="hf_base" label="缴存基数" width="100">
           <template #default="{ row }">
             <template v-if="editMode && editCache[row.id]">
@@ -336,7 +342,7 @@
         </el-table-column>
       </el-table-column>
 
-      <el-table-column prop="grand_total" label="社保公积金总合计" width="130">
+      <el-table-column v-if="isSiColumnVisible('grand_total')" prop="grand_total" label="社保公积金总合计" width="130">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.id]">
             <el-input-number v-model="editCache[row.id].grand_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
@@ -345,7 +351,7 @@
         </template>
       </el-table-column>
 
-      <el-table-column label="操作" width="120" fixed="right">
+      <el-table-column v-if="isSiColumnVisible('action')" label="操作" width="120" fixed="right">
         <template #default="{ row }">
           <div class="action-cell">
             <el-button v-if="row.id && !editMode" type="primary" link size="small" @click="showDialog(row)">编辑</el-button>
@@ -746,8 +752,9 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Download, Upload, Delete, InfoFilled, UploadFilled, WarningFilled, CopyDocument } from '@element-plus/icons-vue'
+import { Plus, Download, Upload, Delete, InfoFilled, UploadFilled, WarningFilled, CopyDocument, Setting } from '@element-plus/icons-vue'
 import api from '../../api'
+import ColumnSetting from '../../components/ColumnSetting.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -818,6 +825,35 @@ const editCache = reactive({})
 const changedSet = ref(new Set())
 const editConfirmVisible = ref(false)
 const confirmList = ref([])
+
+const SI_TABLE_COLUMNS = [
+  { key: 'selection', label: '选择', required: true },
+  { key: 'employee_no', label: '员工编号', required: true },
+  { key: 'employee_name', label: '员工姓名', required: true },
+  { key: 'employee_social_insurance_no', label: '个人社保号' },
+  { key: 'pension_group', label: '养老保险（明细）' },
+  { key: 'unemployment_group', label: '失业保险（明细）' },
+  { key: 'medical_group', label: '医疗保险（明细）' },
+  { key: 'injury_group', label: '工伤保险（明细）' },
+  { key: 'si_totals_group', label: '社保各险合计' },
+  { key: 'si_personal', label: '社保个人合计' },
+  { key: 'si_company', label: '社保公司合计' },
+  { key: 'si_grand_total', label: '社保总合计' },
+  { key: 'hf_group', label: '公积金（明细）' },
+  { key: 'grand_total', label: '社保公积金总合计' },
+  { key: 'action', label: '操作', required: true },
+]
+
+const SI_DEFAULT_VISIBLE = [
+  'selection', 'employee_no', 'employee_name',
+  'si_personal', 'si_company', 'hf_group', 'grand_total', 'action'
+]
+
+const siVisibleColumns = ref([])
+
+function isSiColumnVisible(key) {
+  return siVisibleColumns.value.includes(key)
+}
 
 const fieldLabels = {
   pension_personal_base: '养老基数(个人)', pension_company_base: '养老基数(单位)',

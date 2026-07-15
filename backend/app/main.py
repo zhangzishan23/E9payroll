@@ -1,10 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.core.config import CORS_ORIGINS
 from app.core.database import engine, Base
 from app.core.scheduler import start_scheduler, stop_scheduler
 from app.core.migrations import run_migrations
+from app.core.log_helper import set_current_request_ip
 from app.models import models
 from app.api import auth, employees, attendance, salary, approval, reports, system, performance, social_insurance, dingtalk
 
@@ -33,6 +34,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def capture_client_ip(request: Request, call_next):
+    """记录客户端 IP 到请求上下文，供 write_log 使用"""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip()
+    else:
+        client_ip = request.client.host if request.client else None
+    set_current_request_ip(client_ip)
+    response = await call_next(request)
+    return response
+
 
 app.include_router(auth.router, prefix="/e9salary/api/auth", tags=["认证"])
 app.include_router(employees.router, prefix="/e9salary/api/employees", tags=["人事信息"])

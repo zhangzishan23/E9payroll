@@ -18,6 +18,12 @@
       <el-button size="small" :type="editMode ? 'warning' : 'default'" @click="toggleEditMode">
         {{ editMode ? '退出编辑' : '编辑' }}
       </el-button>
+      <ColumnSetting
+        :columns="TABLE_COLUMNS"
+        :default-visible-keys="DEFAULT_VISIBLE_COLUMNS"
+        v-model="visibleColumns"
+        storage-key="performance_table_columns"
+      />
       <template v-if="editMode">
         <el-button type="primary" size="small" :loading="savingEdits" :disabled="changedSet.size === 0" @click="confirmEdits">
           保存{{ changedSet.size ? `(${changedSet.size})` : '' }}
@@ -27,27 +33,27 @@
     </div>
 
     <el-table :data="filteredRecords" border stripe v-loading="loading" max-height="600" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
-      <el-table-column type="selection" width="55" fixed="left" />
-      <el-table-column prop="employee_no" label="员工编号" width="100" fixed="left" />
-      <el-table-column prop="employee_name" label="姓名" width="80" fixed="left" />
-      <el-table-column prop="contract_company" label="合同公司" width="120" show-overflow-tooltip />
-      <el-table-column prop="department" label="部门" width="120" show-overflow-tooltip />
-      <el-table-column prop="position" label="职务" width="120" show-overflow-tooltip />
-      <el-table-column prop="total_work_days" label="应计薪天数" width="120" align="center">
+      <el-table-column v-if="isColumnVisible('selection')" type="selection" width="55" fixed="left" />
+      <el-table-column v-if="isColumnVisible('employee_no')" prop="employee_no" label="员工编号" width="100" fixed="left" />
+      <el-table-column v-if="isColumnVisible('employee_name')" prop="employee_name" label="姓名" width="80" fixed="left" />
+      <el-table-column v-if="isColumnVisible('contract_company')" prop="contract_company" label="合同公司" width="120" show-overflow-tooltip />
+      <el-table-column v-if="isColumnVisible('department')" prop="department" label="部门" width="120" show-overflow-tooltip />
+      <el-table-column v-if="isColumnVisible('position')" prop="position" label="职务" width="120" show-overflow-tooltip />
+      <el-table-column v-if="isColumnVisible('total_work_days')" prop="total_work_days" label="应计薪天数" width="120" align="center">
         <template #default="{ row }">{{ row.total_work_days != null ? row.total_work_days : '' }}</template>
       </el-table-column>
-      <el-table-column prop="actual_work_days" label="实际计薪天数" width="120" align="center">
+      <el-table-column v-if="isColumnVisible('actual_work_days')" prop="actual_work_days" label="实际计薪天数" width="120" align="center">
         <template #default="{ row }">{{ row.actual_work_days != null ? row.actual_work_days : '' }}</template>
       </el-table-column>
-      <el-table-column label="出勤率" width="90" align="center">
+      <el-table-column v-if="isColumnVisible('attendance_rate')" label="出勤率" width="90" align="center">
         <template #default="{ row }">
           <span v-if="row.attendance_rate != null">{{ (row.attendance_rate * 100).toFixed(1) }}%</span>
         </template>
       </el-table-column>
-      <el-table-column prop="performance_standard" label="绩效奖金标准" width="120" align="right">
+      <el-table-column v-if="isColumnVisible('performance_standard')" prop="performance_standard" label="绩效奖金标准" width="120" align="right">
         <template #default="{ row }">{{ (getRowPerfStd(row) || 0).toFixed(2) }}</template>
       </el-table-column>
-      <el-table-column prop="performance_category" label="绩效类别" width="100">
+      <el-table-column v-if="isColumnVisible('performance_category')" prop="performance_category" label="绩效类别" width="100">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.employee_id]">
             <el-input v-model="editCache[row.employee_id].performance_category" size="small" placeholder="类别" @change="markChanged(row.employee_id)" />
@@ -55,7 +61,7 @@
           <template v-else>{{ row.performance_category || '' }}</template>
         </template>
       </el-table-column>
-      <el-table-column prop="initial_score" label="初评" width="90" align="center">
+      <el-table-column v-if="isColumnVisible('initial_score')" prop="initial_score" label="初评" width="90" align="center">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.employee_id]">
             <el-input-number v-model="editCache[row.employee_id].initial_score" :min="0" :max="3" :precision="2" :step="0.1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.employee_id)" />
@@ -63,7 +69,7 @@
           <template v-else>{{ row.initial_score != null ? row.initial_score : '' }}</template>
         </template>
       </el-table-column>
-      <el-table-column prop="final_score" label="复评（绩效系数）" width="130" align="center">
+      <el-table-column v-if="isColumnVisible('final_score')" prop="final_score" label="复评（绩效系数）" width="130" align="center">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.employee_id]">
             <el-input-number v-model="editCache[row.employee_id].final_score" :min="0" :max="3" :precision="2" :step="0.1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.employee_id)" />
@@ -75,31 +81,31 @@
           </template>
         </template>
       </el-table-column>
-      <el-table-column label="评价后绩效标准" width="130" align="right">
+      <el-table-column v-if="isColumnVisible('evaluated')" label="评价后绩效标准" width="130" align="right">
         <template #default="{ row }">
           <span v-if="getRowEvaluated(row) != null" class="font-medium">{{ getRowEvaluated(row).toFixed(2) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="差额" width="100" align="right">
+      <el-table-column v-if="isColumnVisible('diff')" label="差额" width="100" align="right">
         <template #default="{ row }">
           <span v-if="getRowDiff(row) != null" :class="getRowDiff(row) > 0 ? 'text-green-500' : getRowDiff(row) < 0 ? 'text-red-500' : ''">
             {{ getRowDiff(row).toFixed(2) }}
           </span>
         </template>
       </el-table-column>
-      <el-table-column label="实发绩效金额" width="120" align="right">
+      <el-table-column v-if="isColumnVisible('actual_paid')" label="实发绩效金额" width="120" align="right">
         <template #default="{ row }">
           <span v-if="getRowActualPaid(row) != null" class="font-semibold text-purple-600">{{ getRowActualPaid(row).toFixed(2) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="调整差异" width="100" align="center">
+      <el-table-column v-if="isColumnVisible('score_diff')" label="调整差异" width="100" align="center">
         <template #default="{ row }">
           <span :class="getRowScoreDiff(row) != null && getRowScoreDiff(row) !== 0 ? (getRowScoreDiff(row) > 0 ? 'text-green-500' : 'text-red-500') : ''">
             {{ getRowScoreDiff(row) != null ? getRowScoreDiff(row).toFixed(2) : '' }}
           </span>
         </template>
       </el-table-column>
-      <el-table-column prop="score_reason" label="评分理由" width="180" show-overflow-tooltip>
+      <el-table-column v-if="isColumnVisible('score_reason')" prop="score_reason" label="评分理由" width="180" show-overflow-tooltip>
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.employee_id]">
             <el-input v-model="editCache[row.employee_id].score_reason" size="small" placeholder="理由" @change="markChanged(row.employee_id)" />
@@ -107,7 +113,7 @@
           <template v-else>{{ row.score_reason || '' }}</template>
         </template>
       </el-table-column>
-      <el-table-column prop="review_note" label="分管领导审核后调整" width="200" show-overflow-tooltip>
+      <el-table-column v-if="isColumnVisible('review_note')" prop="review_note" label="分管领导审核后调整" width="200" show-overflow-tooltip>
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.employee_id]">
             <el-input v-model="editCache[row.employee_id].review_note" size="small" placeholder="调整说明" @change="markChanged(row.employee_id)" />
@@ -115,7 +121,7 @@
           <template v-else>{{ row.review_note || '' }}</template>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="130" fixed="right">
+      <el-table-column v-if="isColumnVisible('action')" label="操作" width="130" fixed="right">
         <template #default="{ row }">
           <div class="action-cell">
             <el-button v-if="row.id && !editMode" type="primary" link size="small" @click="showDialog(row)">编辑</el-button>
@@ -240,6 +246,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Download, Upload, Delete } from '@element-plus/icons-vue'
 import api from '../../api'
+import ColumnSetting from '../../components/ColumnSetting.vue'
 
 function getDefaultPeriod() {
   const now = new Date()
@@ -295,6 +302,41 @@ const editCache = reactive({})
 const changedSet = ref(new Set())
 const editConfirmVisible = ref(false)
 const confirmList = ref([])
+
+const TABLE_COLUMNS = [
+  { key: 'selection', label: '选择', required: true },
+  { key: 'employee_no', label: '员工编号', required: true },
+  { key: 'employee_name', label: '姓名', required: true },
+  { key: 'contract_company', label: '合同公司' },
+  { key: 'department', label: '部门' },
+  { key: 'position', label: '职务' },
+  { key: 'total_work_days', label: '应计薪天数' },
+  { key: 'actual_work_days', label: '实际计薪天数' },
+  { key: 'attendance_rate', label: '出勤率' },
+  { key: 'performance_standard', label: '绩效奖金标准' },
+  { key: 'performance_category', label: '绩效类别' },
+  { key: 'initial_score', label: '初评' },
+  { key: 'final_score', label: '复评绩效系数' },
+  { key: 'evaluated', label: '评价后绩效标准' },
+  { key: 'diff', label: '差额' },
+  { key: 'actual_paid', label: '实发绩效金额' },
+  { key: 'score_diff', label: '调整差异' },
+  { key: 'score_reason', label: '评分理由' },
+  { key: 'review_note', label: '分管领导审核后调整' },
+  { key: 'action', label: '操作', required: true },
+]
+
+const DEFAULT_VISIBLE_COLUMNS = [
+  'selection', 'employee_no', 'employee_name', 'department',
+  'total_work_days', 'attendance_rate', 'performance_standard',
+  'performance_category', 'final_score', 'actual_paid', 'action'
+]
+
+const visibleColumns = ref([])
+
+function isColumnVisible(key) {
+  return visibleColumns.value.includes(key)
+}
 
 const fieldLabels = {
   initial_score: '初评',

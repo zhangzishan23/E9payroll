@@ -18,6 +18,7 @@ def run_migrations():
         _run_attendance_precision_migration()
         _run_salary_nullable_migration()
     _run_salary_export_migrations()
+    _run_attendance_lock_migrations()
 
 
 def _run_pg_migrations():
@@ -317,3 +318,29 @@ def _run_salary_nullable_migration():
         conn.execute(text(
             "ALTER TABLE salary_calculations ALTER COLUMN tax_deduction DROP DEFAULT"
         ))
+
+
+def _run_attendance_lock_migrations():
+    """为考勤表添加数据锁定相关字段"""
+    is_sqlite = "sqlite" in DATABASE_URL
+    attendance_new_columns = [
+        ("is_row_locked", "BOOLEAN DEFAULT FALSE"),
+        ("locked_fields", "JSON"),
+        ("special_apply_ids", "JSON"),
+        ("remark", "VARCHAR(500)"),
+    ]
+    
+    with engine.begin() as conn:
+        if is_sqlite:
+            result = conn.execute(text("PRAGMA table_info(attendance_records)"))
+            existing_cols = {row[1] for row in result.fetchall()}
+            for col_name, col_def in attendance_new_columns:
+                if col_name not in existing_cols:
+                    conn.execute(text(
+                        f"ALTER TABLE attendance_records ADD COLUMN {col_name} {col_def}"
+                    ))
+        else:
+            for col_name, col_def in attendance_new_columns:
+                conn.execute(text(
+                    f"ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
+                ))

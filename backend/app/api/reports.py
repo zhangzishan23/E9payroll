@@ -32,7 +32,7 @@ STEP_DEFINITIONS = [
     {"key": "performance", "title": "绩效评分", "description": "录入绩效系数", "route": "/performance"},
     {"key": "insurance", "title": "社保数据", "description": "确认社保公积金", "route": "/insurance"},
     {"key": "tax", "title": "个税申报", "description": "导出报税并导入个税结果", "route": "/salary"},
-    {"key": "salary", "title": "薪资计算", "description": "核算应发与实发工资", "route": "/salary"},
+    {"key": "salary", "title": "薪资计算", "description": "计算应发与实发工资", "route": "/salary"},
     {"key": "payment", "title": "工资发放", "description": "审核通过后导出报表完成", "route": "/reports"},
 ]
 
@@ -193,8 +193,8 @@ def get_stats(
                 missing_count = 0
                 can_confirm = False
             else:
-                data_ready = salary_completed_count >= total_employees and total_employees > 0 and tax_imported_count >= total_employees
-                missing_count = salary_pending_count if salary_pending_count > 0 else (total_employees - tax_imported_count)
+                data_ready = True
+                missing_count = 0
         elif key == "payment":
             if not prerequisites_confirmed_for_payment:
                 data_ready = False
@@ -330,22 +330,7 @@ def confirm_step(
                         pd = next(s for s in STEP_DEFINITIONS if s["key"] == pk)
                         unconfirmed.append(pd["title"])
                 raise HTTPException(status_code=400, detail=f"请先确认以下步骤后再确认薪资计算：{', '.join(unconfirmed)}")
-            salary_calcs = db.query(SalaryCalculation).filter(
-                SalaryCalculation.period == data.period,
-                SalaryCalculation.employee_id.in_(active_employee_ids)
-            ).all()
-            completed_count = sum(1 for c in salary_calcs if c.calculation_status in ("应发已核算", "实发已核算"))
-            tax_imported_count = sum(1 for c in salary_calcs if c.tax_deduction is not None)
-            net_completed = sum(1 for c in salary_calcs if c.calculation_status == "实发已核算")
-            data_ready = net_completed >= total_employees and total_employees > 0 and tax_imported_count >= total_employees
-            if not data_ready:
-                missing = []
-                if tax_imported_count < total_employees:
-                    missing.append(f"个税结果未全部导入（{tax_imported_count}/{total_employees}）")
-                if completed_count < total_employees:
-                    missing.append(f"薪资未全部核算（{completed_count}/{total_employees}）")
-                if net_completed < total_employees and completed_count >= total_employees:
-                    missing.append(f"实发工资未全部计算（{net_completed}/{total_employees}）")
+            data_ready = True
         elif data.step_key == "payment":
             prerequisite_keys = ["employee", "attendance", "performance", "insurance", "tax", "salary"]
             confirmed_prereqs = db.query(SalaryPeriodStep).filter(

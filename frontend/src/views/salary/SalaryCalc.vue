@@ -30,6 +30,12 @@
           <el-button type="danger" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">删除</el-button>
           <el-button type="warning" size="small" :disabled="!hasResults" @click="showTaxImport">报税导入</el-button>
           <el-button type="success" size="small" :disabled="!hasResults" @click="handleExportTaxTemplate">导出报税模板</el-button>
+          <ColumnSetting
+            :columns="SALARY_TABLE_COLUMNS"
+            :default-visible-keys="SALARY_DEFAULT_VISIBLE"
+            v-model="salaryVisibleColumns"
+            storage-key="salary_table_columns"
+          />
         </div>
       </div>
 
@@ -98,9 +104,9 @@
         </el-button>
       </div>
       <el-table :data="results" border stripe max-height="500" v-loading="loading" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
-        <el-table-column type="selection" width="55" />
+        <el-table-column v-if="isSalaryColumnVisible('__selection')" type="selection" width="55" />
         <el-table-column
-          v-for="col in SALARY_COLUMNS"
+          v-for="col in visibleSalaryColumns"
           :key="col.key"
           :prop="col.key"
           :label="col.label"
@@ -114,17 +120,17 @@
             </el-tooltip>
           </template>
           <template #default="{ row }">
-            <template v-if="editMode && col.editable && editCache[row.id]">
+            <template v-if="editMode && col.editable && editCache[getCacheKey(row)]">
               <el-input
                 v-if="col.type === 'text'"
-                v-model="editCache[row.id][col.key]"
+                v-model="editCache[getCacheKey(row)][col.key]"
                 size="small"
                 class="cell-text"
                 @change="markChanged(row.id, col.key)"
               />
               <el-input-number
                 v-else
-                v-model="editCache[row.id][col.key]"
+                v-model="editCache[getCacheKey(row)][col.key]"
                 :min="0"
                 :precision="2"
                 size="small"
@@ -255,9 +261,10 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
-import { Download, Delete, UploadFilled } from '@element-plus/icons-vue'
+import { Download, Delete, UploadFilled, Setting } from '@element-plus/icons-vue'
 import api from '../../api'
 import { SALARY_COLUMNS, SALARY_EDITABLE_FIELDS, getSalaryFieldLabel } from '../../config/columns'
+import ColumnSetting from '../../components/ColumnSetting.vue'
 
 function formatValue(val, decimals = null) {
   if (val == null) return ''
@@ -311,6 +318,28 @@ const results = ref([])
 const selectedRows = ref([])
 const formulaVisible = ref(false)
 
+const SALARY_TABLE_COLUMNS = [
+  { key: '__selection', label: '选择', required: true },
+  ...SALARY_COLUMNS.map(c => ({ key: c.key, label: c.label, required: ['employee_no', 'employee_name', 'gross_salary', 'net_salary'].includes(c.key) }))
+]
+
+const SALARY_DEFAULT_VISIBLE = [
+  '__selection', 'employee_no', 'employee_name', 'department', 'base_salary',
+  'performance_standard', 'actual_performance', 'effective_performance',
+  'allowance_total', 'gross_salary', 'si_hf_total', 'tax_deduction', 'net_salary'
+]
+
+const salaryVisibleColumns = ref([])
+
+const visibleSalaryColumns = computed(() => {
+  return SALARY_COLUMNS.filter(c => salaryVisibleColumns.value.includes(c.key))
+})
+
+function isSalaryColumnVisible(key) {
+  if (key === '__selection') return salaryVisibleColumns.value.includes('__selection')
+  return salaryVisibleColumns.value.includes(key)
+}
+
 const editMode = ref(false)
 const editCache = reactive({})
 const changedSet = reactive({})
@@ -321,6 +350,10 @@ const editableFields = SALARY_EDITABLE_FIELDS
 
 function getFieldLabel(key) {
   return getSalaryFieldLabel(key)
+}
+
+function getCacheKey(row) {
+  return row.id || `_emp_${row.employee_id}`
 }
 
 const hasResults = computed(() => results.value.length > 0)
@@ -351,23 +384,17 @@ function tableRowClassName({ row }) {
 
 function initEditCache() {
   Object.keys(changedSet).forEach(k => delete changedSet[k])
+  // 从列配置动态获取所有可编辑字段
+  const editableCols = SALARY_COLUMNS.filter(c => c.editable)
   results.value.forEach(row => {
-    if (!row || !row.id) return
-    editCache[row.id] = reactive({
-      commission_bonus: row.commission_bonus ?? null,
-      pretax_adjustment: row.pretax_adjustment ?? null,
-      pretax_adjustment_reason: row.pretax_adjustment_reason ?? '',
-      posttax_adjustment: row.posttax_adjustment ?? null,
-      posttax_adjustment_reason: row.posttax_adjustment_reason ?? '',
-      severance_pay: row.severance_pay ?? null,
-      year_end_bonus_untaxed: row.year_end_bonus_untaxed ?? null,
-      last_month_untaxed: row.last_month_untaxed ?? null,
-      travel_untaxed: row.travel_untaxed ?? null,
-      compensation_tax: row.compensation_tax ?? null,
-      tax_deduction: row.tax_deduction ?? null,
-      special_deduction: row.special_deduction ?? null,
-      performance_coefficient: row.performance_coefficient ?? null
+    if (!row) return
+    const cacheKey = getCacheKey(row)
+    const cache = {}
+    editableCols.forEach(col => {
+      const val = row[col.key]
+      cache[col.key] = col.type === 'text' ? (val ?? '') : (val ?? null)
     })
+    editCache[cacheKey] = reactive(cache)
   })
 }
 
@@ -375,7 +402,7 @@ function markChanged(rowId, field) {
   const row = results.value.find(r => r.id === rowId)
   if (!row) return
   const oldVal = row[field]
-  const newVal = editCache[rowId]?.[field]
+  const newVal = editCache[getCacheKey(row)]?.[field]
   const changed = (() => {
     if (oldVal == null && newVal == null) return false
     if (oldVal == null || newVal == null) return oldVal !== newVal
@@ -384,14 +411,15 @@ function markChanged(rowId, field) {
     }
     return String(oldVal) !== String(newVal)
   })()
+  const cacheKey = getCacheKey(row)
   if (!changed) {
-    if (changedSet[rowId]) {
-      delete changedSet[rowId][field]
-      if (Object.keys(changedSet[rowId]).length === 0) delete changedSet[rowId]
+    if (changedSet[cacheKey]) {
+      delete changedSet[cacheKey][field]
+      if (Object.keys(changedSet[cacheKey]).length === 0) delete changedSet[cacheKey]
     }
   } else {
-    if (!changedSet[rowId]) changedSet[rowId] = {}
-    changedSet[rowId][field] = true
+    if (!changedSet[cacheKey]) changedSet[cacheKey] = {}
+    changedSet[cacheKey][field] = true
   }
 }
 
@@ -428,20 +456,28 @@ function cancelEdits() {
 }
 
 async function confirmEdits() {
-  const changedIds = Object.keys(changedSet).map(Number)
-  if (!changedIds.length) {
+  const changedKeys = Object.keys(changedSet)
+  if (!changedKeys.length) {
     ElMessage.warning('没有检测到任何修改')
     return
   }
 
+  function findRowByCacheKey(key) {
+    const numKey = Number(key)
+    if (!isNaN(numKey)) return results.value.find(r => r.id === numKey)
+    // 字符串键：_emp_{employee_id}
+    const empId = parseInt(key.replace('_emp_', ''), 10)
+    return results.value.find(r => r.employee_id === empId)
+  }
+
   const rows = []
-  changedIds.forEach(id => {
-    const row = results.value.find(r => r.id === id)
+  changedKeys.forEach(cacheKey => {
+    const row = findRowByCacheKey(cacheKey)
     if (!row) return
     const changes = []
-    Object.keys(changedSet[id]).forEach(field => {
+    Object.keys(changedSet[cacheKey]).forEach(field => {
       const oldVal = row[field]
-      const newVal = editCache[id]?.[field]
+      const newVal = editCache[cacheKey]?.[field]
       changes.push({
         field,
         label: getFieldLabel(field) || field,
@@ -451,7 +487,8 @@ async function confirmEdits() {
     })
     if (changes.length) {
       rows.push({
-        id,
+        id: row.id,
+        cacheKey,
         employee_name: row.employee_name,
         employee_no: row.employee_no,
         changes
@@ -465,21 +502,30 @@ async function confirmEdits() {
 
 async function saveAllEdits() {
   savingEdits.value = true
-  const changedIds = Object.keys(changedSet).map(Number)
+  const changedKeys = Object.keys(changedSet)
   let successCount = 0
   let failCount = 0
 
+  function findRowByCacheKey(key) {
+    const numKey = Number(key)
+    if (!isNaN(numKey)) return results.value.find(r => r.id === numKey)
+    const empId = parseInt(key.replace('_emp_', ''), 10)
+    return results.value.find(r => r.employee_id === empId)
+  }
+
   try {
-    for (const id of changedIds) {
-      const cache = editCache[id]
+    for (const cacheKey of changedKeys) {
+      const cache = editCache[cacheKey]
       if (!cache) continue
+      const row = findRowByCacheKey(cacheKey)
+      if (!row || !row.id) continue
       const payload = {}
-      Object.keys(changedSet[id] || {}).forEach(field => {
+      Object.keys(changedSet[cacheKey] || {}).forEach(field => {
         const val = cache[field]
         payload[field] = val === undefined ? null : val
       })
       try {
-        await api.put(`/salary/results/${id}`, payload)
+        await api.put(`/salary/results/${row.id}`, payload)
         successCount++
       } catch {
         failCount++

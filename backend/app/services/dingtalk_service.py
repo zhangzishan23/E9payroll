@@ -9,6 +9,7 @@
 import time
 import logging
 import calendar
+import re
 from datetime import datetime, date, timedelta
 from typing import Optional
 import httpx
@@ -1518,15 +1519,21 @@ def sync_attendance_to_db(db_session, period: str) -> dict:
                 other_leave_days=other_leave,
             )
 
-            # upsert
+            # upsert（注意：跳过已锁定的字段和整行锁定的记录）
             existing = db_session.query(AttendanceRecord).filter(
                 AttendanceRecord.period == period,
                 AttendanceRecord.employee_id == emp.id,
             ).first()
 
             if existing:
+                row_locked = existing.is_row_locked or False
+                locked_fields = existing.locked_fields or {}
                 for k, v in record_data.items():
                     if k not in ("period", "employee_id"):
+                        if row_locked:
+                            continue
+                        if locked_fields.get(k):
+                            continue
                         setattr(existing, k, v)
             else:
                 db_session.add(AttendanceRecord(**record_data))
@@ -1842,3 +1849,865 @@ def get_sync_logs(db_session, sync_type: str = None, limit: int = 20) -> list:
     if sync_type:
         q = q.filter(DingtalkSyncLog.sync_type == sync_type)
     return q.limit(limit).all()
+
+
+# ========== 审批相关（旧版API，无需额外权限） ==========
+
+def get_process_template_list() -> list[dict]:
+    """获取用户可见的审批模板列表（旧版API）"""
+    token = _get_access_token()
+    url = "https://oapi.dingtalk.com/topapi/process/listbyuserid"
+    params = {"access_token": token}
+    body = {
+        "offset": 0,
+        "size": 100,
+    }
+    with httpx.Client(timeout=30) as client:
+        resp = client.post(url, params=params, json=body)
+        data = resp.json()
+    if data.get("errcode") != 0:
+        raise Exception(f"获取审批模板列表失败: {data.get('errmsg')}")
+    return data.get("result", {}).get("process_list", [])
+
+
+def get_process_code_by_name(template_name: str) -> str:
+    """根据审批模板名称获取processCode（旧版API，遍历模板列表）"""
+    templates = get_process_template_list()
+    for tpl in templates:
+        name = tpl.get("name", "")
+        if template_name in name or name in template_name:
+            return tpl.get("process_code", "")
+    # 如果没找到，打印所有可用模板名称方便调试
+    all_names = [t.get("name", "") for t in templates]
+    raise Exception(f"未找到名为「{template_name}」的审批模板，可用模板: {all_names}")
+
+
+def get_approval_instance_ids(process_code: str, start_time: int, end_time: int,
+                              statuses: list = None, user_ids: list = None) -> list[str]:
+    """
+    获取审批实例ID列表（旧版API）
+    start_time/end_time: Unix时间戳，单位毫秒
+    statuses: ["RUNNING", "TERMINATED", "COMPLETED"]
+    """
+    token = _get_access_token()
+    url = "https://oapi.dingtalk.com/topapi/processinstance/listids"
+    params = {"access_token": token}
+    all_instance_ids = []
+    cursor = 0
+    size = 20
+
+    while True:
+        body = {
+            "process_code": process_code,
+            "start_time": start_time,
+            "end_time": end_time,
+            "cursor": cursor,
+            "size": size,
+        }
+        if user_ids:
+            body["userid_list"] = ",".join(user_ids)
+
+        with httpx.Client(timeout=30) as client:
+            resp = client.post(url, params=params, json=body)
+            data = resp.json()
+        if data.get("errcode") != 0:
+            raise Exception(f"获取审批实例ID列表失败: {data.get('errmsg')}")
+        result = data.get("result", {})
+        instance_ids = result.get("list", [])
+        all_instance_ids.extend(instance_ids)
+        next_cursor = result.get("next_cursor")
+        if not next_cursor or len(instance_ids) < size:
+            break
+        cursor = next_cursor
+
+    return all_instance_ids
+
+
+def get_approval_instance_detail(process_instance_id: str) -> dict:
+    """获取单个审批实例详情（旧版API）"""
+    token = _get_access_token()
+    url = "https://oapi.dingtalk.com/topapi/processinstance/get"
+    params = {"access_token": token}
+    body = {"process_instance_id": process_instance_id}
+    with httpx.Client(timeout=30) as client:
+        resp = client.post(url, params=params, json=body)
+        data = resp.json()
+    if data.get("errcode") != 0:
+        raise Exception(f"获取审批实例详情失败: {data.get('errmsg')}")
+    return data.get("process_instance", {})
+
+
+def parse_special_apply_for_attendance(instance_detail: dict) -> dict:
+    """
+    解析特殊申请审批单中的考勤相关内容（兼容新旧版API返回格式）
+    返回: {
+        "instance_id": "...",
+        "originator_user_id": "...",
+        "status": "COMPLETED",
+        "result": "agree",
+        "apply_type": "考勤",  # 申请类型
+        "attendance_items": [  # 考勤调整项
+            {
+                "field": "missed_clock_in_count",  # 要调整的字段
+                "adjustment": -1,  # 调整量（负数表示减少）
+                "date": "2026-07-10",  # 日期
+                "reason": "缺卡补卡申请通过"
+            }
+        ],
+        "raw_form": {}  # 原始表单数据
+    }
+    """
+    # 兼容新旧版API的字段命名
+    instance_id = instance_detail.get("processInstanceId") or instance_detail.get("process_instance_id", "")
+    originator = instance_detail.get("originatorUserId") or instance_detail.get("originator_userid", "")
+    status = instance_detail.get("status", "")
+    # 旧版API中，审批结果在result字段，值为"agree"/"refuse"等；新版也是result
+    result_val = instance_detail.get("result", "")
+    title = instance_detail.get("title", "")
+    
+    result = {
+        "instance_id": instance_id,
+        "originator_user_id": originator,
+        "status": status,
+        "result": result_val,
+        "title": title,
+        "apply_type": "",
+        "attendance_items": [],
+        "raw_form": {},
+    }
+
+    # 解析表单组件（兼容新旧版命名：formComponentValues/form_component_values）
+    form_values = instance_detail.get("formComponentValues") or instance_detail.get("form_component_values", [])
+    form_map = {}
+    for item in form_values:
+        name = item.get("name", "")
+        value = item.get("value", "")
+        # 旧版API中，明细组件（如明细表）的值是JSON字符串，需要解析
+        if isinstance(value, str) and value.startswith("[") and value.endswith("]"):
+            try:
+                import json
+                value = json.loads(value)
+            except:
+                pass
+        form_map[name] = value
+    result["raw_form"] = form_map
+
+    # 查找申请类型
+    apply_type = ""
+    for key in ["申请类型", "类型", "审批类型"]:
+        if key in form_map:
+            apply_type = form_map[key]
+            break
+    result["apply_type"] = apply_type
+
+    # 只处理审批通过且是考勤相关的申请
+    if result["status"] != "COMPLETED" or result["result"] != "agree":
+        return result
+    if not apply_type or "考勤" not in apply_type and "缺卡" not in apply_type and "打卡" not in apply_type:
+        return result
+
+    # 解析考勤调整项
+    # 需要根据实际"特殊申请"模板的字段来解析，这里先做通用解析
+    # 常见字段：申请日期、调整类型（缺卡/迟到/早退等）、调整次数、原因
+    attendance_items = []
+    
+    # 尝试解析日期
+    apply_date = ""
+    for key in ["申请日期", "日期", "缺卡日期", "异常日期"]:
+        if key in form_map and form_map[key]:
+            date_val = str(form_map[key]).strip()
+            if len(date_val) >= 10:
+                apply_date = date_val[:10]
+            break
+
+    # 尝试解析调整类型
+    adjust_type = ""
+    for key in ["调整类型", "异常类型", "申请事项"]:
+        if key in form_map:
+            adjust_type = str(form_map[key]).strip()
+            break
+
+    # 尝试解析调整次数/天数
+    adjust_count = 0
+    for key in ["次数", "天数", "数量", "缺卡次数"]:
+        if key in form_map:
+            try:
+                adjust_count = int(float(str(form_map[key]).strip()))
+            except (ValueError, TypeError):
+                pass
+            break
+
+    # 获取原因
+    reason = ""
+    for key in ["申请原因", "原因", "说明", "备注"]:
+        if key in form_map:
+            reason = str(form_map[key]).strip()
+            break
+
+    # 映射调整类型到数据库字段
+    field_mapping = {
+        "缺卡": "missed_punch_count",
+        "上班缺卡": "missed_clock_in_count",
+        "下班缺卡": "missed_clock_out_count",
+        "迟到": "late_count",
+        "早退": "early_count",
+        "旷工": "absenteeism_days",
+        "事假": "personal_leave_days",
+    }
+
+    # 确定要调整的字段
+    target_field = None
+    for keyword, field in field_mapping.items():
+        if keyword in adjust_type:
+            target_field = field
+            break
+
+    if target_field and adjust_count > 0:
+        # 特殊申请通过后，异常次数应该减少（补卡成功）
+        attendance_items.append({
+            "field": target_field,
+            "adjustment": -adjust_count if "天数" not in target_field else -round(adjust_count / 7.0, 2),
+            "date": apply_date,
+            "reason": reason or f"特殊申请审批通过（{adjust_type}）",
+        })
+
+    result["attendance_items"] = attendance_items
+    return result
+
+
+def get_month_special_applies(period: str, template_name: str = "特殊申请") -> list[dict]:
+    """
+    获取指定月份的特殊申请审批单（已审批通过的）
+    period: YYYYMM格式
+    返回: 解析后的考勤调整项列表
+    """
+    import time as time_mod
+    year = int(period[:4])
+    month = int(period[4:6])
+    
+    # 计算月份时间范围（Unix时间戳，毫秒）
+    start_dt = datetime(year, month, 1)
+    if month == 12:
+        end_dt = datetime(year + 1, 1, 1) - timedelta(seconds=1)
+    else:
+        end_dt = datetime(year, month + 1, 1) - timedelta(seconds=1)
+    
+    start_ts = int(start_dt.timestamp() * 1000)
+    end_ts = int(end_dt.timestamp() * 1000)
+
+    # 1. 获取processCode
+    process_code = get_process_code_by_name(template_name)
+    logger.info(f"获取到审批模板「{template_name}」的processCode: {process_code}")
+
+    # 2. 获取审批实例ID列表（只查已完成的）
+    instance_ids = get_approval_instance_ids(
+        process_code=process_code,
+        start_time=start_ts,
+        end_time=end_ts,
+        statuses=["COMPLETED"],
+    )
+    logger.info(f"获取到{len(instance_ids)}个审批实例")
+
+    # 3. 逐个获取详情并解析
+    results = []
+    for instance_id in instance_ids:
+        try:
+            detail = get_approval_instance_detail(instance_id)
+            parsed = parse_special_apply_for_attendance(detail)
+            if parsed["attendance_items"]:
+                results.append(parsed)
+        except Exception as e:
+            logger.warning(f"获取审批实例{instance_id}详情失败: {e}")
+            continue
+
+    logger.info(f"解析到{len(results)}个有效的考勤特殊申请")
+    return results
+
+
+def apply_special_applies_to_attendance(db_session, period: str, applies: list[dict]) -> dict:
+    """
+    将特殊申请的考勤调整应用到考勤记录
+    返回: {"applied": 应用数量, "updated": 更新员工数, "errors": 错误列表}
+    """
+    from app.models.models import Employee, AttendanceRecord
+    
+    stats = {"applied": 0, "updated": 0, "errors": []}
+    updated_emp_ids = set()
+
+    # 建立钉钉userId -> 员工映射
+    emp_by_dingtalk = {}
+    for emp in db_session.query(Employee).filter(Employee.dingtalk_user_id.isnot(None)).all():
+        emp_by_dingtalk[emp.dingtalk_user_id] = emp
+
+    for apply in applies:
+        try:
+            user_id = apply["originator_user_id"]
+            emp = emp_by_dingtalk.get(user_id)
+            if not emp:
+                stats["errors"].append(f"申请人userId {user_id} 未在员工表中找到")
+                continue
+
+            # 查找该员工当月考勤记录
+            att = db_session.query(AttendanceRecord).filter(
+                AttendanceRecord.period == period,
+                AttendanceRecord.employee_id == emp.id,
+            ).first()
+            if not att:
+                stats["errors"].append(f"员工 {emp.name}({user_id}) 在{period}没有考勤记录")
+                continue
+
+            # 检查是否已经应用过该申请单
+            existing_ids = att.special_apply_ids or []
+            if apply["instance_id"] in existing_ids:
+                continue  # 已应用，跳过
+
+            # 应用调整项
+            locked_fields = att.locked_fields or {}
+            row_locked = att.is_row_locked or False
+            for item in apply["attendance_items"]:
+                field = item["field"]
+                adjustment = item["adjustment"]
+                reason = item["reason"]
+
+                if row_locked:
+                    stats["errors"].append(f"员工 {emp.name} 的考勤记录已整行锁定，跳过调整")
+                    continue
+                if locked_fields.get(field):
+                    stats["errors"].append(f"员工 {emp.name} 的字段 {field} 已锁定，跳过调整")
+                    continue
+
+                current_val = getattr(att, field, 0) or 0
+                if "days" in field:
+                    new_val = round(float(current_val) + adjustment, 2)
+                else:
+                    new_val = int(current_val) + adjustment
+                new_val = max(new_val, 0)  # 不能为负数
+                setattr(att, field, new_val)
+                
+                # 更新备注
+                existing_remark = att.remark or ""
+                if reason and reason not in existing_remark:
+                    att.remark = (existing_remark + f"；" if existing_remark else "") + f"特殊申请：{reason}"
+
+            # 记录已应用的申请单ID
+            existing_ids.append(apply["instance_id"])
+            att.special_apply_ids = existing_ids
+            
+            # 重新计算考勤相关字段
+            _recalculate_attendance_for_record(db_session, att)
+            
+            updated_emp_ids.add(emp.id)
+            stats["applied"] += 1
+
+        except Exception as e:
+            stats["errors"].append(f"处理申请单 {apply.get('instance_id')} 失败: {str(e)}")
+
+    db_session.commit()
+    stats["updated"] = len(updated_emp_ids)
+    return stats
+
+
+def _recalculate_attendance_for_record(db_session, att) -> None:
+    """根据当前字段重新计算考勤的计薪天数等（与attendance.py中的逻辑保持一致）"""
+    from app.services import work_calendar as work_cal
+    
+    adjusted = work_cal.get_month_salary_days(db_session, att.period)
+    
+    late_count_val = att.late_count or 0
+    late_duration_val = att.late_duration or 0
+    late_to_leave = 0.0
+    if late_count_val > 3 and late_duration_val > 0:
+        late_to_leave = round(late_duration_val / 60 / 7.0, 2)
+    
+    leave_total = round(
+        late_to_leave + 
+        float(att.personal_leave_days or 0) + 
+        float(att.reduced_pay_sick_days or 0) +
+        float(att.statutory_sick_days or 0) + 
+        float(att.prenatal_checkup_days or 0) +
+        float(att.maternity_leave_days or 0) + 
+        float(att.paternity_leave_days or 0) +
+        float(att.marriage_leave_days or 0) + 
+        float(att.funeral_leave_days or 0) +
+        float(att.engineering_compensatory_days or 0), 2
+    )
+    
+    actual_salary = max(round(adjusted - leave_total, 2), 0)
+    att_rate = round(actual_salary / adjusted, 4) if adjusted > 0 else 0
+    
+    att.adjusted_salary_days = adjusted
+    att.actual_salary_days = actual_salary
+    att.actual_work_days = actual_salary
+    att.late_to_personal_leave_days = late_to_leave
+    att.leave_total_days = leave_total
+    att.attendance_rate = att_rate
+
+
+# ========== 新版 Workflow API (v1.0) ==========
+
+def _get_new_api_headers() -> dict:
+    """获取新版API请求头（使用x-acs-dingtalk-access-token）"""
+    token = _get_access_token()
+    return {
+        "x-acs-dingtalk-access-token": token,
+        "Content-Type": "application/json",
+    }
+
+
+def list_workflow_templates_v2(user_id: str = None, max_results: int = 100) -> list[dict]:
+    """
+    新版API：获取用户可见的审批表单列表
+    GET /v1.0/workflow/processes/userVisibilities/templates
+    权限要求：工作流模板读权限(Workflow.Form.Read)
+    """
+    url = "https://api.dingtalk.com/v1.0/workflow/processes/userVisibilities/templates"
+    headers = _get_new_api_headers()
+    all_templates = []
+    next_token = 0
+
+    while True:
+        params = {"maxResults": min(max_results, 100), "nextToken": next_token}
+        if user_id:
+            params["userId"] = user_id
+        with httpx.Client(timeout=30) as client:
+            resp = client.get(url, headers=headers, params=params)
+            data = resp.json()
+        if "result" not in data:
+            if "code" in data or "message" in data:
+                raise Exception(f"获取审批模板列表失败(新版API): {data}")
+            break
+        result = data.get("result", {})
+        process_list = result.get("processList", [])
+        all_templates.extend(process_list)
+        next_token = result.get("nextToken")
+        if not next_token or not process_list:
+            break
+
+    return all_templates
+
+
+def get_workflow_process_code_v2(template_name: str, user_id: str = None) -> str:
+    """新版API：根据模板名称查找processCode"""
+    templates = list_workflow_templates_v2(user_id=user_id)
+    for tpl in templates:
+        name = tpl.get("name", "") or tpl.get("flowTitle", "")
+        if template_name in name or name in template_name:
+            return tpl.get("processCode", "")
+    all_names = [t.get("name", "") or t.get("flowTitle", "") for t in templates]
+    raise Exception(f"新版API未找到名为「{template_name}」的模板，可用模板: {all_names}")
+
+
+def get_workflow_instance_ids_v2(
+    process_code: str,
+    start_time: int,
+    end_time: int,
+    user_ids: list[str] = None,
+    statuses: list[str] = None,
+) -> list[str]:
+    """
+    新版API：获取审批实例ID列表
+    POST /v1.0/workflow/processes/instanceIds/query
+    权限要求：工作流实例读权限(Workflow.Instance.Read)
+    start_time/end_time: Unix时间戳（毫秒）
+    statuses: "RUNNING" | "TERMINATED" | "COMPLETED"
+    """
+    url = "https://api.dingtalk.com/v1.0/workflow/processes/instanceIds/query"
+    headers = _get_new_api_headers()
+    all_instance_ids = []
+    next_token = 0
+
+    while True:
+        body = {
+            "processCode": process_code,
+            "startTime": start_time,
+            "endTime": end_time,
+            "nextToken": next_token,
+            "maxResults": 20,
+        }
+        if user_ids:
+            body["userIds"] = user_ids
+        if statuses:
+            body["statuses"] = statuses
+
+        with httpx.Client(timeout=30) as client:
+            resp = client.post(url, headers=headers, json=body)
+            data = resp.json()
+        if "result" not in data:
+            if "code" in data or "message" in data:
+                raise Exception(f"获取审批实例ID列表失败(新版API): {data}")
+            break
+        result = data.get("result", {})
+        instance_ids = result.get("list", [])
+        all_instance_ids.extend(instance_ids)
+        next_token = result.get("nextToken")
+        if not next_token or not instance_ids:
+            break
+
+    return all_instance_ids
+
+
+def get_workflow_instance_detail_v2(process_instance_id: str) -> dict:
+    """
+    新版API：获取单个审批实例详情
+    GET /v1.0/workflow/processInstances?processInstanceId=xxx
+    权限要求：工作流实例读权限(Workflow.Instance.Read)
+    """
+    url = "https://api.dingtalk.com/v1.0/workflow/processInstances"
+    headers = _get_new_api_headers()
+    params = {"processInstanceId": process_instance_id}
+    with httpx.Client(timeout=30) as client:
+        resp = client.get(url, headers=headers, params=params)
+        data = resp.json()
+    # 新版API返回在result字段中
+    if "result" not in data and ("code" in data or "message" in data):
+        raise Exception(f"获取审批实例详情失败(新版API): {data}")
+    return data.get("result", data)
+
+
+def list_workflow_templates_manageable_v2(user_id: str) -> list[dict]:
+    """
+    新版API：获取当前企业所有可管理的表单（需要OA审批管理员权限）
+    GET /v1.0/workflow/processes/managements/templates
+    """
+    url = "https://api.dingtalk.com/v1.0/workflow/processes/managements/templates"
+    headers = _get_new_api_headers()
+    params = {"userId": user_id}
+    with httpx.Client(timeout=30) as client:
+        resp = client.get(url, headers=headers, params=params)
+        data = resp.json()
+    if "result" not in data and ("code" in data or "message" in data):
+        raise Exception(f"获取可管理表单列表失败(新版API): {data}")
+    return data.get("result", [])
+
+
+# ========== 缺卡自动核销功能 ==========
+
+
+def _parse_apply_description_for_month(desc: str, target_year: int, target_month: int) -> dict:
+    """
+    解析特殊申请说明中指定月份的缺卡次数
+    返回: {"total_count": int, "daily_counts": dict, "target_month_mentioned": bool, "has_other": bool}
+    """
+    if not desc:
+        return {"total_count": 0, "daily_counts": {}, "target_month_mentioned": False, "has_other": False}
+    
+    total = 0
+    daily = {}
+    date_pattern = rf'{target_month}[月/\-](\d{{1,2}})[日号]?\s*(\d+)\s*次'
+    matches = re.findall(date_pattern, desc)
+    for m in matches:
+        day = int(m[0])
+        count = int(m[1])
+        daily[day] = count
+        total += count
+    
+    has_other = "调休" in desc or "请假" in desc
+    
+    if daily:
+        return {"total_count": total, "daily_counts": daily, "target_month_mentioned": True, "has_other": has_other}
+    return {"total_count": 0, "daily_counts": {}, "target_month_mentioned": False, "has_other": has_other}
+
+
+def _get_special_process_code_v2(template_name: str = "特殊申请") -> str:
+    """获取特殊申请模板的processCode（使用新版API）"""
+    templates = list_workflow_templates_v2(max_results=100)
+    for tpl in templates:
+        name = tpl.get('name', '') or tpl.get('flowTitle', '')
+        if template_name in name:
+            return tpl.get('processCode')
+    raise Exception(f"未找到名为「{template_name}」的审批模板")
+
+
+def check_missed_punch_applies(
+    db_session,
+    period: str,
+    apply_start_day: int = 1,
+    apply_end_day: int = 15
+) -> dict:
+    """
+    检查指定月份有缺卡记录的员工是否有审批通过的考勤特殊申请
+    period: YYYYMM格式，要检查的考勤月份
+    apply_start_day/apply_end_day: 查询申请的日期范围（次月的几号到几号）
+    
+    返回比对结果，包含匹配、不匹配、无申请的员工列表
+    """
+    from app.models.models import Employee, AttendanceRecord
+    from datetime import datetime as _dt
+    
+    target_year = int(period[:4])
+    target_month = int(period[4:6])
+    
+    # 计算申请查询时间范围（次月1号到次月15号，或当前日期）
+    if target_month == 12:
+        apply_year = target_year + 1
+        apply_month = 1
+    else:
+        apply_year = target_year
+        apply_month = target_month + 1
+    
+    now = _dt.now()
+    current_end_day = min(apply_end_day, now.day) if (now.year == apply_year and now.month == apply_month) else apply_end_day
+    
+    start_dt = _dt(apply_year, apply_month, apply_start_day)
+    end_dt = _dt(apply_year, apply_month, current_end_day, 23, 59, 59)
+    start_ts = int(start_dt.timestamp() * 1000)
+    end_ts = int(end_dt.timestamp() * 1000)
+    
+    # 1. 查询该月份有缺卡记录的员工（按员工去重，避免同一员工多条记录重复显示）
+    records = (
+        db_session.query(AttendanceRecord, Employee)
+        .join(Employee, AttendanceRecord.employee_id == Employee.id)
+        .filter(AttendanceRecord.period == period)
+        .all()
+    )
+    
+    employees_with_miss = []
+    seen_employee_ids = set()
+    for att, emp in records:
+        if emp.id in seen_employee_ids:
+            continue
+        seen_employee_ids.add(emp.id)
+        
+        half_day = att.half_day_missed_punch or 0
+        absenteeism_days = int(att.absenteeism_days or 0)
+        total_missed = half_day + absenteeism_days * 2
+        
+        if total_missed <= 0 or absenteeism_days >= 21:
+            continue
+        
+        employees_with_miss.append({
+            "employee_id": emp.id,
+            "employee_no": emp.employee_no,
+            "employee_name": emp.name,
+            "dingtalk_user_id": emp.dingtalk_user_id,
+            "attendance_id": att.id,
+            "half_day_missed_punch": half_day,
+            "absenteeism_days": absenteeism_days,
+            "total_missed": total_missed,
+            "att_record": att,
+        })
+    
+    if not employees_with_miss:
+        return {
+            "period": period,
+            "apply_range": f"{apply_year}-{apply_month:02d}-{apply_start_day:02d} ~ {apply_year}-{apply_month:02d}-{current_end_day:02d}",
+            "employees_with_miss": [],
+            "matched": [],
+            "mismatched": [],
+            "no_apply": [],
+            "summary": {"total_miss_employees": 0, "matched": 0, "mismatched": 0, "no_apply": 0}
+        }
+    
+    # 2. 获取特殊申请模板
+    special_process_code = _get_special_process_code_v2()
+    
+    # 3. 查询所有相关员工的审批实例（只查COMPLETED状态）
+    all_user_ids = [e["dingtalk_user_id"] for e in employees_with_miss if e["dingtalk_user_id"]]
+    instance_dict = {}
+    
+    batch_size = 10
+    for i in range(0, len(all_user_ids), batch_size):
+        batch_ids = all_user_ids[i:i+batch_size]
+        try:
+            ids = get_workflow_instance_ids_v2(
+                process_code=special_process_code,
+                start_time=start_ts,
+                end_time=end_ts,
+                user_ids=batch_ids,
+                statuses=["COMPLETED"],
+            )
+            for iid in ids:
+                instance_dict[iid] = "COMPLETED"
+        except Exception as e:
+            logger.warning(f"查询审批实例失败(批次{i//batch_size}): {e}")
+    
+    # 4. 筛选审批通过(result=agree)的考勤申请
+    june_attendance_applies = []
+    for iid in instance_dict.keys():
+        try:
+            detail = get_workflow_instance_detail_v2(iid)
+            actual_status = detail.get("status", "")
+            actual_result = detail.get("result", "")
+            
+            if actual_status != "COMPLETED" or actual_result != "agree":
+                continue
+            
+            form_values = detail.get("formComponentValues", [])
+            form_data = {}
+            for item in form_values:
+                name = item.get("name", "")
+                value = item.get("value", "")
+                form_data[name] = value
+            
+            apply_type = ""
+            for key in ["申请类型", "类型"]:
+                if key in form_data:
+                    apply_type = str(form_data[key])
+                    break
+            if "考勤" not in apply_type:
+                continue
+            
+            description = ""
+            for key in ["申请说明", "审批详情", "说明"]:
+                if key in form_data:
+                    description = str(form_data[key])
+                    break
+            
+            count_field = ""
+            for key in ["超标准金额/次数/天数/里程数", "次数"]:
+                if key in form_data:
+                    count_field = str(form_data[key])
+                    break
+            
+            create_time_str = detail.get("createTime", "")
+            originator = detail.get("originatorUserId", "")
+            title = detail.get("title", "")
+            finish_time = detail.get("finishTime", "")
+            
+            parsed = _parse_apply_description_for_month(description, target_year, target_month)
+            
+            apply_count = 0
+            if parsed["target_month_mentioned"]:
+                apply_count = parsed["total_count"]
+            else:
+                if any(kw in description for kw in ["忘记打卡", "缺卡", "没打卡"]):
+                    try:
+                        apply_count = int(count_field) if count_field else 0
+                    except:
+                        pass
+                elif "调休" not in description and "请假" not in description:
+                    try:
+                        apply_count = int(count_field) if count_field else 0
+                    except:
+                        pass
+            
+            june_attendance_applies.append({
+                "instance_id": iid,
+                "user_id": originator,
+                "title": title,
+                "description": description,
+                "count_field": count_field,
+                "parsed": parsed,
+                "apply_count": apply_count,
+                "has_other": parsed["has_other"],
+                "status": actual_status,
+                "result": actual_result,
+                "create_time": create_time_str,
+                "finish_time": finish_time,
+            })
+            
+        except Exception as e:
+            logger.warning(f"获取实例{iid}详情失败: {e}")
+    
+    # 5. 按员工分组比对
+    matched = []
+    mismatched = []
+    no_apply = []
+    
+    for emp_info in employees_with_miss:
+        user_id = emp_info["dingtalk_user_id"]
+        emp_applies = [a for a in june_attendance_applies if a["user_id"] == user_id]
+        
+        if emp_applies:
+            total_apply = sum(a["apply_count"] for a in emp_applies)
+            emp_result = {
+                **emp_info,
+                "applies": emp_applies,
+                "total_apply_count": total_apply,
+            }
+            if total_apply == emp_info["total_missed"]:
+                matched.append(emp_result)
+            else:
+                mismatched.append(emp_result)
+        else:
+            no_apply.append(emp_info)
+    
+    return {
+        "period": period,
+        "apply_range": f"{apply_year}-{apply_month:02d}-{apply_start_day:02d} ~ {apply_year}-{apply_month:02d}-{current_end_day:02d}",
+        "employees_with_miss": employees_with_miss,
+        "matched": matched,
+        "mismatched": mismatched,
+        "no_apply": no_apply,
+        "all_applies": june_attendance_applies,
+        "summary": {
+            "total_miss_employees": len(employees_with_miss),
+            "matched": len(matched),
+            "mismatched": len(mismatched),
+            "no_apply": len(no_apply),
+            "total_applies_found": len(june_attendance_applies),
+        }
+    }
+
+
+def apply_missed_punch_write_off(
+    db_session,
+    period: str,
+    employee_ids: list[int] = None,
+    apply_all_matched: bool = False
+) -> dict:
+    """
+    执行缺卡核销：将匹配员工的半天缺卡和全天缺卡清零
+    employee_ids: 指定要核销的员工ID列表，为空时如果apply_all_matched=True则核销所有匹配的
+    apply_all_matched: 是否自动核销所有匹配的员工
+    
+    返回核销结果统计
+    """
+    from app.models.models import AttendanceRecord
+    
+    check_result = check_missed_punch_applies(db_session, period)
+    
+    to_write_off = []
+    if apply_all_matched:
+        to_write_off = check_result["matched"]
+    elif employee_ids:
+        id_set = set(employee_ids)
+        to_write_off = [e for e in check_result["matched"] if e["employee_id"] in id_set]
+    
+    updated_count = 0
+    updated_employees = []
+    for emp_info in to_write_off:
+        att = emp_info["att_record"]
+        if att.is_row_locked:
+            continue
+        
+        locked_fields = att.locked_fields or {}
+        if locked_fields.get("half_day_missed_punch") or locked_fields.get("absenteeism_days"):
+            continue
+        
+        # 记录申请单ID
+        existing_ids = att.special_apply_ids or []
+        for apply in emp_info["applies"]:
+            if apply["instance_id"] not in existing_ids:
+                existing_ids.append(apply["instance_id"])
+        
+        # 清零缺卡
+        att.half_day_missed_punch = 0
+        att.absenteeism_days = 0
+        att.special_apply_ids = existing_ids
+        
+        # 添加备注
+        apply_desc = "；".join([a["description"][:50] for a in emp_info["applies"] if a["description"]])
+        existing_remark = att.remark or ""
+        remark_add = f"缺卡已核销（特殊申请审批通过）"
+        if remark_add not in existing_remark:
+            att.remark = (existing_remark + "；" if existing_remark else "") + remark_add
+        
+        updated_count += 1
+        updated_employees.append({
+            "employee_id": emp_info["employee_id"],
+            "employee_name": emp_info["employee_name"],
+            "previous_half_day": emp_info["half_day_missed_punch"],
+            "previous_absenteeism": emp_info["absenteeism_days"],
+            "apply_count": emp_info["total_apply_count"],
+        })
+    
+    if updated_count > 0:
+        db_session.commit()
+    
+    return {
+        "period": period,
+        "updated_count": updated_count,
+        "updated_employees": updated_employees,
+        "check_summary": check_result["summary"]
+    }
