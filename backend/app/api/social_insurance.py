@@ -393,6 +393,23 @@ def delete_social_insurance(
     return {"message": "删除成功"}
 
 
+def _safe_float(val):
+    """安全将单元格值转为float，失败返回None"""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip()
+    if not s or s in ("-", "--", "——", "/", ""):
+        return None
+    s = s.replace(",", "").replace("，", "").replace("¥", "").replace("￥", "").replace("$", "")
+    s = s.replace("元", "").replace("圆", "")
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
 @router.post("/import/{period}")
 def import_social_insurance(
     period: str,
@@ -404,30 +421,194 @@ def import_social_insurance(
         from openpyxl import load_workbook
         wb = load_workbook(file.file)
         ws = wb.active
-        rows = list(ws.iter_rows(min_row=2, values_only=True))
-    except Exception:
-        raise HTTPException(status_code=400, detail="无法解析Excel文件，请确认格式正确")
+        all_rows = list(ws.iter_rows(values_only=True))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"无法解析Excel文件，请确认格式正确：{str(e)}")
 
     from app.services.si_import_engine import _calc_summaries
+
+    if not all_rows or len(all_rows) < 2:
+        raise HTTPException(status_code=400, detail="Excel文件内容为空或格式不正确")
+
+    # ── 读取表头，建立动态列映射 ──
+    header_row = [str(c).strip() if c is not None else "" for c in all_rows[0]]
+    data_rows = all_rows[1:]
+
+    # 表头文本 → 数据库字段名映射
+    HEADER_TO_FIELD = {
+        "员工编号": "_emp_no",
+        "工号": "_emp_no",
+        "员工工号": "_emp_no",
+        "姓名": "_emp_name",
+        "员工姓名": "_emp_name",
+        "养老保险基数(个人)": "pension_personal_base",
+        "养老保险基数（个人）": "pension_personal_base",
+        "养老基数(个人)": "pension_personal_base",
+        "养老保险基数(单位)": "pension_company_base",
+        "养老保险基数（单位）": "pension_company_base",
+        "养老基数(单位)": "pension_company_base",
+        "养老保险个人": "pension_personal",
+        "养老保险公司": "pension_company",
+        "失业保险基数(个人)": "unemployment_personal_base",
+        "失业保险基数（个人）": "unemployment_personal_base",
+        "失业基数(个人)": "unemployment_personal_base",
+        "失业保险基数(单位)": "unemployment_company_base",
+        "失业保险基数（单位）": "unemployment_company_base",
+        "失业基数(单位)": "unemployment_company_base",
+        "失业保险个人": "unemployment_personal",
+        "失业保险公司": "unemployment_company",
+        "医疗保险基数(个人)": "medical_personal_base",
+        "医疗保险基数（个人）": "medical_personal_base",
+        "医疗基数(个人)": "medical_personal_base",
+        "医疗保险基数(单位)": "medical_company_base",
+        "医疗保险基数（单位）": "medical_company_base",
+        "医疗基数(单位)": "medical_company_base",
+        "医疗保险个人": "medical_personal",
+        "医疗保险公司": "medical_company",
+        "工伤保险基数(单位)": "injury_company_base",
+        "工伤保险基数（单位）": "injury_company_base",
+        "工伤基数(单位)": "injury_company_base",
+        "工伤保险公司": "injury_company",
+        "社保个人合计": "si_personal",
+        "社保公司合计": "si_company",
+        "社保个人": "si_personal",
+        "社保公司": "si_company",
+        "公积金基数": "hf_base",
+        "公积金缴存基数": "hf_base",
+        "公积金个人": "hf_personal",
+        "公积金公司": "hf_company",
+        "公积金个人金额": "hf_personal",
+        "公积金单位金额": "hf_company",
+    }
+
+    # 建立列索引映射：col_idx → field_name
+    col_map = {}
+    emp_no_col = None
+    emp_name_col = None
+    for idx, header_text in enumerate(header_row):
+        if not header_text:
+            continue
+        field = HEADER_TO_FIELD.get(header_text)
+        if field == "_emp_no":
+            emp_no_col = idx
+        elif field == "_emp_name":
+            emp_name_col = idx
+        elif field:
+            col_map[idx] = field
+
+    # 检测是否为新格式（有表头匹配），否则回退到旧硬编码格式
+    use_new_format = emp_no_col is not None and len(col_map) > 0
+
+    # 所有数值字段（值为0且旧值非0时保留旧值）
+    numeric_fields = {
+        "pension_personal_base", "pension_company_base",
+        "unemployment_personal_base", "unemployment_company_base",
+        "medical_personal_base", "medical_company_base",
+        "injury_company_base",
+        "pension_personal", "unemployment_personal", "medical_personal",
+        "si_personal", "pension_company", "unemployment_company", "medical_company",
+        "injury_company", "si_company",
+        "hf_base", "hf_personal", "hf_company",
+    }
 
     created = 0
     updated = 0
     skipped = 0
     emp_map = {e.employee_no: e for e in db.query(Employee).all()}
+    emp_name_map = {}
+    for e in db.query(Employee).all():
+        emp_name_map.setdefault(e.name, []).append(e)
 
-    # 数值字段（值为0且旧值非0时保留旧值）
-    numeric_fields = {
-        "pension_personal", "unemployment_personal", "medical_personal",
-        "si_personal", "pension_company", "unemployment_company", "medical_company",
-        "si_company", "hf_base", "hf_personal", "hf_company",
-    }
-
-    for row in rows:
-        if not row or not row[0]:
+    for row in data_rows:
+        if not row:
             continue
-        emp_no = str(row[0]).strip()
-        emp = emp_map.get(emp_no)
-        if not emp:
+
+        emp = None
+        si_data = {}
+
+        if use_new_format:
+            # ── 新格式：通过表头动态匹配 ──
+            # 获取员工编号
+            emp_no = None
+            if emp_no_col is not None and emp_no_col < len(row) and row[emp_no_col]:
+                emp_no = str(row[emp_no_col]).strip()
+                emp = emp_map.get(emp_no)
+
+            # 如果工号没匹配到，尝试用姓名匹配
+            if not emp and emp_name_col is not None and emp_name_col < len(row) and row[emp_name_col]:
+                emp_name = str(row[emp_name_col]).strip()
+                name_matches = emp_name_map.get(emp_name, [])
+                if name_matches:
+                    emp = name_matches[0]
+
+            if not emp:
+                skipped += 1
+                continue
+
+            # 提取各字段数据
+            for col_idx, field_name in col_map.items():
+                if col_idx >= len(row):
+                    continue
+                val = _safe_float(row[col_idx])
+                if val is not None:
+                    si_data[field_name] = val
+        else:
+            # ── 旧格式兜底：硬编码列索引（向后兼容） ──
+            if not row[0]:
+                continue
+            emp_no = str(row[0]).strip()
+            emp = emp_map.get(emp_no)
+            if not emp:
+                skipped += 1
+                continue
+
+            if len(row) > 1 and row[1]:
+                v = _safe_float(row[1])
+                if v is not None:
+                    si_data["pension_personal"] = v
+            if len(row) > 2 and row[2]:
+                v = _safe_float(row[2])
+                if v is not None:
+                    si_data["unemployment_personal"] = v
+            if len(row) > 3 and row[3]:
+                v = _safe_float(row[3])
+                if v is not None:
+                    si_data["medical_personal"] = v
+            if len(row) > 4 and row[4]:
+                v = _safe_float(row[4])
+                if v is not None:
+                    si_data["si_personal"] = v
+            if len(row) > 5 and row[5]:
+                v = _safe_float(row[5])
+                if v is not None:
+                    si_data["pension_company"] = v
+            if len(row) > 6 and row[6]:
+                v = _safe_float(row[6])
+                if v is not None:
+                    si_data["unemployment_company"] = v
+            if len(row) > 7 and row[7]:
+                v = _safe_float(row[7])
+                if v is not None:
+                    si_data["medical_company"] = v
+            if len(row) > 8 and row[8]:
+                v = _safe_float(row[8])
+                if v is not None:
+                    si_data["si_company"] = v
+            if len(row) > 9 and row[9]:
+                v = _safe_float(row[9])
+                if v is not None:
+                    si_data["hf_base"] = v
+            if len(row) > 10 and row[10]:
+                v = _safe_float(row[10])
+                if v is not None:
+                    si_data["hf_personal"] = v
+            if len(row) > 11 and row[11]:
+                v = _safe_float(row[11])
+                if v is not None:
+                    si_data["hf_company"] = v
+
+        # 如果该行没有任何有效数据（只有工号/姓名，无社保/公积金数值），跳过
+        if not si_data:
             skipped += 1
             continue
 
@@ -435,20 +616,6 @@ def import_social_insurance(
             SocialInsurance.period == period,
             SocialInsurance.employee_id == emp.id
         ).first()
-
-        si_data = {
-            "pension_personal": float(row[1]) if len(row) > 1 and row[1] else 0,
-            "unemployment_personal": float(row[2]) if len(row) > 2 and row[2] else 0,
-            "medical_personal": float(row[3]) if len(row) > 3 and row[3] else 0,
-            "si_personal": float(row[4]) if len(row) > 4 and row[4] else 0,
-            "pension_company": float(row[5]) if len(row) > 5 and row[5] else 0,
-            "unemployment_company": float(row[6]) if len(row) > 6 and row[6] else 0,
-            "medical_company": float(row[7]) if len(row) > 7 and row[7] else 0,
-            "si_company": float(row[8]) if len(row) > 8 and row[8] else 0,
-            "hf_base": float(row[9]) if len(row) > 9 and row[9] else 0,
-            "hf_personal": float(row[10]) if len(row) > 10 and row[10] else 0,
-            "hf_company": float(row[11]) if len(row) > 11 and row[11] else 0,
-        }
 
         if existing:
             for key, value in si_data.items():
@@ -938,6 +1105,48 @@ def copy_from_prev_month(
         "skipped": skipped,
         "prev_period": prev_period
     }
+
+
+@router.post("/ensure-records/{period}")
+def ensure_si_records(
+    period: str,
+    hide_status_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """确保所有在职员工都有社保公积金记录（空记录），便于批量编辑"""
+    query = db.query(Employee)
+    employees = filter_active_employees(query, db, hide_status_id=hide_status_id).all()
+    existing = {r.employee_id: r for r in db.query(SocialInsurance).filter(SocialInsurance.period == period).all()}
+    created_count = 0
+
+    for emp in employees:
+        if emp.id not in existing:
+            si = SocialInsurance(
+                period=period,
+                employee_id=emp.id,
+                pension_personal_base=0, pension_company_base=0,
+                unemployment_personal_base=0, unemployment_company_base=0,
+                medical_personal_base=0, medical_company_base=0,
+                injury_company_base=0,
+                pension_personal=0, unemployment_personal=0, medical_personal=0,
+                si_personal=0, pension_company=0, unemployment_company=0, medical_company=0,
+                injury_company=0, si_company=0,
+                pension_personal_rate=0, pension_company_rate=0,
+                unemployment_personal_rate=0, unemployment_company_rate=0,
+                medical_personal_rate=0, medical_company_rate=0, injury_company_rate=0,
+                pension_total=0, unemployment_total=0, medical_total=0, injury_total=0,
+                si_grand_total=0,
+                hf_base=0, hf_personal=0, hf_company=0,
+                hf_personal_rate=0, hf_company_rate=0, hf_total=0,
+                grand_total=0
+            )
+            db.add(si)
+            created_count += 1
+
+    db.commit()
+    write_log(db, "data_change", current_user.id, current_user.username, "social_insurance", "create", f"确保社保记录存在 (period={period}, 新增{created_count}条)")
+    return {"created_count": created_count, "total": len(employees)}
 
 
 @router.get("/prev-month-data/{period}/{employee_id}")

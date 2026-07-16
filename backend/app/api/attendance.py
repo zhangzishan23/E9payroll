@@ -351,7 +351,14 @@ def get_attendance(
         employees = employee_query.order_by(Employee.employee_no).all()
 
         attendance_map = {}
-        records = db.query(AttendanceRecord).filter(AttendanceRecord.period == period).all()
+        # 使用子查询获取每个员工该周期最新的记录ID，避免重复记录问题
+        from sqlalchemy import func
+        latest_ids = db.query(func.max(AttendanceRecord.id).label('max_id')).filter(
+            AttendanceRecord.period == period
+        ).group_by(AttendanceRecord.employee_id).subquery()
+        records = db.query(AttendanceRecord).join(
+            latest_ids, AttendanceRecord.id == latest_ids.c.max_id
+        ).all()
         for r in records:
             attendance_map[r.employee_id] = r
 
@@ -392,7 +399,14 @@ def export_attendance(
         employees = employee_query.order_by(Employee.employee_no).all()
 
         attendance_map = {}
-        records = db.query(AttendanceRecord).filter(AttendanceRecord.period == period).all()
+        # 使用子查询获取每个员工该周期最新的记录ID，避免重复记录问题
+        from sqlalchemy import func
+        latest_ids = db.query(func.max(AttendanceRecord.id).label('max_id')).filter(
+            AttendanceRecord.period == period
+        ).group_by(AttendanceRecord.employee_id).subquery()
+        records = db.query(AttendanceRecord).join(
+            latest_ids, AttendanceRecord.id == latest_ids.c.max_id
+        ).all()
         for r in records:
             attendance_map[r.employee_id] = r
         data = []
@@ -825,10 +839,17 @@ async def import_attendance(
             actual_salary = _calc_actual_salary_days(adjusted, leave_total)
             att_rate = round(actual_salary / adjusted, 4) if adjusted > 0 else 0
 
-            existing = db.query(AttendanceRecord).filter(
+            existing_records = db.query(AttendanceRecord).filter(
                 AttendanceRecord.period == period,
                 AttendanceRecord.employee_id == emp.id
-            ).first()
+            ).order_by(AttendanceRecord.id.desc()).all()
+            
+            existing = existing_records[0] if existing_records else None
+            
+            # 如果有重复记录，删除旧的（保留最新的一条）
+            if len(existing_records) > 1:
+                for old_rec in existing_records[1:]:
+                    db.delete(old_rec)
 
             if existing:
                 # 跳过整行锁定的记录

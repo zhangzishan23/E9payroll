@@ -49,6 +49,48 @@ def _safe_float(val, default=None):
         return default
 
 
+def _get_salary_split_config(db, dict_items):
+    """获取工资拆分配置
+    返回: (yijiu_company_dict, split_config_map)
+    - yijiu_company_dict: 北京易玖智能科技有限公司的字典项
+    - split_config_map: {company_id: target_company_dict} 配置了拆分的公司映射
+    默认规则：未配置的情况下，北京易玖和上海瑞方不拆分，其他公司默认拆分到北京易玖
+    """
+    yijiu_company = None
+    for d in dict_items:
+        if '北京易玖智能科技' in d.name and d.category == 'contract_company':
+            yijiu_company = d
+            break
+
+    split_config = {}
+
+    for d in dict_items:
+        if d.category != 'contract_company' or not d.is_enabled:
+            continue
+        extra = d.extra or {}
+        split_target = extra.get('salary_split_target')
+
+        if split_target == 'none':
+            continue
+        elif split_target and split_target != 'none':
+            try:
+                target_id = int(split_target)
+                target = db.query(SysDictBase).filter(SysDictBase.id == target_id).first()
+                if target:
+                    split_config[d.id] = target
+                continue
+            except (ValueError, TypeError):
+                pass
+
+        if '北京易玖智能科技' in d.name or '上海瑞方' in d.name:
+            continue
+
+        if yijiu_company:
+            split_config[d.id] = yijiu_company
+
+    return yijiu_company, split_config
+
+
 class DataSourceStatus(BaseModel):
     source_name: str
     source_key: str
@@ -73,8 +115,12 @@ class SalaryCalcOut(BaseModel):
     employee_no: str = ""
     employee_name: str = ""
     contract_company: str = ""
+    pay_company_id: Optional[int] = None
+    pay_company_name: str = ""
+    record_type: str = "single"
     department: str = ""
     position: str = ""
+    cost_owner: str = ""
     status: str = ""
     entry_date: Optional[str] = None
     base_salary: Optional[float] = None
@@ -114,6 +160,7 @@ class SalaryCalcOut(BaseModel):
     compensation_tax: Optional[float] = None
     severance_pay: Optional[float] = None
     year_end_bonus_untaxed: Optional[float] = None
+    year_end_bonus_net: Optional[float] = None
     actual_taxable: Optional[float] = None
     special_deduction: Optional[float] = None
     salary_after_si_hf: Optional[float] = None
@@ -140,6 +187,7 @@ class SalaryCalcUpdate(BaseModel):
     compensation_tax: Optional[float] = None
     severance_pay: Optional[float] = None
     year_end_bonus_untaxed: Optional[float] = None
+    year_end_bonus_net: Optional[float] = None
     remark: Optional[str] = None
     review_status: Optional[str] = None
 
@@ -282,26 +330,71 @@ def ensure_salary_records(
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
-    result = _perform_gross_calculation(db, period, hide_status_id)
-    
-    # 为没有薪资档案的员工也创建基本记录，确保所有员工都可进入编辑模式
+    existing_count = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).count()
+    if existing_count == 0:
+        result = _perform_gross_calculation(db, period, hide_status_id)
+        db.commit()
+        write_log(db, "data_change", current_user.id, current_user.username, "salary", "create", f"自动创建薪资记录 (period={period}, count={result['success_count']})")
+        return {"created_count": result["success_count"], "total": result["total_employees"]}
+
+    dict_items = db.query(SysDictBase).all()
+    name_map = {d.id: d.name for d in dict_items}
     query = db.query(Employee)
     active_employees = filter_active_employees(query, db, hide_status_id=hide_status_id).all()
-    existing = {c.employee_id for c in db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()}
+    existing = {c.employee_id: c for c in db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()}
+    updated_count = 0
+
     for emp in active_employees:
+        contract_company_name = name_map.get(emp.contract_company_id, '')
         if emp.id not in existing:
             calc = SalaryCalculation(
                 period=period,
                 employee_id=emp.id,
+                contract_company=contract_company_name,
+                pay_company_id=emp.contract_company_id,
+                pay_company_name=contract_company_name,
+                record_type='single',
+                department=name_map.get(emp.department_id, ''),
+                position=name_map.get(emp.position_id, ''),
+                cost_owner=emp.cost_owner or '',
+                status=name_map.get(emp.status_id, ''),
+                entry_date=emp.entry_date,
                 calculation_status="待核算",
                 review_status=""
             )
             db.add(calc)
-            result["success_count"] += 1
-    
+            updated_count += 1
+        else:
+            existing_calc = existing[emp.id]
+            need_update = False
+            if not existing_calc.department:
+                existing_calc.department = name_map.get(emp.department_id, '')
+                need_update = True
+            if not existing_calc.position:
+                existing_calc.position = name_map.get(emp.position_id, '')
+                need_update = True
+            if not existing_calc.status:
+                existing_calc.status = name_map.get(emp.status_id, '')
+                need_update = True
+            if not existing_calc.entry_date:
+                existing_calc.entry_date = emp.entry_date
+                need_update = True
+            if not existing_calc.contract_company:
+                existing_calc.contract_company = contract_company_name
+                need_update = True
+            if existing_calc.record_type is None:
+                existing_calc.record_type = 'single'
+                need_update = True
+            if existing_calc.pay_company_id is None:
+                existing_calc.pay_company_id = emp.contract_company_id
+                existing_calc.pay_company_name = contract_company_name
+                need_update = True
+            if need_update:
+                updated_count += 1
+
     db.commit()
-    write_log(db, "data_change", current_user.id, current_user.username, "salary", "create", f"确保薪资记录存在 (period={period}, updated={result['success_count']})")
-    return {"created_count": result["success_count"], "total": result["total_employees"]}
+    write_log(db, "data_change", current_user.id, current_user.username, "salary", "create", f"确保薪资记录存在 (period={period}, updated={updated_count})")
+    return {"created_count": updated_count, "total": len(active_employees)}
 
 
 def _perform_gross_calculation(db, period, hide_status_id, current_user=None, batch_no=None):
@@ -350,7 +443,12 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
         EmployeeSalaryAdjustment.period == period
     ).all()}
 
-    existing_calcs = {c.employee_id: c for c in db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()}
+    all_existing = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()
+    existing_by_emp = {}
+    for c in all_existing:
+        key = (c.employee_id, c.pay_company_id)
+        existing_by_emp[key] = c
+    existing_emp_ids = {c.employee_id for c in all_existing}
 
     success_count = 0
     failed_count = 0
@@ -359,7 +457,10 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
 
     dict_items = db.query(SysDictBase).all()
     name_map = {d.id: d.name for d in dict_items}
+    id_map = {d.name: d.id for d in dict_items}
     standard_salary_days = get_month_salary_days(db, period)
+
+    yijiu_company, split_config = _get_salary_split_config(db, dict_items)
 
     for emp in active_employees:
         try:
@@ -367,10 +468,28 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
             att = attendance.get(emp.id)
             perf = performances.get(emp.id)
             si = social_ins.get(emp.id)
-            existing = existing_calcs.get(emp.id)
+            contract_company_name = name_map.get(emp.contract_company_id, '')
+            split_target = split_config.get(emp.contract_company_id)
 
             if not sal:
                 failed_count += 1
+                if emp.id not in existing_emp_ids:
+                    empty_record = SalaryCalculation(
+                        period=period,
+                        employee_id=emp.id,
+                        contract_company=contract_company_name,
+                        pay_company_id=emp.contract_company_id,
+                        pay_company_name=contract_company_name,
+                        record_type='single',
+                        department=name_map.get(emp.department_id, ''),
+                        position=name_map.get(emp.position_id, ''),
+                        cost_owner=emp.cost_owner or '',
+                        status=name_map.get(emp.status_id, ''),
+                        entry_date=emp.entry_date,
+                        calculation_status="待核算",
+                        review_status=""
+                    )
+                    db.add(empty_record)
                 continue
 
             base_salary = float(sal.base_salary)
@@ -410,7 +529,7 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
             effective_performance = round(actual_perf * att_rate, 2) if actual_perf is not None else None
 
             travel_untaxed = travel_reimbs.get(emp.id) if emp.id in travel_reimbs else None
-            compensation_tax = labor_comps.get(emp.id) if emp.id in labor_comps else None
+            compensation_tax_val = labor_comps.get(emp.id) if emp.id in labor_comps else None
             legacy = legacy_adjs.get(emp.id)
             pretax_adj = float(legacy["pretax"]) if legacy and legacy["pretax"] is not None else None
             posttax_adj = float(legacy["posttax"]) if legacy and legacy["posttax"] is not None else None
@@ -425,98 +544,318 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
             hf_personal = float(si.hf_personal) if si else 0
             si_hf_total = si_personal + hf_personal
 
-            tax_deduction_val = _safe_float(existing.tax_deduction) if existing else None
-            last_month_untaxed_val = _safe_float(existing.last_month_untaxed) if existing else None
-            year_end_bonus_untaxed_val = _safe_float(existing.year_end_bonus_untaxed) if existing else None
-            severance_pay_val = _safe_float(existing.severance_pay) if existing else None
-            special_deduction_val = _safe_float(existing.special_deduction) if existing else None
+            db.query(SalaryCalculation).filter(
+                SalaryCalculation.period == period,
+                SalaryCalculation.employee_id == emp.id
+            ).delete(synchronize_session=False)
 
-            if existing:
-                commission_bonus_final = _merge_val(existing, existing.commission_bonus, commission_prorated)
-                pretax_adj_final = _merge_val(existing, existing.pretax_adjustment, pretax_adj)
-                posttax_adj_final = _merge_val(existing, existing.posttax_adjustment, posttax_adj)
-                travel_untaxed_final = _merge_val(existing, existing.travel_untaxed, travel_untaxed)
-                compensation_tax_final = _merge_val(existing, existing.compensation_tax, compensation_tax)
-                pretax_adjustment_reason_final = existing.pretax_adjustment_reason if pretax_adj is None else None
-                posttax_adjustment_reason_final = existing.posttax_adjustment_reason if posttax_adj is None else None
-                review_status_final = existing.review_status
-            else:
-                commission_bonus_final = commission_prorated
-                pretax_adj_final = pretax_adj
-                posttax_adj_final = posttax_adj
-                travel_untaxed_final = travel_untaxed
-                compensation_tax_final = compensation_tax
-                pretax_adjustment_reason_final = None
-                posttax_adjustment_reason_final = None
-                review_status_final = ""
+            records_to_create = []
 
-            pretax_calc = _safe_float(pretax_adj_final) or 0
-            posttax_calc = _safe_float(posttax_adj_final) or 0
-            last_month_calc = _safe_float(last_month_untaxed_val) or 0
-            travel_calc = _safe_float(travel_untaxed_final) or 0
+            if split_target and si_hf_total > 0:
+                contract_existing = existing_by_emp.get((emp.id, emp.contract_company_id))
+                yijiu_existing_keys = [k for k in existing_by_emp.keys() if k[0] == emp.id and k[1] != emp.contract_company_id]
+                payroll_existing = existing_by_emp.get(yijiu_existing_keys[0]) if yijiu_existing_keys else None
 
-            actual_taxable = round(gross_salary + pretax_calc + last_month_calc + travel_calc, 2)
-            salary_after_si_hf_val = round(gross_salary + pretax_calc - si_hf_total, 2)
-            if tax_deduction_val is not None:
-                net_salary = round(gross_salary + pretax_calc - si_hf_total - tax_deduction_val + posttax_calc, 2)
-                calc_status = "实发已核算"
-            else:
-                net_salary = round(gross_salary + pretax_calc - si_hf_total + posttax_calc, 2)
-                calc_status = "应发已核算"
+                single_existing = None
+                if not contract_existing and not payroll_existing:
+                    for k, v in existing_by_emp.items():
+                        if k[0] == emp.id:
+                            single_existing = v
+                            break
 
-            if existing:
-                existing.contract_company = name_map.get(emp.contract_company_id, '')
-                existing.department = name_map.get(emp.department_id, '')
-                existing.position = name_map.get(emp.position_id, '')
-                existing.cost_owner = emp.cost_owner or ''
-                existing.status = name_map.get(emp.status_id, '')
-                existing.entry_date = emp.entry_date
-                existing.base_salary = base_salary
-                existing.base_salary_prorated = base_salary_prorated
-                existing.performance_standard_prorated = perf_std_prorated
-                existing.adjustment_id = adjustment_id
-                existing.monthly_standard = monthly_standard
-                existing.performance_standard = perf_std
-                existing.performance_coefficient = perf_coef
-                existing.actual_performance = actual_perf
-                existing.effective_performance = effective_performance
-                existing.meal_allowance = meal
-                existing.transport_allowance = transport
-                existing.communication_allowance = comm
-                existing.computer_allowance = computer
-                existing.housing_allowance = housing
-                existing.allowance_total = allowance_total
-                existing.commission_bonus = commission_bonus_final
-                existing.pretax_adjustment = pretax_adj_final
-                existing.pretax_adjustment_reason = pretax_adjustment_reason_final
-                existing.posttax_adjustment = posttax_adj_final
-                existing.posttax_adjustment_reason = posttax_adjustment_reason_final
-                existing.travel_untaxed = travel_untaxed_final
-                existing.compensation_tax = compensation_tax_final
-                existing.severance_pay = severance_pay_val
-                existing.year_end_bonus_untaxed = year_end_bonus_untaxed_val
-                existing.total_work_days = total_work_days
-                existing.actual_work_days = actual_work_days
-                existing.attendance_rate = att_rate
-                existing.gross_salary = gross_salary
-                existing.pension_personal = pension_personal
-                existing.unemployment_personal = unemployment_personal
-                existing.medical_personal = medical_personal
-                existing.social_insurance_personal = si_personal
-                existing.housing_fund_personal = hf_personal
-                existing.si_hf_total = si_hf_total
-                existing.salary_after_si_hf = salary_after_si_hf_val
-                existing.net_salary = net_salary
-                existing.last_month_untaxed = last_month_untaxed_val
-                existing.actual_taxable = actual_taxable
-                existing.special_deduction = special_deduction_val
-                existing.calculation_status = calc_status
-                existing.review_status = review_status_final
-            else:
-                calc = SalaryCalculation(
+                contract_tax = _safe_float(contract_existing.tax_deduction) if contract_existing else None
+                contract_pretax = _safe_float(contract_existing.pretax_adjustment) if contract_existing else None
+                contract_posttax = _safe_float(contract_existing.posttax_adjustment) if contract_existing else None
+                contract_remark = contract_existing.remark if contract_existing else None
+
+                if contract_tax is None and single_existing:
+                    pass
+
+                if contract_existing:
+                    contract_bonus_final = _merge_val(contract_existing, contract_existing.commission_bonus, None)
+                    contract_pretax_final = _merge_val(contract_existing, contract_existing.pretax_adjustment, 0)
+                    contract_posttax_final = _merge_val(contract_existing, contract_existing.posttax_adjustment, 0)
+                else:
+                    contract_bonus_final = None
+                    contract_pretax_final = 0
+                    contract_posttax_final = 0
+
+                contract_gross = round(si_hf_total, 2)
+                contract_si = si_hf_total
+                contract_sh = si_hf_total
+                contract_pretax_calc = _safe_float(contract_pretax_final) or 0
+                contract_posttax_calc = _safe_float(contract_posttax_final) or 0
+                contract_salary_after_si = round(contract_gross + contract_pretax_calc - contract_sh, 2)
+                contract_actual_taxable = round(contract_gross + contract_pretax_calc, 2)
+                if contract_tax is not None:
+                    contract_net = round(contract_gross + contract_pretax_calc - contract_sh - contract_tax + contract_posttax_calc, 2)
+                    contract_status = "实发已核算"
+                else:
+                    contract_net = round(contract_gross + contract_pretax_calc - contract_sh + contract_posttax_calc, 2)
+                    contract_status = "应发已核算"
+
+                contract_record = SalaryCalculation(
                     period=period,
                     employee_id=emp.id,
-                    contract_company=name_map.get(emp.contract_company_id, ''),
+                    contract_company=contract_company_name,
+                    pay_company_id=emp.contract_company_id,
+                    pay_company_name=contract_company_name,
+                    record_type='contract',
+                    department=name_map.get(emp.department_id, ''),
+                    position=name_map.get(emp.position_id, ''),
+                    cost_owner=emp.cost_owner or '',
+                    status=name_map.get(emp.status_id, ''),
+                    entry_date=emp.entry_date,
+                    base_salary=0,
+                    base_salary_prorated=0,
+                    performance_standard_prorated=0,
+                    adjustment_id=None,
+                    monthly_standard=0,
+                    performance_standard=0,
+                    performance_coefficient=None,
+                    actual_performance=0,
+                    effective_performance=0,
+                    meal_allowance=0,
+                    transport_allowance=0,
+                    communication_allowance=0,
+                    computer_allowance=0,
+                    housing_allowance=0,
+                    allowance_total=0,
+                    commission_bonus=0,
+                    pretax_adjustment=contract_pretax_final if contract_pretax_final not in (None, 0) else None,
+                    pretax_adjustment_reason=contract_existing.pretax_adjustment_reason if contract_existing else None,
+                    posttax_adjustment=contract_posttax_final if contract_posttax_final not in (None, 0) else None,
+                    posttax_adjustment_reason=contract_existing.posttax_adjustment_reason if contract_existing else None,
+                    total_work_days=total_work_days,
+                    actual_work_days=actual_work_days,
+                    attendance_rate=att_rate,
+                    gross_salary=contract_gross,
+                    pension_personal=pension_personal,
+                    unemployment_personal=unemployment_personal,
+                    medical_personal=medical_personal,
+                    social_insurance_personal=si_personal,
+                    housing_fund_personal=hf_personal,
+                    si_hf_total=contract_si,
+                    salary_after_si_hf=contract_salary_after_si,
+                    tax_deduction=contract_tax,
+                    net_salary=contract_net,
+                    last_month_untaxed=None,
+                    travel_untaxed=None,
+                    compensation_tax=None,
+                    severance_pay=None,
+                    year_end_bonus_untaxed=None,
+                    year_end_bonus_net=None,
+                    actual_taxable=contract_actual_taxable,
+                    special_deduction=None,
+                    remark=contract_remark,
+                    review_status=contract_existing.review_status if contract_existing else "",
+                    calculation_status=contract_status,
+                    data_completeness="完整"
+                )
+                records_to_create.append(contract_record)
+                total_gross += contract_gross
+                total_net += contract_net
+
+                payroll_tax = _safe_float(payroll_existing.tax_deduction) if payroll_existing else None
+                payroll_last_month = _safe_float(payroll_existing.last_month_untaxed) if payroll_existing else None
+                payroll_year_end = _safe_float(payroll_existing.year_end_bonus_untaxed) if payroll_existing else None
+                payroll_year_end_net = _safe_float(payroll_existing.year_end_bonus_net) if payroll_existing else None
+                payroll_severance = _safe_float(payroll_existing.severance_pay) if payroll_existing else None
+                payroll_special = _safe_float(payroll_existing.special_deduction) if payroll_existing else None
+                payroll_remark = payroll_existing.remark if payroll_existing else None
+
+                if payroll_tax is None and single_existing:
+                    payroll_tax = _safe_float(single_existing.tax_deduction)
+                if payroll_last_month is None and single_existing:
+                    payroll_last_month = _safe_float(single_existing.last_month_untaxed)
+                if payroll_year_end is None and single_existing:
+                    payroll_year_end = _safe_float(single_existing.year_end_bonus_untaxed)
+                if payroll_year_end_net is None and single_existing:
+                    payroll_year_end_net = _safe_float(single_existing.year_end_bonus_net)
+                if payroll_severance is None and single_existing:
+                    payroll_severance = _safe_float(single_existing.severance_pay)
+                if payroll_special is None and single_existing:
+                    payroll_special = _safe_float(single_existing.special_deduction)
+
+                if payroll_existing:
+                    payroll_bonus_final = _merge_val(payroll_existing, payroll_existing.commission_bonus, commission_prorated)
+                    payroll_pretax_final = _merge_val(payroll_existing, payroll_existing.pretax_adjustment, pretax_adj)
+                    payroll_posttax_final = _merge_val(payroll_existing, payroll_existing.posttax_adjustment, posttax_adj)
+                    payroll_travel_final = _merge_val(payroll_existing, payroll_existing.travel_untaxed, travel_untaxed)
+                    payroll_comp_final = _merge_val(payroll_existing, payroll_existing.compensation_tax, compensation_tax_val)
+                    payroll_review = payroll_existing.review_status
+                    payroll_pretax_reason = payroll_existing.pretax_adjustment_reason if pretax_adj is None else None
+                    payroll_posttax_reason = payroll_existing.posttax_adjustment_reason if posttax_adj is None else None
+                elif single_existing:
+                    payroll_bonus_final = _merge_val(single_existing, single_existing.commission_bonus, commission_prorated)
+                    payroll_pretax_final = _merge_val(single_existing, single_existing.pretax_adjustment, pretax_adj)
+                    payroll_posttax_final = _merge_val(single_existing, single_existing.posttax_adjustment, posttax_adj)
+                    payroll_travel_final = _merge_val(single_existing, single_existing.travel_untaxed, travel_untaxed)
+                    payroll_comp_final = _merge_val(single_existing, single_existing.compensation_tax, compensation_tax_val)
+                    payroll_review = single_existing.review_status
+                    payroll_pretax_reason = single_existing.pretax_adjustment_reason if pretax_adj is None else None
+                    payroll_posttax_reason = single_existing.posttax_adjustment_reason if posttax_adj is None else None
+                else:
+                    payroll_bonus_final = commission_prorated
+                    payroll_pretax_final = pretax_adj
+                    payroll_posttax_final = posttax_adj
+                    payroll_travel_final = travel_untaxed
+                    payroll_comp_final = compensation_tax_val
+                    payroll_review = ""
+                    payroll_pretax_reason = None
+                    payroll_posttax_reason = None
+
+                payroll_gross = round(max(0, gross_salary - si_hf_total), 2)
+                payroll_si = 0
+
+                payroll_pretax_calc = _safe_float(payroll_pretax_final) or 0
+                payroll_posttax_calc = _safe_float(payroll_posttax_final) or 0
+                payroll_last_month_calc = _safe_float(payroll_last_month) or 0
+                payroll_travel_calc = _safe_float(payroll_travel_final) or 0
+                payroll_comp_calc = _safe_float(payroll_comp_final) or 0
+                payroll_severance_calc = _safe_float(payroll_severance) or 0
+                payroll_year_end_calc = _safe_float(payroll_year_end) or 0
+                payroll_special_calc = _safe_float(payroll_special) or 0
+
+                payroll_monthly_standard = round(monthly_standard - si_hf_total, 2) if monthly_standard else round(payroll_gross, 2)
+                if base_salary_prorated and perf_std_prorated is not None and allowance_total is not None:
+                    payroll_monthly_standard = round((base_salary_prorated + perf_std_prorated + allowance_total) - si_hf_total, 2)
+
+                payroll_actual_taxable = round(payroll_gross + payroll_pretax_calc + payroll_last_month_calc + payroll_travel_calc + payroll_comp_calc + payroll_severance_calc + payroll_year_end_calc - payroll_special_calc, 2)
+                payroll_salary_after_si = round(payroll_gross + payroll_pretax_calc - payroll_si, 2)
+                if payroll_tax is not None:
+                    payroll_net = round(payroll_gross + payroll_pretax_calc - payroll_si - payroll_tax + payroll_posttax_calc, 2)
+                    payroll_status = "实发已核算"
+                else:
+                    payroll_net = round(payroll_gross + payroll_pretax_calc - payroll_si + payroll_posttax_calc, 2)
+                    payroll_status = "应发已核算"
+
+                payroll_record = SalaryCalculation(
+                    period=period,
+                    employee_id=emp.id,
+                    contract_company=split_target.name,
+                    pay_company_id=split_target.id,
+                    pay_company_name=split_target.name,
+                    record_type='payroll',
+                    department=name_map.get(emp.department_id, ''),
+                    position=name_map.get(emp.position_id, ''),
+                    cost_owner=emp.cost_owner or '',
+                    status=name_map.get(emp.status_id, ''),
+                    entry_date=emp.entry_date,
+                    base_salary=base_salary,
+                    base_salary_prorated=base_salary_prorated,
+                    performance_standard_prorated=perf_std_prorated,
+                    adjustment_id=adjustment_id,
+                    monthly_standard=payroll_monthly_standard,
+                    performance_standard=perf_std,
+                    performance_coefficient=perf_coef,
+                    actual_performance=actual_perf,
+                    effective_performance=effective_performance,
+                    meal_allowance=meal,
+                    transport_allowance=transport,
+                    communication_allowance=comm,
+                    computer_allowance=computer,
+                    housing_allowance=housing,
+                    allowance_total=allowance_total,
+                    commission_bonus=payroll_bonus_final,
+                    pretax_adjustment=payroll_pretax_final,
+                    pretax_adjustment_reason=payroll_pretax_reason,
+                    posttax_adjustment=payroll_posttax_final,
+                    posttax_adjustment_reason=payroll_posttax_reason,
+                    total_work_days=total_work_days,
+                    actual_work_days=actual_work_days,
+                    attendance_rate=att_rate,
+                    gross_salary=payroll_gross,
+                    pension_personal=None,
+                    unemployment_personal=None,
+                    medical_personal=None,
+                    social_insurance_personal=None,
+                    housing_fund_personal=None,
+                    si_hf_total=None,
+                    salary_after_si_hf=payroll_salary_after_si,
+                    tax_deduction=payroll_tax,
+                    net_salary=payroll_net,
+                    last_month_untaxed=payroll_last_month,
+                    travel_untaxed=payroll_travel_final,
+                    compensation_tax=payroll_comp_final,
+                    severance_pay=payroll_severance,
+                    year_end_bonus_untaxed=payroll_year_end,
+                    year_end_bonus_net=payroll_year_end_net,
+                    actual_taxable=payroll_actual_taxable,
+                    special_deduction=payroll_special,
+                    remark=payroll_remark,
+                    review_status=payroll_review,
+                    calculation_status=payroll_status,
+                    data_completeness="完整"
+                )
+                records_to_create.append(payroll_record)
+                total_gross += payroll_gross
+                total_net += payroll_net
+            else:
+                existing_single = None
+                for k, v in existing_by_emp.items():
+                    if k[0] == emp.id:
+                        existing_single = v
+                        break
+
+                tax_deduction_val = _safe_float(existing_single.tax_deduction) if existing_single else None
+                last_month_untaxed_val = _safe_float(existing_single.last_month_untaxed) if existing_single else None
+                year_end_bonus_untaxed_val = _safe_float(existing_single.year_end_bonus_untaxed) if existing_single else None
+                year_end_bonus_net_val = _safe_float(existing_single.year_end_bonus_net) if existing_single else None
+                severance_pay_val = _safe_float(existing_single.severance_pay) if existing_single else None
+                special_deduction_val = _safe_float(existing_single.special_deduction) if existing_single else None
+
+                if existing_single:
+                    commission_bonus_final = _merge_val(existing_single, existing_single.commission_bonus, commission_prorated)
+                    pretax_adj_final = _merge_val(existing_single, existing_single.pretax_adjustment, pretax_adj)
+                    posttax_adj_final = _merge_val(existing_single, existing_single.posttax_adjustment, posttax_adj)
+                    travel_untaxed_final = _merge_val(existing_single, existing_single.travel_untaxed, travel_untaxed)
+                    compensation_tax_final = _merge_val(existing_single, existing_single.compensation_tax, compensation_tax_val)
+                    pretax_adjustment_reason_final = existing_single.pretax_adjustment_reason if pretax_adj is None else None
+                    posttax_adjustment_reason_final = existing_single.posttax_adjustment_reason if posttax_adj is None else None
+                    review_status_final = existing_single.review_status
+                    remark_final = existing_single.remark
+                else:
+                    commission_bonus_final = commission_prorated
+                    pretax_adj_final = pretax_adj
+                    posttax_adj_final = posttax_adj
+                    travel_untaxed_final = travel_untaxed
+                    compensation_tax_final = compensation_tax_val
+                    pretax_adjustment_reason_final = None
+                    posttax_adjustment_reason_final = None
+                    review_status_final = ""
+                    remark_final = None
+
+                pretax_calc = _safe_float(pretax_adj_final) or 0
+                posttax_calc = _safe_float(posttax_adj_final) or 0
+                last_month_calc = _safe_float(last_month_untaxed_val) or 0
+                travel_calc = _safe_float(travel_untaxed_final) or 0
+
+                actual_taxable = round(gross_salary + pretax_calc + last_month_calc + travel_calc, 2)
+                salary_after_si_hf_val = round(gross_salary + pretax_calc - si_hf_total, 2)
+                if tax_deduction_val is not None:
+                    net_salary = round(gross_salary + pretax_calc - si_hf_total - tax_deduction_val + posttax_calc, 2)
+                    calc_status = "实发已核算"
+                else:
+                    net_salary = round(gross_salary + pretax_calc - si_hf_total + posttax_calc, 2)
+                    calc_status = "应发已核算"
+
+                pay_company_id = emp.contract_company_id
+                if split_target and si_hf_total <= 0:
+                    pay_company_id = split_target.id
+                    pay_company_name_val = split_target.name
+                    record_type_val = 'payroll'
+                else:
+                    pay_company_name_val = contract_company_name
+                    record_type_val = 'single'
+
+                single_record = SalaryCalculation(
+                    period=period,
+                    employee_id=emp.id,
+                    contract_company=contract_company_name,
+                    pay_company_id=pay_company_id,
+                    pay_company_name=pay_company_name_val,
+                    record_type=record_type_val,
                     department=name_map.get(emp.department_id, ''),
                     position=name_map.get(emp.position_id, ''),
                     cost_owner=emp.cost_owner or '',
@@ -546,6 +885,7 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                     compensation_tax=compensation_tax_final,
                     severance_pay=severance_pay_val,
                     year_end_bonus_untaxed=year_end_bonus_untaxed_val,
+                    year_end_bonus_net=year_end_bonus_net_val,
                     total_work_days=total_work_days,
                     actual_work_days=actual_work_days,
                     attendance_rate=att_rate,
@@ -562,20 +902,26 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                     last_month_untaxed=last_month_untaxed_val,
                     actual_taxable=actual_taxable,
                     special_deduction=special_deduction_val,
+                    remark=remark_final,
                     review_status=review_status_final,
                     calculation_status=calc_status
                 )
-                db.add(calc)
+                records_to_create.append(single_record)
+                total_gross += gross_salary
+                total_net += net_salary
 
-            total_gross += gross_salary
-            total_net += net_salary
+            for rec in records_to_create:
+                db.add(rec)
             success_count += 1
 
-        except Exception:
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
             failed_count += 1
 
-    for old_calc in existing_calcs.values():
-        if old_calc.employee_id not in {e.id for e in active_employees}:
+    active_emp_ids = {e.id for e in active_employees}
+    for old_calc in all_existing:
+        if old_calc.employee_id not in active_emp_ids:
             db.delete(old_calc)
 
     if current_user and batch_no:
@@ -638,6 +984,7 @@ def _build_employee_salary_data(
     travel_untaxed_val, compensation_tax_val,
     pretax_adj_val, posttax_adj_val,
     last_month_untaxed_val, severance_pay_val, year_end_bonus_untaxed_val,
+    year_end_bonus_net_val,
     tax_deduction_val, special_deduction_val,
     commission_bonus_val,
     name_map, standard_salary_days
@@ -803,6 +1150,7 @@ def _build_employee_salary_data(
         'compensation_tax': compensation_tax_val,
         'severance_pay': severance_pay_val,
         'year_end_bonus_untaxed': year_end_bonus_untaxed_val,
+        'year_end_bonus_net': year_end_bonus_net_val,
         'actual_taxable': actual_taxable_val,
         'special_deduction': special_deduction_val,
     }
@@ -812,118 +1160,144 @@ def _build_employee_salary_data(
 def get_calculation_results(
     period: str,
     hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"),
+    pay_company_id: Optional[int] = Query(None, description="按发放公司筛选"),
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
-    calcs = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()
-    calc_map = {c.employee_id: c for c in calcs}
+    _perform_gross_calculation(db, period, hide_status_id)
+    db.commit()
+
     query = db.query(Employee)
-    employees = filter_active_employees(query, db, hide_status_id=hide_status_id).order_by(Employee.employee_no).all()
-
-    period_end = _get_period_end(period)
-    salary_map = {}
-    for s in db.query(EmployeeSalary).filter(
-        EmployeeSalary.effective_date <= period_end
-    ).order_by(EmployeeSalary.effective_date.desc(), EmployeeSalary.id.desc()).all():
-        if s.employee_id not in salary_map:
-            salary_map[s.employee_id] = s
-
-    perf_map = {p.employee_id: p for p in db.query(PerformanceScore).filter(
-        PerformanceScore.period == period
-    ).all()}
-
-    att_map = {a.employee_id: a for a in db.query(AttendanceRecord).filter(
-        AttendanceRecord.period == period
-    ).all()}
-
-    si_map = {s.employee_id: s for s in db.query(SocialInsurance).filter(
-        SocialInsurance.period == period
-    ).all()}
+    active_employees = filter_active_employees(query, db, hide_status_id=hide_status_id).all()
+    active_emp_ids = {e.id: e for e in active_employees}
 
     dict_items = db.query(SysDictBase).all()
     name_map = {d.id: d.name for d in dict_items}
 
-    travel_reimbs = {}
-    for tr in db.query(TravelReimbursement).filter(TravelReimbursement.period == period).all():
-        travel_reimbs[tr.employee_id] = travel_reimbs.get(tr.employee_id, 0) + float(tr.amount)
-
-    labor_comps = {}
-    for lc in db.query(LaborCompensation).filter(LaborCompensation.period == period).all():
-        labor_comps[lc.employee_id] = labor_comps.get(lc.employee_id, 0) + float(lc.amount)
-
-    legacy_adjs = {}
-    for la in db.query(LegacyAdjustment).filter(LegacyAdjustment.period == period).all():
-        if la.employee_id not in legacy_adjs:
-            legacy_adjs[la.employee_id] = {"pretax": None, "posttax": None}
-        val = float(la.amount)
-        if la.is_pretax:
-            legacy_adjs[la.employee_id]["pretax"] = (legacy_adjs[la.employee_id]["pretax"] or 0) + val
-        else:
-            legacy_adjs[la.employee_id]["posttax"] = (legacy_adjs[la.employee_id]["posttax"] or 0) + val
-
-    adjustments = {a.employee_id: a for a in db.query(EmployeeSalaryAdjustment).filter(
-        EmployeeSalaryAdjustment.period == period
+    standard_salary_days = get_month_salary_days(db, period)
+    attendance_map = {a.employee_id: a for a in db.query(AttendanceRecord).filter(
+        AttendanceRecord.period == period
     ).all()}
 
+    calcs_query = db.query(SalaryCalculation).filter(SalaryCalculation.period == period)
+    if pay_company_id:
+        calcs_query = calcs_query.filter(SalaryCalculation.pay_company_id == pay_company_id)
+    calcs = calcs_query.order_by(SalaryCalculation.employee_id, SalaryCalculation.record_type).all()
+
     results = []
-    standard_salary_days = get_month_salary_days(db, period)
-    for emp in employees:
-        c = calc_map.get(emp.id)
-        sal = salary_map.get(emp.id)
-        att = att_map.get(emp.id)
-        perf = perf_map.get(emp.id)
-        si = si_map.get(emp.id)
-        adj = adjustments.get(emp.id)
+    for c in calcs:
+        if c.employee_id not in active_emp_ids:
+            continue
+        emp = active_emp_ids[c.employee_id]
 
-        travel_from_table = travel_reimbs.get(emp.id)
-        comp_from_table = labor_comps.get(emp.id)
-        legacy = legacy_adjs.get(emp.id, {"pretax": None, "posttax": None})
+        att = attendance_map.get(emp.id)
+        if att:
+            att_rate = float(att.attendance_rate) if att.attendance_rate else 1.00
+            total_work_days = float(att.adjusted_salary_days) if att.adjusted_salary_days else standard_salary_days
+            actual_work_days = float(att.actual_salary_days) if att.actual_salary_days else total_work_days
+        else:
+            att_rate = 1.00
+            total_work_days = standard_salary_days
+            actual_work_days = standard_salary_days
 
-        def _pick(calc_field, default=None):
-            if c is not None:
-                v = getattr(c, calc_field, None)
-                if v is not None:
-                    return _safe_float(v)
-            return default
+        department_val = c.department or name_map.get(emp.department_id, '')
+        position_val = c.position or name_map.get(emp.position_id, '')
+        status_val = c.status or name_map.get(emp.status_id, '')
+        entry_date_val = c.entry_date or emp.entry_date
+        total_work_days_val = _safe_float(c.total_work_days) or total_work_days
+        actual_work_days_val = _safe_float(c.actual_work_days) or actual_work_days
+        attendance_rate_val = _safe_float(c.attendance_rate) or att_rate
 
-        commission_bonus_val = _pick('commission_bonus')
-        pretax_adj_val = _pick('pretax_adjustment', legacy.get("pretax"))
-        posttax_adj_val = _pick('posttax_adjustment', legacy.get("posttax"))
-        tax_deduction_val = _pick('tax_deduction')
-        last_month_untaxed_val = _pick('last_month_untaxed')
-        travel_untaxed_val = _pick('travel_untaxed', travel_from_table)
-        compensation_tax_val = _pick('compensation_tax', comp_from_table)
-        severance_pay_val = _pick('severance_pay')
-        year_end_bonus_untaxed_val = _pick('year_end_bonus_untaxed')
-        special_deduction_val = _pick('special_deduction')
-
-        data = _build_employee_salary_data(
-            emp, sal, att, perf, si, adj,
-            travel_untaxed_val, compensation_tax_val,
-            pretax_adj_val, posttax_adj_val,
-            last_month_untaxed_val, severance_pay_val, year_end_bonus_untaxed_val,
-            tax_deduction_val, special_deduction_val,
-            commission_bonus_val,
-            name_map, standard_salary_days
-        )
+        contract_company_val = c.contract_company or name_map.get(emp.contract_company_id, '')
 
         result = SalaryCalcOut(
-            id=c.id if c else None,
-            period=period,
-            employee_id=emp.id,
+            id=c.id,
+            period=c.period,
+            employee_id=c.employee_id,
             employee_no=emp.employee_no,
             employee_name=emp.name,
-            **data,
-            pretax_adjustment_reason=c.pretax_adjustment_reason if c else None,
-            posttax_adjustment_reason=c.posttax_adjustment_reason if c else None,
-            remark=c.remark if c else None,
-            review_status=c.review_status if c else "",
-            calculation_status=c.calculation_status if c else ("待提交" if sal else "待完善"),
-            data_completeness=c.data_completeness if c else ("待完善" if not sal else "完整"),
+            contract_company=contract_company_val,
+            pay_company_id=c.pay_company_id,
+            pay_company_name=c.pay_company_name or "",
+            record_type=c.record_type or "single",
+            department=department_val,
+            position=position_val,
+            status=status_val,
+            entry_date=entry_date_val.isoformat() if entry_date_val else None,
+            cost_owner=c.cost_owner or emp.cost_owner or '',
+            base_salary=_safe_float(c.base_salary),
+            base_salary_prorated=_safe_float(c.base_salary_prorated),
+            performance_standard_prorated=_safe_float(c.performance_standard_prorated),
+            adjustment_id=c.adjustment_id,
+            monthly_standard=_safe_float(c.monthly_standard),
+            performance_standard=_safe_float(c.performance_standard),
+            performance_coefficient=_safe_float(c.performance_coefficient),
+            actual_performance=_safe_float(c.actual_performance),
+            effective_performance=_safe_float(c.effective_performance),
+            meal_allowance=_safe_float(c.meal_allowance),
+            transport_allowance=_safe_float(c.transport_allowance),
+            communication_allowance=_safe_float(c.communication_allowance),
+            computer_allowance=_safe_float(c.computer_allowance),
+            housing_allowance=_safe_float(c.housing_allowance),
+            allowance_total=_safe_float(c.allowance_total),
+            commission_bonus=_safe_float(c.commission_bonus),
+            pretax_adjustment=_safe_float(c.pretax_adjustment),
+            pretax_adjustment_reason=c.pretax_adjustment_reason,
+            posttax_adjustment=_safe_float(c.posttax_adjustment),
+            posttax_adjustment_reason=c.posttax_adjustment_reason,
+            total_work_days=total_work_days_val,
+            actual_work_days=actual_work_days_val,
+            attendance_rate=attendance_rate_val,
+            gross_salary=_safe_float(c.gross_salary),
+            pension_personal=_safe_float(c.pension_personal),
+            unemployment_personal=_safe_float(c.unemployment_personal),
+            medical_personal=_safe_float(c.medical_personal),
+            social_insurance_personal=_safe_float(c.social_insurance_personal),
+            housing_fund_personal=_safe_float(c.housing_fund_personal),
+            si_hf_total=_safe_float(c.si_hf_total),
+            salary_after_si_hf=_safe_float(c.salary_after_si_hf),
+            tax_deduction=_safe_float(c.tax_deduction),
+            net_salary=_safe_float(c.net_salary),
+            last_month_untaxed=_safe_float(c.last_month_untaxed),
+            travel_untaxed=_safe_float(c.travel_untaxed),
+            compensation_tax=_safe_float(c.compensation_tax),
+            severance_pay=_safe_float(c.severance_pay),
+            year_end_bonus_untaxed=_safe_float(c.year_end_bonus_untaxed),
+            year_end_bonus_net=_safe_float(c.year_end_bonus_net),
+            actual_taxable=_safe_float(c.actual_taxable),
+            special_deduction=_safe_float(c.special_deduction),
+            remark=c.remark,
+            review_status=c.review_status or "",
+            calculation_status=c.calculation_status or "",
+            data_completeness=c.data_completeness or "",
         )
         results.append(result)
 
     return results
+
+
+@router.get("/pay-companies/{period}")
+def get_pay_companies(
+    period: str,
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    calcs = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()
+    companies = []
+    seen = set()
+    for c in calcs:
+        key = (c.pay_company_id or -1, c.pay_company_name or c.contract_company or "未知公司")
+        if key not in seen:
+            seen.add(key)
+            record_count = sum(1 for x in calcs if (x.pay_company_id or -1) == key[0] and (x.pay_company_name or x.contract_company or "未知公司") == key[1])
+            companies.append({
+                "pay_company_id": c.pay_company_id,
+                "pay_company_name": c.pay_company_name or c.contract_company,
+                "record_count": record_count,
+                "record_types": list(set(x.record_type or "single" for x in calcs if (x.pay_company_id or -1) == key[0]))
+            })
+    companies.sort(key=lambda x: (0 if x["pay_company_name"] and "易玖" in x["pay_company_name"] else 1, x["pay_company_name"] or ""))
+    return companies
 
 
 @router.put("/results/{calc_id}", response_model=SalaryCalcOut)
@@ -941,12 +1315,16 @@ def update_calculation_result(
     for key, value in update_data.items():
         setattr(calc, key, value)
 
+    record_type = calc.record_type or "single"
+
     perf_std_used = _safe_float(calc.performance_standard_prorated)
     if perf_std_used is None:
         perf_std_used = _safe_float(calc.performance_standard)
 
     if "performance_coefficient" in update_data:
-        if calc.performance_coefficient is not None and perf_std_used is not None:
+        if record_type == "contract":
+            calc.actual_performance = None
+        elif calc.performance_coefficient is not None and perf_std_used is not None:
             calc.actual_performance = round(perf_std_used * float(calc.performance_coefficient), 2)
         else:
             calc.actual_performance = None
@@ -959,30 +1337,49 @@ def update_calculation_result(
     commission = _safe_float(calc.commission_bonus)
     att_rate = _safe_float(calc.attendance_rate)
 
-    if actual_perf is not None and att_rate is not None:
-        calc.effective_performance = round(actual_perf * att_rate, 2)
-    else:
-        calc.effective_performance = None
+    if record_type != "contract":
+        if actual_perf is not None and att_rate is not None:
+            calc.effective_performance = round(actual_perf * att_rate, 2)
+        else:
+            calc.effective_performance = None
 
-    if base is not None and perf_std_used is not None and allowance is not None:
-        calc.monthly_standard = round(base + perf_std_used + allowance, 2)
-    else:
-        calc.monthly_standard = None
-
-    calc.gross_salary = None
-    if base is not None and allowance is not None and att_rate is not None:
-        c = commission if commission is not None else 0
-        ep = _safe_float(calc.effective_performance) or 0
-        calc.gross_salary = round((base + allowance + c) * att_rate + ep, 2)
+        if base is not None and perf_std_used is not None and allowance is not None:
+            calc.monthly_standard = round(base + perf_std_used + allowance, 2)
+        else:
+            calc.monthly_standard = None
 
     si_hf = 0
     has_si = False
-    for si_field in [calc.pension_personal, calc.unemployment_personal, calc.medical_personal, calc.housing_fund_personal]:
-        v = _safe_float(si_field)
+    pension = _safe_float(calc.pension_personal)
+    unemployment = _safe_float(calc.unemployment_personal)
+    medical = _safe_float(calc.medical_personal)
+    hf = _safe_float(calc.housing_fund_personal)
+    si_personal_sum = 0
+    for v in [pension, unemployment, medical]:
+        if v is not None:
+            si_personal_sum += v
+            has_si = True
+    calc.social_insurance_personal = round(si_personal_sum, 2) if any(v is not None for v in [pension, unemployment, medical]) else None
+    for v in [pension, unemployment, medical, hf]:
         if v is not None:
             si_hf += v
-            has_si = True
-    calc.si_hf_total = round(si_hf, 2) if has_si else None
+    calc.si_hf_total = round(si_hf, 2) if any(v is not None for v in [pension, unemployment, medical, hf]) else None
+
+    if record_type == "contract":
+        if calc.si_hf_total is not None:
+            calc.gross_salary = calc.si_hf_total
+    elif record_type == "payroll":
+        calc.pension_personal = None
+        calc.unemployment_personal = None
+        calc.medical_personal = None
+        calc.social_insurance_personal = None
+        calc.housing_fund_personal = None
+        calc.si_hf_total = None
+    else:
+        if base is not None and allowance is not None and att_rate is not None:
+            c = commission if commission is not None else 0
+            ep = _safe_float(calc.effective_performance) or 0
+            calc.gross_salary = round((base + allowance + c) * att_rate + ep, 2)
 
     tax = _safe_float(calc.tax_deduction)
     pretax = _safe_float(calc.pretax_adjustment) or 0
@@ -999,8 +1396,8 @@ def update_calculation_result(
     calc.actual_taxable = None
 
     gross = _safe_float(calc.gross_salary)
+    sh = _safe_float(calc.si_hf_total) or 0
     if gross is not None:
-        sh = _safe_float(calc.si_hf_total) or 0
         calc.salary_after_si_hf = round(gross + pretax - sh, 2)
         if tax is not None:
             calc.net_salary = round(gross + pretax - sh - tax + posttax, 2)
@@ -1008,23 +1405,28 @@ def update_calculation_result(
         else:
             calc.net_salary = round(gross + pretax - sh + posttax, 2)
             calc.calculation_status = "应发已核算"
-        calc.actual_taxable = round(gross + pretax + last_month_untaxed + travel_untaxed, 2)
+        calc.actual_taxable = round(gross + pretax + last_month_untaxed + travel_untaxed + compensation_tax + severance_pay + year_end_bonus - special_deduction, 2)
 
     net_val = _safe_float(calc.net_salary)
     if net_val is not None and net_val < 0:
-        raise HTTPException(status_code=400, detail="实发工资不能为负数，请检查各项数据是否正确")
-    if gross is not None and has_si and si_hf > gross + pretax:
+        if record_type != "contract":
+            raise HTTPException(status_code=400, detail="实发工资不能为负数，请检查各项数据是否正确")
+    if gross is not None and has_si and record_type != "payroll" and si_hf > gross + pretax:
         raise HTTPException(status_code=400, detail="社保公积金个人合计不能超过总应发工资+税前调整，请检查社保公积金数据")
 
     db.commit()
     db.refresh(calc)
-    write_log(db, "data_change", current_user.id, current_user.username, "salary", "edit", f"编辑核算结果 (id={calc_id}, employee_id={calc.employee_id})")
+    write_log(db, "data_change", current_user.id, current_user.username, "salary", "edit", f"编辑核算结果 (id={calc_id}, employee_id={calc.employee_id}, company={calc.pay_company_name})")
 
     emp = db.query(Employee).filter(Employee.id == calc.employee_id).first()
     return SalaryCalcOut(
         id=calc.id, period=calc.period, employee_id=calc.employee_id,
         employee_no=emp.employee_no if emp else "", employee_name=emp.name if emp else "",
-        contract_company=calc.contract_company, department=calc.department,
+        contract_company=calc.contract_company,
+        pay_company_id=calc.pay_company_id,
+        pay_company_name=calc.pay_company_name or "",
+        record_type=calc.record_type or "single",
+        department=calc.department,
         position=calc.position, status=calc.status,
         entry_date=calc.entry_date.isoformat() if calc.entry_date else None,
         base_salary=calc.base_salary,
@@ -1064,6 +1466,7 @@ def update_calculation_result(
         compensation_tax=calc.compensation_tax,
         severance_pay=calc.severance_pay,
         year_end_bonus_untaxed=calc.year_end_bonus_untaxed,
+        year_end_bonus_net=calc.year_end_bonus_net,
         actual_taxable=calc.actual_taxable,
         special_deduction=calc.special_deduction,
         remark=calc.remark,
@@ -1089,45 +1492,70 @@ def calculate_net_salary(period: str, db: Session = Depends(get_db), current_use
     total_net = 0
     tax_imported_count = 0
     for calc in calcs:
-        base = _safe_float(calc.base_salary_prorated)
-        if base is None:
-            base = _safe_float(calc.base_salary)
-        allowance = _safe_float(calc.allowance_total)
-        perf_std_used = _safe_float(calc.performance_standard_prorated)
-        if perf_std_used is None:
-            perf_std_used = _safe_float(calc.performance_standard)
-        if base is not None and perf_std_used is not None and allowance is not None:
-            calc.monthly_standard = round(base + perf_std_used + allowance, 2)
-        else:
-            calc.monthly_standard = None
+        record_type = calc.record_type or "single"
 
-        actual_perf = _safe_float(calc.actual_performance)
-        att_rate = _safe_float(calc.attendance_rate)
-        commission = _safe_float(calc.commission_bonus) or 0
-        if actual_perf is not None and att_rate is not None:
-            calc.effective_performance = round(actual_perf * att_rate, 2)
-        else:
-            calc.effective_performance = None
+        if record_type == "contract":
+            if calc.si_hf_total is not None:
+                calc.gross_salary = calc.si_hf_total
+        elif record_type != "payroll":
+            base = _safe_float(calc.base_salary_prorated)
+            if base is None:
+                base = _safe_float(calc.base_salary)
+            allowance = _safe_float(calc.allowance_total)
+            perf_std_used = _safe_float(calc.performance_standard_prorated)
+            if perf_std_used is None:
+                perf_std_used = _safe_float(calc.performance_standard)
+            if base is not None and perf_std_used is not None and allowance is not None:
+                calc.monthly_standard = round(base + perf_std_used + allowance, 2)
+            else:
+                calc.monthly_standard = None
 
-        if base is not None and allowance is not None and att_rate is not None:
-            ep = _safe_float(calc.effective_performance) or 0
-            calc.gross_salary = round((base + allowance + commission) * att_rate + ep, 2)
+            actual_perf = _safe_float(calc.actual_performance)
+            att_rate = _safe_float(calc.attendance_rate)
+            commission = _safe_float(calc.commission_bonus) or 0
+            if actual_perf is not None and att_rate is not None:
+                calc.effective_performance = round(actual_perf * att_rate, 2)
+            else:
+                calc.effective_performance = None
+
+            if base is not None and allowance is not None and att_rate is not None:
+                ep = _safe_float(calc.effective_performance) or 0
+                calc.gross_salary = round((base + allowance + commission) * att_rate + ep, 2)
 
         si_hf = 0
         has_si = False
-        for si_field in [calc.pension_personal, calc.unemployment_personal, calc.medical_personal, calc.housing_fund_personal]:
-            v = _safe_float(si_field)
+        pension = _safe_float(calc.pension_personal)
+        unemployment = _safe_float(calc.unemployment_personal)
+        medical = _safe_float(calc.medical_personal)
+        hf = _safe_float(calc.housing_fund_personal)
+        si_personal_sum = 0
+        for v in [pension, unemployment, medical]:
+            if v is not None:
+                si_personal_sum += v
+                has_si = True
+        calc.social_insurance_personal = round(si_personal_sum, 2) if any(v is not None for v in [pension, unemployment, medical]) else None
+        for v in [pension, unemployment, medical, hf]:
             if v is not None:
                 si_hf += v
-                has_si = True
-        calc.si_hf_total = round(si_hf, 2) if has_si else None
+        if record_type == "payroll":
+            calc.pension_personal = None
+            calc.unemployment_personal = None
+            calc.medical_personal = None
+            calc.social_insurance_personal = None
+            calc.housing_fund_personal = None
+            calc.si_hf_total = None
+            si_hf = 0
+        else:
+            calc.si_hf_total = round(si_hf, 2) if any(v is not None for v in [pension, unemployment, medical, hf]) else None
 
         tax = _safe_float(calc.tax_deduction)
         pretax = _safe_float(calc.pretax_adjustment) or 0
         posttax = _safe_float(calc.posttax_adjustment) or 0
         last_month_untaxed = _safe_float(calc.last_month_untaxed) or 0
         travel_untaxed = _safe_float(calc.travel_untaxed) or 0
+        special_deduction = _safe_float(calc.special_deduction) or 0
         compensation_tax = _safe_float(calc.compensation_tax) or 0
+        severance_pay = _safe_float(calc.severance_pay) or 0
         year_end_bonus = _safe_float(calc.year_end_bonus_untaxed) or 0
         gross = _safe_float(calc.gross_salary)
 
@@ -1135,15 +1563,15 @@ def calculate_net_salary(period: str, db: Session = Depends(get_db), current_use
         calc.net_salary = None
         calc.actual_taxable = None
 
+        sh = si_hf if has_si and record_type != "payroll" else 0
         if gross is not None:
-            sh = si_hf if has_si else 0
             calc.salary_after_si_hf = round(gross + pretax - sh, 2)
             if tax is not None:
                 calc.net_salary = round(gross + pretax - sh - tax + posttax, 2)
                 tax_imported_count += 1
             else:
                 calc.net_salary = round(gross + pretax - sh + posttax, 2)
-            calc.actual_taxable = round(gross + pretax + last_month_untaxed + travel_untaxed, 2)
+            calc.actual_taxable = round(gross + pretax + last_month_untaxed + travel_untaxed + compensation_tax + severance_pay + year_end_bonus - special_deduction, 2)
 
         calc.calculation_status = "实发已核算" if tax is not None else "应发已核算"
         if gross is not None:
@@ -1236,7 +1664,7 @@ def export_salary_results(
         "社保、公积金（个人）合计", "扣掉社保公积金工资",
         "本月应扣个税额", "税后调整金额", "税后调整原因", "实发工资", "实发离职补偿金",
         "上月未报税金额", "临时性差旅补贴未报税费用", "本月实际工资报税金额",
-        "未报税补偿金", "未报税年终奖",
+        "未报税补偿金", "未报税年终奖", "实发年终奖",
         "员工编号", "成本归属", "核算状态", "审核状态"
     ]
     ws.append(headers)
@@ -1272,7 +1700,7 @@ def export_salary_results(
             _f(c.severance_pay),
             _f(c.last_month_untaxed), _f(c.travel_untaxed),
             _f(c.actual_taxable),
-            _f(c.compensation_tax), _f(c.year_end_bonus_untaxed),
+            _f(c.compensation_tax), _f(c.year_end_bonus_untaxed), _f(c.year_end_bonus_net),
             emp.employee_no, c.cost_owner or "",
             c.calculation_status or "", c.review_status or ""
         ])
@@ -1620,11 +2048,10 @@ def delete_adjustment(adj_id: int, db: Session = Depends(get_db), current_user: 
 
 
 def _parse_tax_refund_excel(file_content: bytes) -> List[dict]:
-    """解析个人所得税申报导出表，提取姓名和应补/退税额"""
+    """解析个人所得税申报导出表，支持多Sheet（每个公司一个Sheet），提取姓名、应补/退税额和Sheet名称"""
     results = []
-    
+
     def find_column_by_header(headers, keywords, row_idx_hint=None):
-        """通过表头关键词查找列索引"""
         for col_idx, header_val in enumerate(headers):
             if header_val is None:
                 continue
@@ -1633,52 +2060,36 @@ def _parse_tax_refund_excel(file_content: bytes) -> List[dict]:
                 if kw in header_str:
                     return col_idx
         return None
-    
-    try:
-        wb = xlrd.open_workbook(file_contents=file_content)
-        ws = wb.sheet_by_index(0)
-        
+
+    def parse_sheet_rows(ws, is_xlrd=True):
+        sheet_results = []
         name_col = 1
         tax_col = None
-        
-        for row_idx in range(min(10, ws.nrows)):
-            row = [ws.cell_value(row_idx, col) for col in range(ws.ncols)]
-            for col_idx, val in enumerate(row):
-                val_str = str(val).strip() if val else ''
-                if '姓名' in val_str and '纳税人' not in val_str:
-                    name_col = col_idx
-                if '应补/退税额' in val_str or '应补退税额' in val_str:
-                    tax_col = col_idx
-        
-        if tax_col is None:
-            tax_col = 49
-        
-        data_start_row = 8
-        for row_idx in range(data_start_row, ws.nrows):
-            name = ws.cell_value(row_idx, name_col)
-            if not name or str(name).strip() in ('', '合    计', '合计', '谨声明', '扣缴义务人'):
-                continue
-            if str(name).strip().startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.')):
-                continue
-            
-            tax_amount = ws.cell_value(row_idx, tax_col) if tax_col < ws.ncols else None
-            try:
-                tax_val = float(tax_amount) if tax_amount not in ('', '-', None) else 0.0
-            except (ValueError, TypeError):
-                tax_val = 0.0
-            
-            results.append({
-                "name": str(name).strip(),
-                "tax_amount": tax_val
-            })
-    except Exception as e:
-        try:
-            wb = load_workbook(BytesIO(file_content), data_only=True)
-            ws = wb.active
-            
-            name_col = 1
-            tax_col = None
-            
+
+        if is_xlrd:
+            for row_idx in range(min(10, ws.nrows)):
+                row = [ws.cell_value(row_idx, col) for col in range(ws.ncols)]
+                for col_idx, val in enumerate(row):
+                    val_str = str(val).strip() if val else ''
+                    if '姓名' in val_str and '纳税人' not in val_str:
+                        name_col = col_idx
+                    if '应补/退税额' in val_str or '应补退税额' in val_str:
+                        tax_col = col_idx
+            if tax_col is None:
+                tax_col = 49
+            for row_idx in range(8, ws.nrows):
+                name = ws.cell_value(row_idx, name_col)
+                if not name or str(name).strip() in ('', '合    计', '合计', '谨声明', '扣缴义务人'):
+                    continue
+                if str(name).strip().startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.')):
+                    continue
+                tax_amount = ws.cell_value(row_idx, tax_col) if tax_col < ws.ncols else None
+                try:
+                    tax_val = float(tax_amount) if tax_amount not in ('', '-', None) else 0.0
+                except (ValueError, TypeError):
+                    tax_val = 0.0
+                sheet_results.append({"name": str(name).strip(), "tax_amount": tax_val})
+        else:
             for row_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=10, values_only=True), start=1):
                 for col_idx, val in enumerate(row):
                     val_str = str(val).strip() if val else ''
@@ -1686,29 +2097,44 @@ def _parse_tax_refund_excel(file_content: bytes) -> List[dict]:
                         name_col = col_idx
                     if '应补/退税额' in val_str or '应补退税额' in val_str:
                         tax_col = col_idx
-            
             if tax_col is None:
                 tax_col = 49
-            
             for row_idx, row in enumerate(ws.iter_rows(min_row=9, values_only=True), start=9):
                 name = row[name_col] if name_col < len(row) else None
                 if not name or str(name).strip() in ('', '合    计', '合计', '谨声明', '扣缴义务人'):
                     continue
                 if str(name).strip().startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.')):
                     continue
-                
                 tax_amount = row[tax_col] if tax_col < len(row) else None
                 try:
                     tax_val = float(tax_amount) if tax_amount not in ('', '-', None) else 0.0
                 except (ValueError, TypeError):
                     tax_val = 0.0
-                
-                results.append({
-                    "name": str(name).strip(),
-                    "tax_amount": tax_val
-                })
-        except Exception as e2:
-            raise HTTPException(status_code=400, detail=f"无法解析Excel文件，请确认文件格式正确：{str(e)} | {str(e2)}")
+                sheet_results.append({"name": str(name).strip(), "tax_amount": tax_val})
+        return sheet_results
+
+    try:
+        try:
+            wb = xlrd.open_workbook(file_contents=file_content)
+            for sheet_idx in range(wb.nsheets):
+                ws = wb.sheet_by_index(sheet_idx)
+                sheet_name = wb.sheet_names()[sheet_idx]
+                sheet_results = parse_sheet_rows(ws, is_xlrd=True)
+                for item in sheet_results:
+                    item["sheet_name"] = sheet_name
+                results.extend(sheet_results)
+        except Exception:
+            wb = load_workbook(BytesIO(file_content), data_only=True)
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                if "数据缺失提示" in sheet_name:
+                    continue
+                sheet_results = parse_sheet_rows(ws, is_xlrd=False)
+                for item in sheet_results:
+                    item["sheet_name"] = sheet_name
+                results.extend(sheet_results)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"无法解析Excel文件，请确认文件格式正确：{str(e)}")
     return results
 
 
@@ -1719,7 +2145,7 @@ async def upload_tax_excel(
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
-    """上传个人所得税申报导出表Excel，自动提取姓名和应补/退税额并更新"""
+    """上传个人所得税申报导出表Excel，自动提取姓名和应补/退税额并更新（支持多Sheet按公司导入）"""
     if not file.filename.endswith(('.xls', '.xlsx')):
         raise HTTPException(status_code=400, detail="仅支持 .xls 或 .xlsx 格式的文件")
     
@@ -1728,59 +2154,90 @@ async def upload_tax_excel(
     
     if not tax_items:
         raise HTTPException(status_code=400, detail="未能从文件中解析到有效数据，请确认文件格式正确")
-    
+
+    calcs = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()
+    company_names_in_db = set()
+    for c in calcs:
+        cn = c.pay_company_name or c.contract_company or ""
+        if cn:
+            company_names_in_db.add(cn)
+
     updated = 0
     created = 0
     not_found = []
+    unmatched_sheets = set()
     for item in tax_items:
         emp = db.query(Employee).filter(Employee.name == item["name"]).first()
         if not emp:
             not_found.append(item["name"])
             continue
-        calc = db.query(SalaryCalculation).filter(
-            SalaryCalculation.period == period,
-            SalaryCalculation.employee_id == emp.id
-        ).first()
-        if not calc:
-            calc = SalaryCalculation(
+
+        sheet_name = item.get("sheet_name", "")
+        target_calc = None
+        if sheet_name and "数据缺失提示" not in sheet_name:
+            for c in calcs:
+                if c.employee_id == emp.id:
+                    cn = c.pay_company_name or c.contract_company or ""
+                    if sheet_name in cn or cn in sheet_name:
+                        target_calc = c
+                        break
+        
+        if target_calc is None:
+            for c in calcs:
+                if c.employee_id == emp.id and c.record_type != "contract":
+                    target_calc = c
+                    break
+            if target_calc is None:
+                for c in calcs:
+                    if c.employee_id == emp.id:
+                        target_calc = c
+                        break
+
+        if not target_calc:
+            target_calc = SalaryCalculation(
                 period=period,
                 employee_id=emp.id,
                 calculation_status="待核算"
             )
-            db.add(calc)
+            db.add(target_calc)
             db.flush()
             created += 1
 
-        calc.tax_deduction = item["tax_amount"]
+        target_calc.tax_deduction = item["tax_amount"]
 
-        gross = _safe_float(calc.gross_salary)
-        si_hf = _safe_float(calc.si_hf_total)
-        pretax = _safe_float(calc.pretax_adjustment) or 0
-        posttax = _safe_float(calc.posttax_adjustment) or 0
-        tax = _safe_float(calc.tax_deduction)
+        record_type = target_calc.record_type or "single"
+        gross = _safe_float(target_calc.gross_salary)
+        pretax = _safe_float(target_calc.pretax_adjustment) or 0
+        posttax = _safe_float(target_calc.posttax_adjustment) or 0
+        tax = _safe_float(target_calc.tax_deduction)
+        special_deduction = _safe_float(target_calc.special_deduction) or 0
 
-        if si_hf is None and gross is not None:
-            pension = _safe_float(calc.pension_personal) or 0
-            unemployment = _safe_float(calc.unemployment_personal) or 0
-            medical = _safe_float(calc.medical_personal) or 0
-            hf = _safe_float(calc.housing_fund_personal) or 0
-            si_hf = pension + unemployment + medical + hf
-            calc.si_hf_total = si_hf
+        if record_type == "payroll":
+            sh = 0
+        else:
+            sh = _safe_float(target_calc.si_hf_total)
+            if sh is None:
+                pension = _safe_float(target_calc.pension_personal) or 0
+                unemployment = _safe_float(target_calc.unemployment_personal) or 0
+                medical = _safe_float(target_calc.medical_personal) or 0
+                hf = _safe_float(target_calc.housing_fund_personal) or 0
+                sh = pension + unemployment + medical + hf
+                target_calc.si_hf_total = sh if sh > 0 else None
 
         if gross is not None:
-            sh = si_hf or 0
-            calc.salary_after_si_hf = round(gross + pretax - sh, 2)
+            target_calc.salary_after_si_hf = round(gross + pretax - sh, 2)
             if tax is not None:
-                calc.net_salary = round(gross + pretax - sh - tax + posttax, 2)
-                calc.calculation_status = "实发已核算"
+                target_calc.net_salary = round(gross + pretax - sh - tax + posttax, 2)
+                target_calc.calculation_status = "实发已核算"
             else:
-                calc.net_salary = round(gross + pretax - sh + posttax, 2)
-                calc.calculation_status = "应发已核算"
-            lm = _safe_float(calc.last_month_untaxed) or 0
-            tu = _safe_float(calc.travel_untaxed) or 0
-            ct = _safe_float(calc.compensation_tax) or 0
-            yeb = _safe_float(calc.year_end_bonus_untaxed) or 0
-            calc.actual_taxable = round(gross + pretax + lm + tu + ct + yeb, 2)
+                target_calc.net_salary = round(gross + pretax - sh + posttax, 2)
+                target_calc.calculation_status = "应发已核算"
+            lm = _safe_float(target_calc.last_month_untaxed) or 0
+            tu = _safe_float(target_calc.travel_untaxed) or 0
+            ct = _safe_float(target_calc.compensation_tax) or 0
+            sp = _safe_float(target_calc.severance_pay) or 0
+            yeb = _safe_float(target_calc.year_end_bonus_untaxed) or 0
+            target_calc.actual_taxable = round(gross + pretax + lm + tu + ct + sp + yeb - special_deduction, 2)
         updated += 1
     
     db.commit()
@@ -1856,8 +2313,7 @@ def export_tax_template(
 
     def _build_salary_workbook():
         wb = Workbook()
-        ws = wb.active
-        ws.title = "正常工资薪金收入"
+        wb.remove(wb.active)
         headers = [
             "工号", "*姓名", "*证件类型", "*证件号码", "本期收入", "本期免税收入",
             "基本养老保险费", "基本医疗保险费", "失业保险费", "住房公积金",
@@ -1866,80 +2322,61 @@ def export_tax_template(
             "企业(职业)年金", "商业健康保险", "税延养老保险", "其他",
             "准予扣除的捐赠额", "减免税额", "备注"
         ]
-        ws.append(headers)
-        warnings = []
-        for emp in employees:
-            c = calc_map.get(emp.id)
-            remarks = []
-            id_card = emp.id_card or ""
-            if not id_card:
-                remarks.append("证件号码缺失")
-            if c:
-                taxable_income = float(c.actual_taxable or 0)
-                pension = float(c.pension_personal or 0)
-                medical = float(c.medical_personal or 0)
-                unemployment = float(c.unemployment_personal or 0)
-                housing = float(c.housing_fund_personal or 0)
-                if not si_map.get(emp.id):
-                    remarks.append("社保公积金数据缺失")
-            else:
-                sal = salary_map.get(emp.id)
-                if not sal:
-                    taxable_income = 0
-                    pension = medical = unemployment = housing = 0
-                    remarks.append("薪资档案缺失")
-                else:
-                    perf = perf_map.get(emp.id)
-                    att = att_map.get(emp.id)
-                    si = si_map.get(emp.id)
-                    adj = adjustments.get(emp.id)
-                    base_salary = float(sal.base_salary)
-                    perf_std = float(sal.performance_standard)
-                    meal = float(sal.meal_allowance or 0)
-                    transport = float(sal.transport_allowance or 0)
-                    comm = float(sal.communication_allowance or 0)
-                    computer = float(sal.computer_allowance or 0)
-                    housing_allow = float(sal.housing_allowance or 0)
-                    allowance_total = meal + transport + comm + computer + housing_allow
-                    att_rate = float(att.attendance_rate) if att else 1.00
-                    if not att:
-                        remarks.append("考勤数据缺失")
-                    if adj:
-                        base_prorated = float(adj.base_salary_prorated or 0)
-                        perf_prorated = float(adj.performance_standard_prorated or 0)
-                        commission_prorated = float(adj.commission_prorated or 0)
-                    else:
-                        base_prorated = base_salary
-                        perf_prorated = perf_std
-                        commission_prorated = 0
-                    perf_coef = float(perf.final_score) if perf and perf.final_score is not None else 1.00
-                    actual_perf = round(perf_prorated * perf_coef, 2)
-                    effective_perf = round(actual_perf * att_rate, 2)
-                    gross = round((base_prorated + allowance_total + commission_prorated) * att_rate + effective_perf, 2)
-                    taxable_income = gross
-                    pension = float(si.pension_personal or 0) if si else 0
-                    medical = float(si.medical_personal or 0) if si else 0
-                    unemployment = float(si.unemployment_personal or 0) if si else 0
-                    housing = float(si.hf_personal or 0) if si else 0
-                    if not si:
-                        remarks.append("社保公积金数据缺失")
-                    if not perf:
-                        remarks.append("绩效系数缺失(按1.0计算)")
-            if remarks:
-                warnings.append(f"{emp.name}({emp.employee_no}): {', '.join(remarks)}")
-            ws.append([
-                "", emp.name, "居民身份证", id_card,
-                round(taxable_income, 2), 0,
-                round(pension, 2), round(medical, 2), round(unemployment, 2), round(housing, 2),
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                ""
-            ])
-        if warnings:
-            ws2 = wb.create_sheet("数据缺失提示")
-            ws2.append(["以下员工存在必填字段缺失或数据不完整，导入报税系统前请补充："])
-            ws2.append([])
-            for w in warnings:
-                ws2.append([w])
+
+        company_groups = {}
+        for c in calcs:
+            emp_id = c.employee_id
+            emp = next((e for e in employees if e.id == emp_id), None)
+            if not emp:
+                continue
+            company_name = c.pay_company_name or c.contract_company or "未知公司"
+            if company_name not in company_groups:
+                company_groups[company_name] = []
+            company_groups[company_name].append((emp, c))
+
+        all_warnings = []
+        if not company_groups:
+            ws = wb.create_sheet("正常工资薪金收入")
+            ws.append(headers)
+            for emp in employees:
+                ws.append(["", emp.name, "居民身份证", emp.id_card or "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ""])
+        else:
+            sorted_companies = sorted(company_groups.keys(), key=lambda x: (0 if "易玖" in x else 1, x))
+            for company_name in sorted_companies:
+                sheet_name = company_name[:31]
+                ws = wb.create_sheet(sheet_name)
+                ws.append(headers)
+                company_records = company_groups[company_name]
+                for emp, c in company_records:
+                    remarks = []
+                    id_card = emp.id_card or ""
+                    if not id_card:
+                        remarks.append("证件号码缺失")
+
+                    record_type = c.record_type or "single"
+                    taxable_income = float(c.actual_taxable or 0)
+                    pension = float(c.pension_personal or 0) if record_type != "payroll" else 0
+                    medical = float(c.medical_personal or 0) if record_type != "payroll" else 0
+                    unemployment = float(c.unemployment_personal or 0) if record_type != "payroll" else 0
+                    housing = float(c.housing_fund_personal or 0) if record_type != "payroll" else 0
+
+                    if taxable_income > 0 or pension > 0 or medical > 0 or unemployment > 0 or housing > 0:
+                        if remarks:
+                            all_warnings.append(f"[{company_name}] {emp.name}({emp.employee_no}): {', '.join(remarks)}")
+                        ws.append([
+                            "", emp.name, "居民身份证", id_card,
+                            round(taxable_income, 2), 0,
+                            round(pension, 2), round(medical, 2), round(unemployment, 2), round(housing, 2),
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            ""
+                        ])
+
+        if all_warnings:
+            ws_warn = wb.create_sheet("数据缺失提示")
+            ws_warn.append(["以下员工存在必填字段缺失或数据不完整，导入报税系统前请补充："])
+            ws_warn.append([])
+            for w in all_warnings:
+                ws_warn.append([w])
         return _create_workbook_response(wb, f"正常工资薪金_{period}.xlsx")
 
     def _build_bonus_workbook():

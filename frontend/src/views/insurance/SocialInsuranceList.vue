@@ -4,7 +4,6 @@
       <h3 class="text-lg font-semibold text-gray-700 shrink-0 mr-1">社保公积金管理</h3>
       <el-date-picker v-model="periodDate" type="month" placeholder="选择月份" size="small" class="!w-40" value-format="YYYYMM" @change="onPeriodChange" />
       <el-select v-model="filterField" placeholder="筛选字段" size="small" class="!w-24">
-        <el-option label="员工编号" value="employee_no" />
         <el-option label="员工姓名" value="employee_name" />
       </el-select>
       <el-input v-model="filterValue" placeholder="筛选值" size="small" clearable class="!w-36" @input="fetchData" />
@@ -39,58 +38,57 @@
       <span>提示：不同城市的社保公积金基数、比例不同（北京/广州/邯郸/上海），请按各公司实际情况填写。</span>
     </div>
 
-    <el-table :data="filteredRecords" border stripe v-loading="loading" max-height="700" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
+    <el-table :data="filteredRecords" border stripe v-loading="loading" :max-height="tableMaxHeight" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
       <el-table-column v-if="isSiColumnVisible('selection')" type="selection" width="55" :selectable="row => row.id != null" />
-      <el-table-column v-if="isSiColumnVisible('employee_no')" prop="employee_no" label="员工编号" width="100" fixed />
-      <el-table-column v-if="isSiColumnVisible('employee_name')" prop="employee_name" label="员工姓名" width="80" fixed />
-      <el-table-column v-if="isSiColumnVisible('employee_social_insurance_no')" prop="employee_social_insurance_no" label="个人社保号" width="130" />
+      <el-table-column v-if="isSiColumnVisible('index')" type="index" label="序号" width="50" fixed="left" />
+      <el-table-column v-if="isSiColumnVisible('employee_name')" prop="employee_name" label="员工姓名" width="80" fixed="left" />
 
       <!-- 养老保险 -->
       <el-table-column v-if="isSiColumnVisible('pension_group')" label="养老保险" min-width="450">
         <el-table-column prop="pension_personal_base" label="基数(个人)" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].pension_personal_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].pension_personal_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.pension_personal_base != null ? row.pension_personal_base : '' }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="pension_personal" label="金额(个人)" width="100">
+        <el-table-column prop="pension_personal" label="金额(个人)" width="100" class-name="col-personal-amount">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].pension_personal" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].pension_personal" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.pension_personal != null ? row.pension_personal : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="pension_personal_rate" label="比例(个人)" width="90">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].pension_personal_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].pension_personal_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.pension_personal_rate != null ? (row.pension_personal_rate * 100).toFixed(2) + '%' : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="pension_company_base" label="基数(单位)" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].pension_company_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].pension_company_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.pension_company_base != null ? row.pension_company_base : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="pension_company" label="金额(单位)" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].pension_company" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].pension_company" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.pension_company != null ? row.pension_company : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="pension_company_rate" label="比例(单位)" width="90">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].pension_company_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].pension_company_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.pension_company_rate != null ? (row.pension_company_rate * 100).toFixed(2) + '%' : '' }}</template>
           </template>
@@ -101,48 +99,48 @@
       <el-table-column v-if="isSiColumnVisible('unemployment_group')" label="失业保险" min-width="450">
         <el-table-column prop="unemployment_personal_base" label="基数(个人)" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].unemployment_personal_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].unemployment_personal_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.unemployment_personal_base != null ? row.unemployment_personal_base : '' }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="unemployment_personal" label="金额(个人)" width="100">
+        <el-table-column prop="unemployment_personal" label="金额(个人)" width="100" class-name="col-personal-amount">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].unemployment_personal" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].unemployment_personal" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.unemployment_personal != null ? row.unemployment_personal : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="unemployment_personal_rate" label="比例(个人)" width="90">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].unemployment_personal_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].unemployment_personal_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.unemployment_personal_rate != null ? (row.unemployment_personal_rate * 100).toFixed(2) + '%' : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="unemployment_company_base" label="基数(单位)" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].unemployment_company_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].unemployment_company_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.unemployment_company_base != null ? row.unemployment_company_base : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="unemployment_company" label="金额(单位)" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].unemployment_company" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].unemployment_company" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.unemployment_company != null ? row.unemployment_company : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="unemployment_company_rate" label="比例(单位)" width="90">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].unemployment_company_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].unemployment_company_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.unemployment_company_rate != null ? (row.unemployment_company_rate * 100).toFixed(2) + '%' : '' }}</template>
           </template>
@@ -153,48 +151,48 @@
       <el-table-column v-if="isSiColumnVisible('medical_group')" label="医疗保险" min-width="450">
         <el-table-column prop="medical_personal_base" label="基数(个人)" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].medical_personal_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].medical_personal_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.medical_personal_base != null ? row.medical_personal_base : '' }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="medical_personal" label="金额(个人)" width="100">
+        <el-table-column prop="medical_personal" label="金额(个人)" width="100" class-name="col-personal-amount">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].medical_personal" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].medical_personal" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.medical_personal != null ? row.medical_personal : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="medical_personal_rate" label="比例(个人)" width="90">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].medical_personal_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].medical_personal_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.medical_personal_rate != null ? (row.medical_personal_rate * 100).toFixed(2) + '%' : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="medical_company_base" label="基数(单位)" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].medical_company_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].medical_company_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.medical_company_base != null ? row.medical_company_base : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="medical_company" label="金额(单位)" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].medical_company" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].medical_company" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.medical_company != null ? row.medical_company : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="medical_company_rate" label="比例(单位)" width="90">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].medical_company_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].medical_company_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.medical_company_rate != null ? (row.medical_company_rate * 100).toFixed(2) + '%' : '' }}</template>
           </template>
@@ -205,24 +203,24 @@
       <el-table-column v-if="isSiColumnVisible('injury_group')" label="工伤保险" min-width="300">
         <el-table-column prop="injury_company_base" label="基数(单位)" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].injury_company_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].injury_company_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.injury_company_base != null ? row.injury_company_base : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="injury_company" label="金额(单位)" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].injury_company" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].injury_company" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.injury_company != null ? row.injury_company : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="injury_company_rate" label="比例(单位)" width="90">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].injury_company_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].injury_company_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.injury_company_rate != null ? (row.injury_company_rate * 100).toFixed(2) + '%' : '' }}</template>
           </template>
@@ -233,58 +231,58 @@
       <el-table-column v-if="isSiColumnVisible('si_totals_group')" label="社保合计" min-width="350">
         <el-table-column prop="pension_total" label="养老合计" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].pension_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].pension_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.pension_total != null ? row.pension_total : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="unemployment_total" label="失业合计" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].unemployment_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].unemployment_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.unemployment_total != null ? row.unemployment_total : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="medical_total" label="医疗合计" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].medical_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].medical_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.medical_total != null ? row.medical_total : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="injury_total" label="工伤合计" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].injury_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].injury_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.injury_total != null ? row.injury_total : '' }}</template>
           </template>
         </el-table-column>
       </el-table-column>
 
-      <el-table-column v-if="isSiColumnVisible('si_personal')" prop="si_personal" label="社保个人合计" width="110">
+      <el-table-column v-if="isSiColumnVisible('si_personal')" prop="si_personal" label="社保个人合计" width="110" class-name="col-personal-amount">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
-            <el-input-number v-model="editCache[row.id].si_personal" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[getCacheKey(row)]">
+            <el-input-number v-model="editCache[getCacheKey(row)].si_personal" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
           </template>
           <template v-else>{{ row.si_personal != null ? row.si_personal : '' }}</template>
         </template>
       </el-table-column>
       <el-table-column v-if="isSiColumnVisible('si_company')" prop="si_company" label="社保公司合计" width="110">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
-            <el-input-number v-model="editCache[row.id].si_company" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[getCacheKey(row)]">
+            <el-input-number v-model="editCache[getCacheKey(row)].si_company" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
           </template>
           <template v-else>{{ row.si_company != null ? row.si_company : '' }}</template>
         </template>
       </el-table-column>
       <el-table-column v-if="isSiColumnVisible('si_grand_total')" prop="si_grand_total" label="社保总合计" width="110">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
-            <el-input-number v-model="editCache[row.id].si_grand_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[getCacheKey(row)]">
+            <el-input-number v-model="editCache[getCacheKey(row)].si_grand_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
           </template>
           <template v-else>{{ row.si_grand_total != null ? row.si_grand_total : '' }}</template>
         </template>
@@ -294,48 +292,48 @@
       <el-table-column v-if="isSiColumnVisible('hf_group')" label="公积金" min-width="450">
         <el-table-column prop="hf_base" label="缴存基数" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].hf_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].hf_base" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.hf_base != null ? row.hf_base : '' }}</template>
           </template>
         </el-table-column>
-        <el-table-column prop="hf_personal" label="金额(个人)" width="100">
+        <el-table-column prop="hf_personal" label="金额(个人)" width="100" class-name="col-personal-amount">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].hf_personal" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].hf_personal" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.hf_personal != null ? row.hf_personal : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="hf_personal_rate" label="比例(个人)" width="90">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].hf_personal_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].hf_personal_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.hf_personal_rate != null ? (row.hf_personal_rate * 100).toFixed(2) + '%' : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="hf_company" label="金额(单位)" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].hf_company" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].hf_company" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.hf_company != null ? row.hf_company : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="hf_company_rate" label="比例(单位)" width="90">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].hf_company_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].hf_company_rate" :min="0" :max="1" :step="0.01" :precision="4" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.hf_company_rate != null ? (row.hf_company_rate * 100).toFixed(2) + '%' : '' }}</template>
           </template>
         </el-table-column>
         <el-table-column prop="hf_total" label="公积金合计" width="100">
           <template #default="{ row }">
-            <template v-if="editMode && editCache[row.id]">
-              <el-input-number v-model="editCache[row.id].hf_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+            <template v-if="editMode && editCache[getCacheKey(row)]">
+              <el-input-number v-model="editCache[getCacheKey(row)].hf_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
             </template>
             <template v-else>{{ row.hf_total != null ? row.hf_total : '' }}</template>
           </template>
@@ -344,8 +342,8 @@
 
       <el-table-column v-if="isSiColumnVisible('grand_total')" prop="grand_total" label="社保公积金总合计" width="130">
         <template #default="{ row }">
-          <template v-if="editMode && editCache[row.id]">
-            <el-input-number v-model="editCache[row.id].grand_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
+          <template v-if="editMode && editCache[getCacheKey(row)]">
+            <el-input-number v-model="editCache[getCacheKey(row)].grand_total" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(getCacheKey(row))" />
           </template>
           <template v-else>{{ row.grand_total != null ? row.grand_total : '' }}</template>
         </template>
@@ -367,11 +365,8 @@
           <el-tag type="info" size="large">{{ formatPeriod(periodDate) }}</el-tag>
           <span class="text-xs text-gray-400 ml-2">数据将录入到当前选中月份</span>
         </el-form-item>
-        <el-form-item label="员工编号">
-          <el-input :model-value="formEmployeeNo" disabled />
-        </el-form-item>
-        <el-form-item label="个人社保号">
-          <el-input v-model="form.employee_social_insurance_no" placeholder="个人社保号" />
+        <el-form-item label="员工姓名">
+          <el-input :model-value="formEmployeeName" disabled />
         </el-form-item>
 
         <el-divider content-position="left">养老保险</el-divider>
@@ -749,9 +744,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { Plus, Download, Upload, Delete, InfoFilled, UploadFilled, WarningFilled, CopyDocument, Setting } from '@element-plus/icons-vue'
 import api from '../../api'
 import ColumnSetting from '../../components/ColumnSetting.vue'
@@ -818,19 +813,23 @@ const smartBatchId = ref(null)
 const formRef = ref(null)
 const editId = ref(null)
 const formEmployeeId = ref(null)
-const formEmployeeNo = ref('')
+const formEmployeeName = ref('')
 
 const editMode = ref(false)
 const editCache = reactive({})
 const changedSet = ref(new Set())
 const editConfirmVisible = ref(false)
 const confirmList = ref([])
+const tableMaxHeight = ref(700)
+
+function updateTableHeight() {
+  tableMaxHeight.value = Math.max(400, window.innerHeight - 260)
+}
 
 const SI_TABLE_COLUMNS = [
   { key: 'selection', label: '选择', required: true },
-  { key: 'employee_no', label: '员工编号', required: true },
+  { key: 'index', label: '序号', required: true },
   { key: 'employee_name', label: '员工姓名', required: true },
-  { key: 'employee_social_insurance_no', label: '个人社保号' },
   { key: 'pension_group', label: '养老保险（明细）' },
   { key: 'unemployment_group', label: '失业保险（明细）' },
   { key: 'medical_group', label: '医疗保险（明细）' },
@@ -845,7 +844,7 @@ const SI_TABLE_COLUMNS = [
 ]
 
 const SI_DEFAULT_VISIBLE = [
-  'selection', 'employee_no', 'employee_name',
+  'selection', 'index', 'employee_name',
   'si_personal', 'si_company', 'hf_group', 'grand_total', 'action'
 ]
 
@@ -891,7 +890,7 @@ const editFields = ['pension_personal_base', 'pension_company_base',
   'grand_total']
 
 const form = reactive({
-  period: defaultPeriod, employee_id: null, employee_social_insurance_no: '',
+  period: defaultPeriod, employee_id: null,
   pension_personal_base: 0, pension_company_base: 0,
   unemployment_personal_base: 0, unemployment_company_base: 0,
   medical_personal_base: 0, medical_company_base: 0,
@@ -942,16 +941,21 @@ function onPeriodChange(val) {
 }
 
 function tableRowClassName({ row }) {
-  if (editMode.value && row.id && changedSet.value.has(row.id)) return 'row-changed'
+  if (editMode.value && changedSet.value.has(getCacheKey(row))) return 'row-changed'
   return ''
+}
+
+function getCacheKey(row) {
+  return row.id || `_emp_${row.employee_id}`
 }
 
 function initEditCache() {
   records.value.forEach(row => {
-    if (!row || !row.id) return
-    editCache[row.id] = reactive({})
+    if (!row) return
+    const cacheKey = row.id || `_emp_${row.employee_id}`
+    editCache[cacheKey] = reactive({})
     editFields.forEach(f => {
-      editCache[row.id][f] = row[f] ?? 0
+      editCache[cacheKey][f] = row[f] ?? 0
     })
   })
 }
@@ -961,7 +965,26 @@ function markChanged(rowId) {
   changedSet.value.add(rowId)
 }
 
-function toggleEditMode() {
+async function ensureRecordsExist() {
+  const hasUncreated = records.value.some(r => r.id == null)
+  if (!hasUncreated) return true
+  const loading = ElLoading.service({ text: '正在准备数据...' })
+  try {
+    const params = {}
+    const hideStatusId = localStorage.getItem('employee_hide_status_id')
+    if (hideStatusId) params.hide_status_id = Number(hideStatusId)
+    await api.post(`/social-insurance/ensure-records/${periodDate.value}`, null, { params })
+    await fetchData()
+    return true
+  } catch (e) {
+    ElMessage.error('准备数据失败：' + (e.response?.data?.detail || e.message))
+    return false
+  } finally {
+    loading.close()
+  }
+}
+
+async function toggleEditMode() {
   try {
     if (editMode.value) {
       editMode.value = false
@@ -971,6 +994,8 @@ function toggleEditMode() {
       }
       return
     }
+    const ok = await ensureRecordsExist()
+    if (!ok) return
     initEditCache()
     editMode.value = true
     changedSet.value = new Set()
@@ -994,14 +1019,21 @@ function confirmEdits() {
     return
   }
 
+  function findRowByCacheKey(key) {
+    const numKey = Number(key)
+    if (!isNaN(numKey)) return records.value.find(r => r.id === numKey)
+    const empId = parseInt(key.replace('_emp_', ''), 10)
+    return records.value.find(r => r.employee_id === empId)
+  }
+
   const items = []
-  changedSet.value.forEach(id => {
-    const row = records.value.find(r => r.id === id)
+  changedSet.value.forEach(cacheKey => {
+    const row = findRowByCacheKey(cacheKey)
     if (!row) return
     const changes = []
     editFields.forEach(f => {
       const oldVal = row[f] ?? 0
-      const newVal = editCache[id]?.[f] ?? 0
+      const newVal = editCache[cacheKey]?.[f] ?? 0
       if (Math.abs(oldVal - newVal) > 0.001) {
         changes.push({
           field: f,
@@ -1012,7 +1044,7 @@ function confirmEdits() {
       }
     })
     if (changes.length) {
-      items.push({ id, employee_name: row.employee_name, employee_no: row.employee_no, changes })
+      items.push({ cacheKey, id: row.id, employee_id: row.employee_id, employee_name: row.employee_name, employee_no: row.employee_no, changes })
     }
   })
 
@@ -1032,14 +1064,20 @@ async function saveAllEdits() {
 
   try {
     for (const item of confirmList.value) {
-      const cache = editCache[item.id]
+      const cache = editCache[item.cacheKey]
       if (!cache) continue
       const payload = {}
       editFields.forEach(f => {
         payload[f] = cache[f]
       })
       try {
-        await api.put(`/social-insurance/${item.id}`, payload)
+        if (item.id) {
+          await api.put(`/social-insurance/${item.id}`, payload)
+        } else {
+          payload.period = periodDate.value
+          payload.employee_id = item.employee_id
+          await api.post('/social-insurance/', payload)
+        }
         successCount++
       } catch {
         failCount++
@@ -1117,17 +1155,15 @@ function showDialog(row) {
   isEdit.value = !!row
   editId.value = row?.id || null
   formEmployeeId.value = row?.employee_id || null
-  formEmployeeNo.value = row?.employee_no || ''
+  formEmployeeName.value = row?.employee_name || ''
 
   if (row) {
     form.period = row.period || periodDate.value
     form.employee_id = row.employee_id
-    form.employee_social_insurance_no = row.employee_social_insurance_no || ''
     editFields.forEach(f => { form[f] = row[f] ?? 0 })
   } else {
     form.period = periodDate.value
     form.employee_id = null
-    form.employee_social_insurance_no = ''
     editFields.forEach(f => { form[f] = 0 })
   }
   dialogVisible.value = true
@@ -1137,10 +1173,9 @@ function showDialogForEmployee(row) {
   isEdit.value = false
   editId.value = null
   formEmployeeId.value = row.employee_id
-  formEmployeeNo.value = row.employee_no
+  formEmployeeName.value = row.employee_name
   form.period = periodDate.value
   form.employee_id = row.employee_id
-  form.employee_social_insurance_no = ''
   editFields.forEach(f => { form[f] = 0 })
 
   api.get(`/social-insurance/prev-month-data/${periodDate.value}/${row.employee_id}`).then(res => {
@@ -1151,9 +1186,6 @@ function showDialogForEmployee(row) {
           form[f] = prevData[f]
         }
       })
-      if (prevData.employee_social_insurance_no) {
-        form.employee_social_insurance_no = prevData.employee_social_insurance_no
-      }
       ElMessage.info(`已自动预填${res.data.prev_period.substring(0,4)}年${res.data.prev_period.substring(4,6)}月数据，请核对修改`)
     }
   }).catch(() => {})
@@ -1167,7 +1199,6 @@ async function handleSave() {
     const payload = {
       period: periodDate.value,
       employee_id: form.employee_id,
-      employee_social_insurance_no: form.employee_social_insurance_no || null,
     }
     editFields.forEach(f => { payload[f] = form[f] })
 
@@ -1422,8 +1453,14 @@ async function handleExport() {
 }
 
 onMounted(() => {
+  updateTableHeight()
+  window.addEventListener('resize', updateTableHeight)
   fetchData()
   checkBatchExecute()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateTableHeight)
 })
 
 // 检查是否从模板配置向导返回，需要执行批量导入
@@ -1457,6 +1494,9 @@ async function checkBatchExecute() {
 }
 :deep(.row-changed) {
   background-color: #fef3c7 !important;
+}
+:deep(.col-personal-amount) {
+  background-color: #fef9c3 !important;
 }
 .import-tabs {
   box-shadow: none;

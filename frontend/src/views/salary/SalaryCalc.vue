@@ -3,10 +3,9 @@
     <div class="apple-card p-6">
       <div class="flex items-center justify-between mb-4 salary-toolbar">
         <div class="flex items-center gap-2">
-          <h3 class="text-base font-semibold text-gray-700 shrink-0">薪资核算</h3>
+          <h3 class="text-base font-semibold text-gray-700 shrink-0">薪资计算</h3>
           <el-date-picker v-model="periodDate" type="month" placeholder="选择月份" class="!w-28 shrink-0" size="small" value-format="YYYYMM" @change="onPeriodChange" />
           <el-select v-model="filterField" placeholder="字段" class="!w-20 shrink-0" size="small">
-            <el-option label="工号" value="employee_no" />
             <el-option label="姓名" value="employee_name" />
           </el-select>
           <el-input v-model="filterValue" placeholder="筛选" clearable class="!w-24 shrink-0" size="small" @input="fetchResults" />
@@ -27,7 +26,9 @@
           </template>
           <el-button type="danger" size="small" :disabled="!hasResults || isSubmitting" @click="batchSubmitApproval">审核</el-button>
           <el-button type="info" size="small" :disabled="!hasResults" @click="handleExport">导出</el-button>
-          <el-button type="danger" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">删除</el-button>
+          <el-button type="danger" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">
+            删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
+          </el-button>
           <el-button type="warning" size="small" :disabled="!hasResults" @click="showTaxImport">报税导入</el-button>
           <el-button type="success" size="small" :disabled="!hasResults" @click="handleExportTaxTemplate">导出报税模板</el-button>
           <ColumnSetting
@@ -36,42 +37,6 @@
             v-model="salaryVisibleColumns"
             storage-key="salary_table_columns"
           />
-        </div>
-      </div>
-
-      <div v-if="summary" class="grid grid-cols-4 gap-4 mb-4">
-        <div class="bg-blue-50 rounded-xl p-4 text-center">
-          <div class="text-2xl font-bold text-blue-600">{{ summary.total_employees }}</div>
-          <div class="text-sm text-gray-500">参与员工数</div>
-        </div>
-        <div class="bg-green-50 rounded-xl p-4 text-center">
-          <div class="text-2xl font-bold text-green-600">{{ summary.success_count }}</div>
-          <div class="text-sm text-gray-500">核算成功</div>
-        </div>
-        <div class="bg-orange-50 rounded-xl p-4 text-center">
-          <div class="text-2xl font-bold text-orange-600">{{ (summary.total_gross_salary / 10000).toFixed(2) }}万</div>
-          <div class="text-sm text-gray-500">总应发工资</div>
-        </div>
-        <div class="bg-purple-50 rounded-xl p-4 text-center">
-          <div class="text-2xl font-bold text-purple-600">{{ (summary.avg_gross_salary / 10000).toFixed(2) }}万</div>
-          <div class="text-sm text-gray-500">人均应发工资</div>
-        </div>
-      </div>
-
-      <div v-if="completeness" class="mb-4">
-        <div class="flex gap-4 text-sm">
-          <span class="text-green-600">✅ 完整: {{ completeness.complete_count }}人</span>
-          <span class="text-red-600">❌ 缺失: {{ completeness.missing_count }}人</span>
-          <span class="text-yellow-600">⚠️ 待补充: {{ completeness.optional_missing_count }}人</span>
-        </div>
-        <div v-for="src in completeness.sources" :key="src.source_key" class="flex items-center gap-2 mt-2 text-sm">
-          <span :class="src.status === '完整' ? 'text-green-600' : src.status === '可选数据' ? 'text-blue-500' : 'text-red-600'">
-            {{ src.status === '完整' ? '✅' : src.status === '可选数据' ? 'ℹ️' : '❌' }}
-          </span>
-          <span class="text-gray-600">{{ src.source_name }}: {{ src.count }}条</span>
-          <span v-if="src.missing_employees.length" class="text-red-500">
-            缺失: {{ src.missing_employees.join(', ') }}
-          </span>
         </div>
       </div>
 
@@ -103,8 +68,9 @@
           {{ formulaVisible ? '收起公式' : '查看计算公式' }}
         </el-button>
       </div>
-      <el-table :data="results" border stripe max-height="500" v-loading="loading" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
+      <el-table :data="results" border stripe :max-height="tableMaxHeight" v-loading="loading" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
         <el-table-column v-if="isSalaryColumnVisible('__selection')" type="selection" width="55" />
+        <el-table-column v-if="isSalaryColumnVisible('__index')" type="index" label="序号" width="50" fixed="left" />
         <el-table-column
           v-for="col in visibleSalaryColumns"
           :key="col.key"
@@ -140,7 +106,10 @@
               />
             </template>
             <template v-else>
-              <template v-if="col.type === 'percent'">
+              <template v-if="col.key === 'contract_company'">
+                <span :class="row.record_type === 'contract' ? 'text-orange-600 font-medium' : 'text-blue-600 font-medium'">{{ row[col.key] || '' }}</span>
+              </template>
+              <template v-else-if="col.type === 'percent'">
                 {{ row[col.key] != null ? (row[col.key] * 100).toFixed(1) + '%' : '' }}
               </template>
               <template v-else-if="col.type === 'money'">
@@ -167,8 +136,8 @@
     <el-dialog v-model="editConfirmVisible" title="确认修改内容" width="700px" append-to-body>
       <div class="text-sm text-gray-600 mb-3">以下 {{ changedRows.length }} 条记录发生了修改，确认后将重新计算应发/实发工资：</div>
       <el-table :data="changedRows" border stripe max-height="400" size="small">
+        <el-table-column type="index" label="序号" width="50" />
         <el-table-column prop="employee_name" label="员工" width="80" />
-        <el-table-column prop="employee_no" label="编号" width="80" />
         <el-table-column label="修改字段" min-width="200">
           <template #default="{ row }">
             <div v-for="(chg, idx) in row.changes" :key="idx" class="text-sm">
@@ -259,7 +228,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { Download, Delete, UploadFilled, Setting } from '@element-plus/icons-vue'
 import api from '../../api'
@@ -313,18 +282,23 @@ const savingEdits = ref(false)
 const loading = ref(false)
 const isSubmitting = ref(false)
 const completeness = ref(null)
-const summary = ref(null)
 const results = ref([])
 const selectedRows = ref([])
 const formulaVisible = ref(false)
+const tableMaxHeight = ref(500)
+
+function updateTableHeight() {
+  tableMaxHeight.value = Math.max(400, window.innerHeight - 260)
+}
 
 const SALARY_TABLE_COLUMNS = [
   { key: '__selection', label: '选择', required: true },
-  ...SALARY_COLUMNS.map(c => ({ key: c.key, label: c.label, required: ['employee_no', 'employee_name', 'gross_salary', 'net_salary'].includes(c.key) }))
+  { key: '__index', label: '序号', required: true },
+  ...SALARY_COLUMNS.map(c => ({ key: c.key, label: c.label, required: ['contract_company', 'employee_name', 'gross_salary', 'net_salary'].includes(c.key) }))
 ]
 
 const SALARY_DEFAULT_VISIBLE = [
-  '__selection', 'employee_no', 'employee_name', 'department', 'base_salary',
+  '__selection', '__index', 'contract_company', 'employee_name', 'department', 'base_salary',
   'performance_standard', 'actual_performance', 'effective_performance',
   'allowance_total', 'gross_salary', 'si_hf_total', 'tax_deduction', 'net_salary'
 ]
@@ -378,8 +352,11 @@ async function ensureRecordsExist() {
 }
 
 function tableRowClassName({ row }) {
-  if (editMode.value && row.id && changedSet[row.id]) return 'row-changed'
-  return ''
+  const classes = []
+  if (editMode.value && row.id && changedSet[row.id]) classes.push('row-changed')
+  if (row.record_type === 'contract') classes.push('row-contract-company')
+  if (row.record_type === 'payroll') classes.push('row-payroll-company')
+  return classes.join(' ')
 }
 
 function initEditCache() {
@@ -585,10 +562,17 @@ async function fetchResults() {
     const res = await api.get(`/salary/results/${periodDate.value}`, { params })
     let data = res.data
     
+    data.sort((a, b) => {
+      if (a.employee_id !== b.employee_id) {
+        return (a.employee_id || 0) - (b.employee_id || 0)
+      }
+      const typeOrder = { contract: 0, single: 1, payroll: 2 }
+      return (typeOrder[a.record_type] ?? 1) - (typeOrder[b.record_type] ?? 1)
+    })
+    
     if (filterField.value && filterValue.value) {
       const fv = filterValue.value.toLowerCase()
       data = data.filter(r => {
-        if (filterField.value === 'employee_no') return (r.employee_no || '').toLowerCase().includes(fv)
         if (filterField.value === 'employee_name') return (r.employee_name || '').toLowerCase().includes(fv)
         return true
       })
@@ -712,7 +696,13 @@ async function handleBatchDelete() {
 }
 
 onMounted(() => {
+  updateTableHeight()
+  window.addEventListener('resize', updateTableHeight)
   fetchResults()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateTableHeight)
 })
 
 const taxImportVisible = ref(false)
@@ -893,6 +883,21 @@ async function doTaxImport() {
 }
 :deep(.row-changed) {
   background-color: #fef3c7 !important;
+}
+:deep(.row-contract-company) {
+  background-color: #fff7ed !important;
+}
+:deep(.row-contract-company:hover) > td {
+  background-color: #ffedd5 !important;
+}
+:deep(.row-contract-company) td:first-child {
+  border-left: 3px solid #f97316;
+}
+:deep(.row-payroll-company) {
+  background-color: #ffffff !important;
+}
+:deep(.row-payroll-company:hover) > td {
+  background-color: #f5f5f5 !important;
 }
 :deep(.col-summary) {
   background-color: #fef9c3 !important;

@@ -1,7 +1,7 @@
 <template>
   <template v-if="!dialogVisible">
     <div class="apple-card p-6">
-      <div class="flex items-center gap-1.5 mb-4 flex-wrap">
+      <div class="flex items-center gap-1.5 mb-4 flex-wrap toolbar-sticky">
         <h3 class="text-lg font-semibold text-gray-700 shrink-0 mr-1">员工档案管理</h3>
         <el-select v-model="filterField" placeholder="筛选字段" size="small" class="!w-24" @change="onFilterChange">
           <el-option label="姓名" value="name" />
@@ -53,108 +53,26 @@
         </template>
       </div>
 
-      <el-table :data="employees" border stripe v-loading="loading" class="w-full" @selection-change="handleSelectionChange">
+      <el-table :data="employees" border stripe v-loading="loading" class="w-full" :max-height="tableMaxHeight" @selection-change="handleSelectionChange">
         <el-table-column v-if="isColumnVisible('selection')" type="selection" width="55" />
         <el-table-column v-if="isColumnVisible('employee_no')" prop="employee_no" label="员工编号" width="100" fixed />
-        <el-table-column v-if="isColumnVisible('name')" prop="name" label="姓名" width="100" fixed>
-          <template #default="{ row }">
-            <template v-if="editMode">
-              <el-input v-model="editCache[row.id].name" size="small" class="cell-input" @change="markChanged(row.id)" />
-            </template>
-            <template v-else>{{ row.name }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="isColumnVisible('gender')" prop="gender" label="性别" width="70">
-          <template #default="{ row }">
-            <template v-if="editMode">
-              <el-select v-model="editCache[row.id].gender" size="small" class="cell-select" @change="markChanged(row.id)">
-                <el-option label="男" value="男" />
-                <el-option label="女" value="女" />
-              </el-select>
-            </template>
-            <template v-else>{{ row.gender }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="isColumnVisible('contract_company_name')" prop="contract_company_name" label="合同公司" width="110">
-          <template #default="{ row }">
-            <template v-if="editMode">
-              <el-select v-model="editCache[row.id].contract_company_id" size="small" class="cell-select" @change="markChanged(row.id)">
-                <el-option v-for="c in companies" :key="c.id" :label="c.name" :value="c.id" />
-              </el-select>
-            </template>
-            <template v-else>{{ row.contract_company_name }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="isColumnVisible('department_name')" prop="department_name" label="部门" width="100">
-          <template #default="{ row }">
-            <template v-if="editMode">
-              <el-select v-model="editCache[row.id].department_id" size="small" class="cell-select" @change="markChanged(row.id)">
-                <el-option v-for="d in enabledDepartments" :key="d.id" :label="d.name" :value="d.id" />
-              </el-select>
-            </template>
-            <template v-else>{{ row.department_name }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="isColumnVisible('position_name')" prop="position_name" label="职务" width="90">
-          <template #default="{ row }">
-            <template v-if="editMode">
-              <el-select v-model="editCache[row.id].position_id" size="small" class="cell-select" @change="markChanged(row.id)">
-                <el-option v-for="p in positions" :key="p.id" :label="p.name" :value="p.id" />
-              </el-select>
-            </template>
-            <template v-else>{{ row.position_name }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="isColumnVisible('status_name')" prop="status_name" label="状态" width="80">
-          <template #default="{ row }">
-            <template v-if="editMode">
-              <el-select v-model="editCache[row.id].status_id" size="small" class="cell-select" @change="markChanged(row.id)">
-                <el-option v-for="s in statuses" :key="s.id" :label="s.name" :value="s.id" />
-              </el-select>
-            </template>
-            <template v-else>{{ row.status_name }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="isColumnVisible('cost_owner')" prop="cost_owner" label="费用负责人" width="100">
-          <template #default="{ row }">
-            <template v-if="editMode">
-              <el-input v-model="editCache[row.id].cost_owner" size="small" class="cell-input" @change="markChanged(row.id)" />
-            </template>
-            <template v-else>{{ row.cost_owner }}</template>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="isColumnVisible('phone')" prop="phone" label="联系电话" width="120">
-          <template #default="{ row }">
-            <template v-if="editMode">
-              <el-input v-model="editCache[row.id].phone" size="small" class="cell-input" @change="markChanged(row.id)" />
-            </template>
-            <template v-else>{{ row.phone }}</template>
-          </template>
-        </el-table-column>
+        <el-table-column v-if="isColumnVisible('name')" prop="name" label="姓名" width="100" fixed />
+        <el-table-column v-if="isColumnVisible('gender')" prop="gender" label="性别" width="70" />
+        <el-table-column v-if="isColumnVisible('contract_company_name')" prop="contract_company_name" label="合同公司" width="110" />
+        <el-table-column v-if="isColumnVisible('department_name')" prop="department_name" label="部门" width="100" />
+        <el-table-column v-if="isColumnVisible('position_name')" prop="position_name" label="职务" width="90" />
+        <el-table-column v-if="isColumnVisible('status_name')" prop="status_name" label="状态" width="80" />
+        <el-table-column v-if="isColumnVisible('cost_owner')" prop="cost_owner" label="费用负责人" width="100" />
+        <el-table-column v-if="isColumnVisible('phone')" prop="phone" label="联系电话" width="120" />
         <el-table-column v-if="isColumnVisible('home_address')" prop="home_address" label="家庭住址" width="180">
           <template #default="{ row }">
-            <template v-if="editMode">
-              <el-input v-model="editCache[row.id].home_address" size="small" class="cell-input" @change="markChanged(row.id)" />
-            </template>
-            <template v-else>
-              <span class="text-ellipsis">{{ row.home_address }}</span>
-            </template>
+            <span class="text-ellipsis">{{ row.home_address }}</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="isColumnVisible('entry_date')" prop="entry_date" label="入职时间" width="120">
-          <template #default="{ row }">
-            <template v-if="editMode">
-              <el-date-picker v-model="editCache[row.id].entry_date" type="date" size="small" class="cell-date" value-format="YYYY-MM-DD" @change="markChanged(row.id)" />
-            </template>
-            <template v-else>{{ row.entry_date }}</template>
-          </template>
-        </el-table-column>
+        <el-table-column v-if="isColumnVisible('entry_date')" prop="entry_date" label="入职时间" width="120" />
         <el-table-column v-if="isColumnVisible('regular_date')" prop="regular_date" label="转正时间" width="120">
           <template #default="{ row }">
-            <template v-if="editMode">
-              <el-date-picker v-model="editCache[row.id].regular_date" type="date" size="small" class="cell-date" value-format="YYYY-MM-DD" @change="markChanged(row.id)" />
-            </template>
-            <template v-else>{{ row.regular_date || '' }}</template>
+            {{ row.regular_date || '' }}
           </template>
         </el-table-column>
         <el-table-column v-if="isColumnVisible('base_salary')" prop="base_salary" label="基本工资" width="100">
@@ -637,7 +555,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Download, Upload, Delete, ArrowLeft, Refresh } from '@element-plus/icons-vue'
 import api from '../../api'
@@ -679,6 +597,11 @@ const editCache = reactive({})
 const changedSet = ref(new Set())
 const confirmVisible = ref(false)
 const confirmList = ref([])
+const tableMaxHeight = ref(500)
+
+function updateTableHeight() {
+  tableMaxHeight.value = Math.max(400, window.innerHeight - 260)
+}
 
 const TABLE_COLUMNS = [
   { key: 'selection', label: '选择', required: true },
@@ -747,18 +670,13 @@ function isColumnVisible(key) {
   return visibleColumns.value.includes(key)
 }
 
+// 编辑模式下仅可编辑工资项目字段（非钉钉同步字段）
+const salaryEditFields = [
+  'base_salary', 'performance_standard', 'meal_allowance', 'transport_allowance',
+  'communication_allowance', 'computer_allowance', 'housing_allowance', 'salary_effective_date'
+]
+
 const fieldLabels = {
-  name: '姓名',
-  gender: '性别',
-  contract_company_id: '合同公司',
-  department_id: '部门',
-  position_id: '职务',
-  status_id: '状态',
-  cost_owner: '费用负责人',
-  phone: '联系电话',
-  home_address: '家庭住址',
-  entry_date: '入职时间',
-  regular_date: '转正时间',
   base_salary: '基本工资',
   performance_standard: '绩效标准',
   meal_allowance: '餐补',
@@ -769,7 +687,6 @@ const fieldLabels = {
   salary_effective_date: '薪资生效日'
 }
 
-const dictFields = ['contract_company_id', 'department_id', 'position_id', 'status_id']
 
 const form = reactive({
   name: '', gender: '男', id_card: '', phone: '', email: '', work_place: '',
@@ -853,17 +770,6 @@ function initEditCache() {
   for (const emp of employees.value) {
     if (!emp || !emp.id) continue
     editCache[emp.id] = reactive({
-      name: emp.name,
-      gender: emp.gender,
-      contract_company_id: emp.contract_company_id,
-      department_id: emp.department_id,
-      position_id: emp.position_id,
-      status_id: emp.status_id,
-      cost_owner: emp.cost_owner || '',
-      phone: emp.phone || '',
-      home_address: emp.home_address || '',
-      entry_date: emp.entry_date || '',
-      regular_date: emp.regular_date || '',
       base_salary: emp.base_salary != null ? emp.base_salary : 0,
       performance_standard: emp.performance_standard != null ? emp.performance_standard : 0,
       meal_allowance: emp.meal_allowance != null ? emp.meal_allowance : 0,
@@ -876,14 +782,6 @@ function initEditCache() {
   }
 }
 
-function getDictName(category, id) {
-  if (id == null) return ''
-  const map = { contract_company: companies, department: departments, position: positions, employee_status: statuses }
-  const list = map[category] || []
-  const item = list.find(d => d.id === id)
-  return item ? item.name : String(id)
-}
-
 function monthlyStandard(row) {
   const base = Number(row.base_salary) || 0
   const perf = Number(row.performance_standard) || 0
@@ -894,20 +792,6 @@ function monthlyStandard(row) {
   const housing = Number(row.housing_allowance) || 0
   const total = base + perf + meal + transport + comm + computer + housing
   return total.toFixed(2)
-}
-
-function getFieldDisplayValue(emp, field) {
-  if (dictFields.includes(field)) {
-    const categoryMap = {
-      contract_company_id: 'contract_company',
-      department_id: 'department',
-      position_id: 'position',
-      status_id: 'employee_status'
-    }
-    return getDictName(categoryMap[field], emp[field])
-  }
-  const val = emp[field]
-  return val != null ? String(val) : ''
 }
 
 function toggleEditMode() {
@@ -948,8 +832,7 @@ function markChanged(empId) {
   if (!cache) return
 
   let hasChange = false
-  const fields = Object.keys(fieldLabels)
-  for (const field of fields) {
+  for (const field of salaryEditFields) {
     const oldVal = emp[field]
     const newVal = cache[field]
     if (oldVal == null && (newVal === '' || newVal === 0)) continue
@@ -988,8 +871,7 @@ function confirmEdits() {
     if (!emp || !cache) continue
 
     const changes = []
-    const fields = Object.keys(fieldLabels)
-    for (const field of fields) {
+    for (const field of salaryEditFields) {
       const oldVal = emp[field]
       const newVal = cache[field]
       if (oldVal == null && (newVal === '' || newVal === 0)) continue
@@ -998,11 +880,8 @@ function confirmEdits() {
         changes.push({
           field,
           label: fieldLabels[field],
-          old: getFieldDisplayValue(emp, field),
-          new: dictFields.includes(field) ? getDictName(
-            { contract_company_id: 'contract_company', department_id: 'department', position_id: 'position', status_id: 'employee_status' }[field],
-            newVal
-          ) : String(newVal ?? '')
+          old: oldVal != null ? (typeof oldVal === 'number' ? oldVal.toFixed(2) : String(oldVal)) : '(空)',
+          new: newVal != null ? (typeof newVal === 'number' ? newVal.toFixed(2) : String(newVal)) : '(空)'
         })
       }
     }
@@ -1020,74 +899,37 @@ async function saveAllEdits() {
   let successCount = 0
   let failCount = 0
 
-  // 预校验：检查是否有员工被分配到已禁用的部门
-  const disabledDeptIds = new Set(
-    departments.value.filter(d => d.is_enabled === false).map(d => d.id)
-  )
-  const invalidItems = []
-  for (const item of confirmList.value) {
-    const cache = editCache[item.id]
-    if (cache.department_id && disabledDeptIds.has(cache.department_id)) {
-      const deptName = departments.value.find(d => d.id === cache.department_id)?.name || '未知'
-      invalidItems.push(`「${item.name}」的部门「${deptName}」已被禁用`)
-    }
-  }
-  if (invalidItems.length > 0) {
-    ElMessage.error('以下员工的部门已被禁用，无法保存：\n' + invalidItems.join('；'))
-    savingEdits.value = false
-    return
-  }
-
   try {
     for (const item of confirmList.value) {
       try {
         const cache = editCache[item.id]
+        // 更新员工薪资字段
         const empPayload = {
-          name: cache.name,
-          gender: cache.gender,
-          contract_company_id: cache.contract_company_id,
-          department_id: cache.department_id,
-          position_id: cache.position_id,
-          status_id: cache.status_id,
-          cost_owner: cache.cost_owner || null,
-          phone: cache.phone || null,
-          home_address: cache.home_address || null,
-          entry_date: cache.entry_date || null,
-          regular_date: cache.regular_date || null
+          base_salary: cache.base_salary,
+          performance_standard: cache.performance_standard,
+          meal_allowance: cache.meal_allowance,
+          transport_allowance: cache.transport_allowance,
+          communication_allowance: cache.communication_allowance,
+          computer_allowance: cache.computer_allowance,
+          housing_allowance: cache.housing_allowance,
+          salary_effective_date: cache.salary_effective_date || null
         }
         await api.put(`/employees/${item.id}`, empPayload)
 
-        const emp = employees.value.find(e => e.id === item.id)
-        const salaryFields = ['base_salary', 'performance_standard', 'meal_allowance', 'transport_allowance', 'communication_allowance', 'computer_allowance', 'housing_allowance']
-        let salaryChanged = false
-        for (const f of salaryFields) {
-          const oldV = emp[f]
-          const newV = cache[f]
-          if (oldV == null && (newV === 0 || newV === '')) continue
-          if (String(oldV ?? '') !== String(newV ?? '')) {
-            salaryChanged = true
-            break
-          }
+        // 创建薪资历史记录
+        const salaryData = {
+          employee_id: item.id,
+          base_salary: cache.base_salary,
+          performance_standard: cache.performance_standard,
+          meal_allowance: cache.meal_allowance,
+          transport_allowance: cache.transport_allowance,
+          communication_allowance: cache.communication_allowance,
+          computer_allowance: cache.computer_allowance,
+          housing_allowance: cache.housing_allowance,
+          effective_date: cache.salary_effective_date || new Date().toISOString().slice(0, 10),
+          change_reason: '内联编辑批量修改'
         }
-        if (String(emp.salary_effective_date ?? '') !== String(cache.salary_effective_date ?? '')) {
-          salaryChanged = true
-        }
-
-        if (salaryChanged) {
-          const salaryData = {
-            employee_id: item.id,
-            base_salary: cache.base_salary,
-            performance_standard: cache.performance_standard,
-            meal_allowance: cache.meal_allowance,
-            transport_allowance: cache.transport_allowance,
-            communication_allowance: cache.communication_allowance,
-            computer_allowance: cache.computer_allowance,
-            housing_allowance: cache.housing_allowance,
-            effective_date: cache.salary_effective_date || new Date().toISOString().slice(0, 10),
-            change_reason: '内联编辑批量修改'
-          }
-          await api.post('/employees/salaries', salaryData)
-        }
+        await api.post('/employees/salaries', salaryData)
 
         successCount++
       } catch (e) {
@@ -1476,6 +1318,8 @@ async function doImport() {
 }
 
 onMounted(async () => {
+  updateTableHeight()
+  window.addEventListener('resize', updateTableHeight)
   await fetchDicts()
   // 从 localStorage 恢复偏好设置
   const saved = localStorage.getItem('employee_hide_status_id')
@@ -1484,9 +1328,20 @@ onMounted(async () => {
   }
   fetchData()
 })
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateTableHeight)
+})
 </script>
 
 <style scoped>
+.toolbar-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: inherit;
+  padding-bottom: 4px;
+}
 .action-cell {
   white-space: nowrap;
   display: flex;

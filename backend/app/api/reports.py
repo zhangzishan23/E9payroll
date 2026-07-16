@@ -521,73 +521,91 @@ def export_roster(db: Session = Depends(get_db), current_user: UserInfo = Depend
 
 @router.get("/salary/{period}")
 def export_salary(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    # 获取所有在职员工
     query = db.query(Employee)
     active_employees = _filter_active_without_pending_resign(query, db).order_by(Employee.employee_no).all()
-    active_employee_ids = [emp.id for emp in active_employees]
+    active_emp_map = {emp.id: emp for emp in active_employees}
 
     calcs = db.query(SalaryCalculation).filter(
         SalaryCalculation.period == period,
-        SalaryCalculation.employee_id.in_(active_employee_ids)
-    ).all()
-    
-    calc_map = {c.employee_id: c for c in calcs}
+        SalaryCalculation.employee_id.in_(list(active_emp_map.keys()))
+    ).order_by(SalaryCalculation.employee_id, SalaryCalculation.record_type).all()
+
     dict_name_map = _get_emp_dict_maps(active_employees, db)
 
     wb = Workbook()
-    ws = wb.active
-    ws.title = f"薪资核算表_{period}"
-
+    wb.remove(wb.active)
     headers = [
-        "员工ID", "姓名", "合同公司", "部门", "职务", "成本归属", "状态",
+        "员工ID", "姓名", "合同公司", "发放公司", "记录类型", "部门", "职务", "成本归属", "状态",
         "基本工资", "绩效标准", "绩效系数", "实际绩效",
         "餐补", "交通补", "通讯补", "电脑补", "住房补", "补贴合计",
         "提成/奖金", "税前调整", "税后调整",
         "当月总计薪天数", "实际计薪天数", "出勤率",
-        "总应发工资", "社保个人", "公积金个人", "社保公积金合计",
+        "总应发工资", "养老个人", "失业个人", "医疗个人", "社保个人合计", "公积金个人", "社保公积金合计",
         "上月未报税", "差旅未报税",
         "本月应扣个税", "实发工资", "本月实际工资报税金额",
-        "实发离职补偿金", "未报税补偿金", "未报税年终奖",
-        "核算状态", "数据完整性", "审核状态"
+        "实发离职补偿金", "未报税补偿金", "未报税年终奖", "实发年终奖",
+        "核算状态", "数据完整性", "审核状态", "备注"
     ]
-    ws.append(headers)
 
-    for emp in active_employees:
-        c = calc_map.get(emp.id)
-        if c:
-            ws.append([
-                c.employee_id, emp.name,
-                c.contract_company or "", c.department or "", c.position or "", c.cost_owner or "", c.status or "",
-                float(c.base_salary or 0), float(c.performance_standard or 0),
-                float(c.performance_coefficient or 0), float(c.actual_performance or 0),
-                float(c.meal_allowance or 0), float(c.transport_allowance or 0),
-                float(c.communication_allowance or 0), float(c.computer_allowance or 0),
-                float(c.housing_allowance or 0), float(c.allowance_total or 0),
-                float(c.commission_bonus or 0), float(c.pretax_adjustment or 0),
-                float(c.posttax_adjustment or 0),
-                float(c.total_work_days or 0), float(c.actual_work_days or 0),
-                float(c.attendance_rate or 0),
-                float(c.gross_salary or 0), float(c.social_insurance_personal or 0),
-                float(c.housing_fund_personal or 0), float(c.si_hf_total or 0),
-                float(c.last_month_untaxed or 0), float(c.travel_untaxed or 0),
-                float(c.tax_deduction) if c.tax_deduction is not None else "", float(c.net_salary or 0),
-                float(c.actual_taxable or 0),
-                float(c.severance_pay or 0), float(c.compensation_tax or 0),
-                float(c.year_end_bonus_untaxed or 0),
-                c.calculation_status or "", c.data_completeness or "", c.review_status or ""
-            ])
-        else:
+    company_groups = {}
+    for c in calcs:
+        emp = active_emp_map.get(c.employee_id)
+        if not emp:
+            continue
+        company_name = c.pay_company_name or c.contract_company or "全部"
+        if company_name not in company_groups:
+            company_groups[company_name] = []
+        company_groups[company_name].append((emp, c))
+
+    if not company_groups:
+        ws = wb.create_sheet(f"薪资核算表_{period}")
+        ws.append(headers)
+        for emp in active_employees:
             ws.append([
                 emp.id, emp.name,
-                dict_name_map.get(emp.contract_company_id, ""),
+                dict_name_map.get(emp.contract_company_id, ""), "", "",
                 dict_name_map.get(emp.department_id, ""),
                 dict_name_map.get(emp.position_id, ""),
                 emp.cost_owner or "",
                 dict_name_map.get(emp.status_id, ""),
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                "", "", ""
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                "", "", "", ""
             ])
+    else:
+        sorted_companies = sorted(company_groups.keys(), key=lambda x: (0 if "易玖" in x else 1, x))
+        for company_name in sorted_companies:
+            sheet_name = company_name[:28]
+            ws = wb.create_sheet(sheet_name)
+            ws.append(headers)
+            records = company_groups[company_name]
+            for emp, c in records:
+                record_type_label = {"single": "单条", "contract": "合同公司", "payroll": "发放公司"}.get(c.record_type or "single", c.record_type)
+                ws.append([
+                    c.employee_id, emp.name,
+                    c.contract_company or "", c.pay_company_name or "", record_type_label,
+                    c.department or "", c.position or "", c.cost_owner or "", c.status or "",
+                    float(c.base_salary or 0), float(c.performance_standard or 0),
+                    float(c.performance_coefficient or 0), float(c.actual_performance or 0),
+                    float(c.meal_allowance or 0), float(c.transport_allowance or 0),
+                    float(c.communication_allowance or 0), float(c.computer_allowance or 0),
+                    float(c.housing_allowance or 0), float(c.allowance_total or 0),
+                    float(c.commission_bonus or 0), float(c.pretax_adjustment or 0),
+                    float(c.posttax_adjustment or 0),
+                    float(c.total_work_days or 0), float(c.actual_work_days or 0),
+                    float(c.attendance_rate or 0),
+                    float(c.gross_salary or 0),
+                    float(c.pension_personal or 0), float(c.unemployment_personal or 0),
+                    float(c.medical_personal or 0), float(c.social_insurance_personal or 0),
+                    float(c.housing_fund_personal or 0), float(c.si_hf_total or 0),
+                    float(c.last_month_untaxed or 0), float(c.travel_untaxed or 0),
+                    float(c.tax_deduction) if c.tax_deduction is not None else "", float(c.net_salary or 0),
+                    float(c.actual_taxable or 0),
+                    float(c.severance_pay or 0), float(c.compensation_tax or 0),
+                    float(c.year_end_bonus_untaxed or 0), float(c.year_end_bonus_net or 0),
+                    c.calculation_status or "", c.data_completeness or "", c.review_status or "",
+                    c.remark or ""
+                ])
 
     output = io.BytesIO()
     wb.save(output)
@@ -713,6 +731,7 @@ SALARY_FIELDS = [
     {"key": "severance_pay", "label": "实发离职补偿金", "width": 100},
     {"key": "compensation_tax", "label": "未报税补偿金", "width": 100},
     {"key": "year_end_bonus_untaxed", "label": "未报税年终奖", "width": 100},
+    {"key": "year_end_bonus_net", "label": "实发年终奖", "width": 100},
     {"key": "remark", "label": "备注", "width": 200},
 ]
 
@@ -1056,6 +1075,7 @@ def _build_salary_row_data(emp, calc, dict_name_map):
         row_data["posttax_adjustment_reason"] = getattr(calc, 'posttax_adjustment_reason', "") or ""
         row_data["severance_pay"] = _safe_float(getattr(calc, 'severance_pay', 0))
         row_data["year_end_bonus_untaxed"] = _safe_float(getattr(calc, 'year_end_bonus_untaxed', 0))
+        row_data["year_end_bonus_net"] = _safe_float(getattr(calc, 'year_end_bonus_net', 0))
         row_data["net_salary"] = _safe_float(getattr(calc, 'net_salary', 0))
         row_data["last_month_untaxed"] = _safe_float(getattr(calc, 'last_month_untaxed', 0))
         row_data["travel_untaxed"] = _safe_float(getattr(calc, 'travel_untaxed', 0))
@@ -1104,6 +1124,7 @@ def _build_salary_row_data(emp, calc, dict_name_map):
         row_data["posttax_adjustment_reason"] = ""
         row_data["severance_pay"] = 0
         row_data["year_end_bonus_untaxed"] = 0
+        row_data["year_end_bonus_net"] = 0
         row_data["net_salary"] = 0
         row_data["last_month_untaxed"] = 0
         row_data["travel_untaxed"] = 0

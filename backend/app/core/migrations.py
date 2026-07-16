@@ -19,6 +19,7 @@ def run_migrations():
         _run_salary_nullable_migration()
     _run_salary_export_migrations()
     _run_attendance_lock_migrations()
+    _run_salary_split_migrations()
 
 
 def _run_pg_migrations():
@@ -289,6 +290,7 @@ def _run_salary_export_migrations():
         ("pretax_adjustment_reason", "VARCHAR(200)"),
         ("severance_pay", "DECIMAL(10, 2) DEFAULT 0"),
         ("year_end_bonus_untaxed", "DECIMAL(10, 2) DEFAULT 0"),
+        ("year_end_bonus_net", "DECIMAL(10, 2)"),
         ("salary_after_si_hf", "DECIMAL(10, 2) DEFAULT 0"),
         ("remark", "VARCHAR(500)"),
     ]
@@ -344,3 +346,40 @@ def _run_attendance_lock_migrations():
                 conn.execute(text(
                     f"ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
                 ))
+
+
+def _run_salary_split_migrations():
+    """为薪资表添加工资拆分相关字段：pay_company_id, pay_company_name, record_type"""
+    is_sqlite = "sqlite" in DATABASE_URL
+    salary_split_columns = [
+        ("pay_company_id", "INTEGER"),
+        ("pay_company_name", "VARCHAR(100) DEFAULT ''"),
+        ("record_type", "VARCHAR(20) DEFAULT 'single'"),
+    ]
+
+    with engine.begin() as conn:
+        if is_sqlite:
+            result = conn.execute(text("PRAGMA table_info(salary_calculations)"))
+            existing_cols = {row[1] for row in result.fetchall()}
+            for col_name, col_def in salary_split_columns:
+                if col_name not in existing_cols:
+                    conn.execute(text(
+                        f"ALTER TABLE salary_calculations ADD COLUMN {col_name} {col_def}"
+                    ))
+        else:
+            for col_name, col_def in salary_split_columns:
+                conn.execute(text(
+                    f"ALTER TABLE salary_calculations ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
+                ))
+            conn.execute(text("COMMENT ON COLUMN salary_calculations.pay_company_id IS '发放公司ID'"))
+            conn.execute(text("COMMENT ON COLUMN salary_calculations.pay_company_name IS '发放公司名称'"))
+            conn.execute(text("COMMENT ON COLUMN salary_calculations.record_type IS '记录类型: single=单条不拆分, contract=合同公司记录, payroll=实际发放公司记录'"))
+
+            try:
+                conn.execute(text("ALTER TABLE salary_calculations DROP CONSTRAINT IF EXISTS uix_period_emp"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uix_salary_period_emp_company ON salary_calculations (period, employee_id, pay_company_id)"))
+            except Exception:
+                pass

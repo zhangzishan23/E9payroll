@@ -1,5 +1,4 @@
 export const SOCIAL_INSURANCE_COLUMNS = [
-  { key: 'employee_no', label: '员工编号', width: 90, type: 'text' },
   { key: 'employee_name', label: '姓名', width: 70, type: 'text' },
   { key: 'contract_company', label: '合同公司', width: 120, type: 'text' },
   { key: 'department', label: '部门', width: 90, type: 'text' },

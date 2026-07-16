@@ -56,6 +56,13 @@
           />
         </template>
       </el-table-column>
+      <el-table-column v-if="category === 'contract_company'" label="工资拆分" width="180">
+        <template #default="{ row }">
+          <el-tag :type="getSplitConfig(row) === 'none' ? 'info' : 'warning'" size="small">
+            {{ getSplitConfigText(row) }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
           <el-button type="primary" link size="small" @click="showDialog(row)">编辑</el-button>
@@ -94,6 +101,20 @@
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.is_enabled" />
+        </el-form-item>
+        <el-form-item v-if="category === 'contract_company'" label="工资拆分">
+          <el-select v-model="form.salary_split_target" placeholder="选择拆分目标公司" clearable class="w-full">
+            <el-option label="不拆分（工资在本公司发放报税）" value="none" />
+            <el-option
+              v-for="c in contractCompanyOptions"
+              :key="c.id"
+              :label="`拆分到 ${c.name}`"
+              :value="c.id"
+            />
+          </el-select>
+          <div class="text-xs text-gray-400 mt-1">
+            若本公司员工工资需要拆分到其他公司发放报税，在此选择目标公司。社保公积金部分保留在本公司。
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -250,7 +271,32 @@ const uploadRef = ref(null)
 
 const syncingDepts = ref(false)
 
-const form = reactive({ code: '', name: '', sort_order: 0, is_enabled: true, parent_id: null })
+const form = reactive({ code: '', name: '', sort_order: 0, is_enabled: true, parent_id: null, salary_split_target: null })
+
+const contractCompanyOptions = computed(() => {
+  if (category.value !== 'contract_company') return []
+  return items.value.filter(i => i.is_enabled && i.id !== editId.value)
+})
+
+function getSplitConfig(row) {
+  const extra = row.extra || {}
+  const split = extra.salary_split_target
+  if (split === 'none') return 'none'
+  if (split) return split
+  if (row.name.includes('北京易玖') || row.name.includes('上海瑞方')) return 'none'
+  return 'yijiu_default'
+}
+
+function getSplitConfigText(row) {
+  const config = getSplitConfig(row)
+  if (config === 'none') return '不拆分'
+  if (config === 'yijiu_default') {
+    const yijiu = items.value.find(i => i.name.includes('北京易玖智能科技有限公司') && !i.name.includes('分公司'))
+    return yijiu ? `拆分到 ${yijiu.name}` : '拆分到易玖'
+  }
+  const target = items.value.find(i => i.id === Number(config))
+  return target ? `拆分到 ${target.name}` : '未配置'
+}
 
 function onCategoryChange() {
   expandAll.value = false
@@ -292,12 +338,14 @@ function showDialog(row) {
   isEdit.value = !!row
   editId.value = row?.id || null
   if (row) {
+    const extra = row.extra || {}
     Object.assign(form, {
       code: row.code,
       name: row.name,
       sort_order: row.sort_order,
       is_enabled: row.is_enabled,
-      parent_id: row.parent_id || null
+      parent_id: row.parent_id || null,
+      salary_split_target: extra.salary_split_target ?? null
     })
   } else {
     Object.assign(form, {
@@ -305,7 +353,8 @@ function showDialog(row) {
       name: '',
       sort_order: items.value.length + 1,
       is_enabled: true,
-      parent_id: null
+      parent_id: null,
+      salary_split_target: null
     })
   }
   dialogVisible.value = true
@@ -314,13 +363,22 @@ function showDialog(row) {
 async function handleSave() {
   saving.value = true
   try {
+    const extra = {}
+    if (category.value === 'contract_company') {
+      if (form.salary_split_target && form.salary_split_target !== 'none') {
+        extra.salary_split_target = form.salary_split_target
+      } else {
+        extra.salary_split_target = 'none'
+      }
+    }
     const data = {
       category: category.value,
       code: form.code,
       name: form.name,
       sort_order: form.sort_order,
       is_enabled: form.is_enabled,
-      parent_id: form.parent_id || null
+      parent_id: form.parent_id || null,
+      extra: Object.keys(extra).length > 0 ? extra : null
     }
     if (isEdit.value) {
       await api.put(`/system/dict/${editId.value}`, data)

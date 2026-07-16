@@ -1520,10 +1520,18 @@ def sync_attendance_to_db(db_session, period: str) -> dict:
             )
 
             # upsert（注意：跳过已锁定的字段和整行锁定的记录）
-            existing = db_session.query(AttendanceRecord).filter(
+            # 先查询是否有重复记录，清理旧记录只保留最新的
+            existing_records = db_session.query(AttendanceRecord).filter(
                 AttendanceRecord.period == period,
                 AttendanceRecord.employee_id == emp.id,
-            ).first()
+            ).order_by(AttendanceRecord.id.desc()).all()
+
+            existing = existing_records[0] if existing_records else None
+            
+            # 如果有重复记录，删除旧的（保留最新的一条）
+            if len(existing_records) > 1:
+                for old_rec in existing_records[1:]:
+                    db_session.delete(old_rec)
 
             if existing:
                 row_locked = existing.is_row_locked or False
@@ -2453,24 +2461,33 @@ def check_missed_punch_applies(
     start_ts = int(start_dt.timestamp() * 1000)
     end_ts = int(end_dt.timestamp() * 1000)
     
-    # 1. 查询该月份有缺卡记录的员工（按员工去重，避免同一员工多条记录重复显示）
+    # 1. 查询该月份有缺卡记录的员工（每个员工只取最新的一条记录）
+    from sqlalchemy import func
+    # 先找到每个员工在该周期的最大ID记录
+    latest_ids = (
+        db_session.query(
+            AttendanceRecord.employee_id,
+            func.max(AttendanceRecord.id).label('max_id')
+        )
+        .filter(AttendanceRecord.period == period)
+        .group_by(AttendanceRecord.employee_id)
+        .subquery()
+    )
+    
     records = (
         db_session.query(AttendanceRecord, Employee)
         .join(Employee, AttendanceRecord.employee_id == Employee.id)
+        .join(latest_ids, (AttendanceRecord.employee_id == latest_ids.c.employee_id) & 
+              (AttendanceRecord.id == latest_ids.c.max_id))
         .filter(AttendanceRecord.period == period)
         .all()
     )
     
     employees_with_miss = []
-    seen_employee_ids = set()
     for att, emp in records:
-        if emp.id in seen_employee_ids:
-            continue
-        seen_employee_ids.add(emp.id)
-        
         half_day = att.half_day_missed_punch or 0
-        absenteeism_days = int(att.absenteeism_days or 0)
-        total_missed = half_day + absenteeism_days * 2
+        absenteeism_days = float(att.absenteeism_days or 0)
+        total_missed = half_day + int(absenteeism_days * 2)
         
         if total_missed <= 0 or absenteeism_days >= 21:
             continue
@@ -2654,6 +2671,7 @@ def apply_missed_punch_write_off(
     返回核销结果统计
     """
     from app.models.models import AttendanceRecord
+    from app.api.attendance import _recalculate_attendance_fields
     
     check_result = check_missed_punch_applies(db_session, period)
     
@@ -2667,35 +2685,52 @@ def apply_missed_punch_write_off(
     updated_count = 0
     updated_employees = []
     for emp_info in to_write_off:
-        att = emp_info["att_record"]
-        if att.is_row_locked:
+        emp_id = emp_info["employee_id"]
+        
+        # 重新查询该员工该周期的所有考勤记录（处理可能的重复记录情况）
+        att_records = (
+            db_session.query(AttendanceRecord)
+            .filter(
+                AttendanceRecord.period == period,
+                AttendanceRecord.employee_id == emp_id
+            )
+            .all()
+        )
+        
+        if not att_records:
             continue
         
-        locked_fields = att.locked_fields or {}
-        if locked_fields.get("half_day_missed_punch") or locked_fields.get("absenteeism_days"):
-            continue
-        
-        # 记录申请单ID
-        existing_ids = att.special_apply_ids or []
-        for apply in emp_info["applies"]:
-            if apply["instance_id"] not in existing_ids:
-                existing_ids.append(apply["instance_id"])
-        
-        # 清零缺卡
-        att.half_day_missed_punch = 0
-        att.absenteeism_days = 0
-        att.special_apply_ids = existing_ids
-        
-        # 添加备注
-        apply_desc = "；".join([a["description"][:50] for a in emp_info["applies"] if a["description"]])
-        existing_remark = att.remark or ""
-        remark_add = f"缺卡已核销（特殊申请审批通过）"
-        if remark_add not in existing_remark:
-            att.remark = (existing_remark + "；" if existing_remark else "") + remark_add
+        for att in att_records:
+            if att.is_row_locked:
+                continue
+            
+            locked_fields = att.locked_fields or {}
+            if locked_fields.get("half_day_missed_punch") or locked_fields.get("absenteeism_days"):
+                continue
+            
+            # 记录申请单ID
+            existing_ids = att.special_apply_ids or []
+            for apply in emp_info["applies"]:
+                if apply["instance_id"] not in existing_ids:
+                    existing_ids.append(apply["instance_id"])
+            
+            # 清零缺卡
+            att.half_day_missed_punch = 0
+            att.absenteeism_days = 0
+            att.special_apply_ids = existing_ids
+            
+            # 添加备注
+            existing_remark = att.remark or ""
+            remark_add = "缺卡已核销（特殊申请审批通过）"
+            if remark_add not in existing_remark:
+                att.remark = (existing_remark + "；" if existing_remark else "") + remark_add
+            
+            # 重新计算考勤相关字段
+            _recalculate_attendance_fields(db_session, att)
         
         updated_count += 1
         updated_employees.append({
-            "employee_id": emp_info["employee_id"],
+            "employee_id": emp_id,
             "employee_name": emp_info["employee_name"],
             "previous_half_day": emp_info["half_day_missed_punch"],
             "previous_absenteeism": emp_info["absenteeism_days"],

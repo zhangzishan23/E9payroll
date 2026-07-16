@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Boolean, DECIMAL, ForeignKey, JSON, func
+from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Boolean, DECIMAL, ForeignKey, JSON, func, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
@@ -307,6 +307,10 @@ class AttendanceRecord(Base):
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
+    __table_args__ = (
+        UniqueConstraint('period', 'employee_id', name='uix_attendance_period_employee'),
+    )
+
 
 class PerformanceScore(Base):
     __tablename__ = "performance_scores"
@@ -477,6 +481,9 @@ class SalaryCalculation(Base):
     period = Column(String(7), nullable=False)
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
     contract_company = Column(String(50), nullable=False, default='')
+    pay_company_id = Column(Integer, ForeignKey("sys_dict_base.id"), nullable=True, comment="发放公司ID")
+    pay_company_name = Column(String(100), nullable=False, default='', comment="发放公司名称")
+    record_type = Column(String(20), nullable=False, default='single', comment="记录类型: single=单条不拆分, contract=合同公司记录, payroll=实际发放公司记录")
     department = Column(String(50), nullable=False, default='')
     position = Column(String(50), nullable=False, default='')
     cost_owner = Column(String(50), nullable=True)
@@ -520,6 +527,7 @@ class SalaryCalculation(Base):
     compensation_tax = Column(DECIMAL(10, 2), nullable=True)
     severance_pay = Column(DECIMAL(10, 2), nullable=True, comment="实发离职补偿金")
     year_end_bonus_untaxed = Column(DECIMAL(10, 2), nullable=True, comment="未报税年终奖")
+    year_end_bonus_net = Column(DECIMAL(10, 2), nullable=True, comment="实发年终奖（扣税后）")
     actual_taxable = Column(DECIMAL(10, 2), nullable=True)
     special_deduction = Column(DECIMAL(10, 2), nullable=True)
     review_status = Column(String(20), default="待审核")
@@ -529,6 +537,10 @@ class SalaryCalculation(Base):
     remark = Column(String(500), nullable=True, comment="备注")
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('period', 'employee_id', 'pay_company_id', name='uix_salary_period_emp_company'),
+    )
 
 
 class CalculationLog(Base):

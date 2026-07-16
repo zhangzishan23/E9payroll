@@ -1,8 +1,6 @@
 export const SALARY_COLUMNS = [
-  { key: 'employee_no', label: '员工编号', width: 90, fixed: 'left', type: 'text',
-    tooltip: '员工唯一编号，来源于员工档案' },
-  { key: 'contract_company', label: '合同公司', width: 120, type: 'text',
-    tooltip: '员工合同所属公司，来源于员工档案' },
+  { key: 'contract_company', label: '合同公司', width: 120, type: 'text', fixed: 'left',
+    tooltip: '工资发放公司，拆分工资时会分别显示合同公司和北京易玖' },
   { key: 'employee_name', label: '姓名', width: 70, fixed: 'left', type: 'text',
     tooltip: '员工姓名，来源于员工档案' },
   { key: 'department', label: '部门', width: 90, type: 'text',
@@ -21,7 +19,7 @@ export const SALARY_COLUMNS = [
     tooltip: '当月实际计薪天数，来源于考勤管理' },
   { key: 'attendance_rate', label: '出勤率', width: 75, type: 'percent',
     tooltip: '= 实际计薪天数 ÷ 当月总计薪天数 × 100%' },
-  { key: 'base_salary', label: '基本工资', width: 95, type: 'money',
+  { key: 'base_salary', label: '基本工资', width: 95, type: 'money', summary: true,
     tooltip: '员工月基本工资，来源于员工薪资档案' },
   { key: 'commission_bonus', label: '提成/项目奖金/补发', width: 95, type: 'money', editable: true,
     tooltip: '当月提成/项目奖金/补发，手动录入或Excel导入' },
@@ -37,7 +35,7 @@ export const SALARY_COLUMNS = [
     tooltip: '住房补贴（非固定收入），仅当月有效，来源于员工薪资档案' },
   { key: 'allowance_total', label: '补贴合计', width: 85, type: 'money', summary: true,
     tooltip: '= 餐补+交通+通讯+电脑+住房补贴，自动计算' },
-  { key: 'performance_standard', label: '绩效奖金标准', width: 95, type: 'money',
+  { key: 'performance_standard', label: '绩效奖金标准', width: 95, type: 'money', summary: true,
     tooltip: '绩效奖金计算基数，来源于员工薪资档案' },
   { key: 'performance_coefficient', label: '实发绩效奖金系数', width: 95, type: 'number',
     tooltip: '当月绩效评分系数，来源于绩效管理模块' },
@@ -85,13 +83,15 @@ export const SALARY_COLUMNS = [
     tooltip: '未报税补偿金，需单独使用补偿金报税模版申报' },
   { key: 'year_end_bonus_untaxed', label: '未报税年终奖', width: 100, type: 'money', editable: true,
     tooltip: '未报税年终奖，需单独使用年终奖报税模版申报' },
+  { key: 'year_end_bonus_net', label: '实发年终奖', width: 100, type: 'money', editable: true,
+    tooltip: '实发年终奖（扣个税后实际发放金额）' },
   { key: 'remark', label: '备注', width: 200, type: 'text', editable: true },
 ]
 
 export const SALARY_EDITABLE_FIELDS = [
   'commission_bonus', 'pretax_adjustment', 'pretax_adjustment_reason',
   'posttax_adjustment', 'posttax_adjustment_reason',
-  'severance_pay', 'year_end_bonus_untaxed',
+  'severance_pay', 'year_end_bonus_untaxed', 'year_end_bonus_net',
   'last_month_untaxed', 'travel_untaxed', 'compensation_tax',
   'tax_deduction', 'remark'
 ]

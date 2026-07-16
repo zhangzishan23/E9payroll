@@ -4,7 +4,6 @@
       <h3 class="text-lg font-semibold text-gray-700 shrink-0 mr-1">绩效数据管理</h3>
       <el-date-picker v-model="periodDate" type="month" placeholder="选择月份" size="small" class="!w-40" value-format="YYYYMM" @change="onPeriodChange" />
       <el-select v-model="filterField" placeholder="筛选字段" size="small" class="!w-24">
-        <el-option label="员工编号" value="employee_no" />
         <el-option label="员工姓名" value="employee_name" />
       </el-select>
       <el-input v-model="filterValue" placeholder="筛选值" size="small" clearable class="!w-36" @input="applyFilter" />
@@ -34,7 +33,7 @@
 
     <el-table :data="filteredRecords" border stripe v-loading="loading" max-height="600" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
       <el-table-column v-if="isColumnVisible('selection')" type="selection" width="55" fixed="left" />
-      <el-table-column v-if="isColumnVisible('employee_no')" prop="employee_no" label="员工编号" width="100" fixed="left" />
+      <el-table-column v-if="isColumnVisible('index')" type="index" label="序号" width="50" fixed="left" />
       <el-table-column v-if="isColumnVisible('employee_name')" prop="employee_name" label="姓名" width="80" fixed="left" />
       <el-table-column v-if="isColumnVisible('contract_company')" prop="contract_company" label="合同公司" width="120" show-overflow-tooltip />
       <el-table-column v-if="isColumnVisible('department')" prop="department" label="部门" width="120" show-overflow-tooltip />
@@ -64,7 +63,7 @@
       <el-table-column v-if="isColumnVisible('initial_score')" prop="initial_score" label="初评" width="90" align="center">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.employee_id]">
-            <el-input-number v-model="editCache[row.employee_id].initial_score" :min="0" :max="3" :precision="2" :step="0.1" size="small" controls-position="right" class="cell-number" @change="markChanged(row.employee_id)" />
+            <el-input-number v-model="editCache[row.employee_id].initial_score" :min="0" :max="3" :precision="2" :step="0.1" size="small" controls-position="right" class="cell-number" @change="(val) => onTableInitialScoreChange(row.employee_id, val)" />
           </template>
           <template v-else>{{ row.initial_score != null ? row.initial_score : '' }}</template>
         </template>
@@ -137,9 +136,6 @@
         <el-form-item label="核算周期" required>
           <el-input :model-value="form.period" disabled />
         </el-form-item>
-        <el-form-item label="员工编号">
-          <el-input :model-value="formEmployeeNo" disabled />
-        </el-form-item>
         <el-form-item label="员工姓名">
           <el-input :model-value="formEmployeeName" disabled />
         </el-form-item>
@@ -147,9 +143,9 @@
           <el-input v-model="form.performance_category" placeholder="如：A/B/C等" />
         </el-form-item>
         <el-form-item label="初评">
-          <el-input-number v-model="form.initial_score" :min="0" :max="3" :precision="2" :step="0.1" class="w-full" />
+          <el-input-number v-model="form.initial_score" :min="0" :max="3" :precision="2" :step="0.1" class="w-full" @change="onInitialScoreChange" />
         </el-form-item>
-        <el-form-item label="复评（绩效系数）" required>
+        <el-form-item label="复评（绩效系数）">
           <el-input-number v-model="form.final_score" :min="0" :max="3" :precision="2" :step="0.1" class="w-full" />
         </el-form-item>
         <el-form-item label="绩效奖金标准">
@@ -201,7 +197,7 @@
           </el-button>
         </div>
         <div class="text-sm text-gray-500">
-          支持 .xlsx / .xls 格式，<span class="text-blue-600 font-medium">表头需在第一行</span>，需包含：姓名、复评（绩效系数）；可选列：初评、绩效类别、评分理由、分管领导审核后调整。
+          支持 .xlsx / .xls 格式，<span class="text-blue-600 font-medium">表头需在第一行</span>，需包含：姓名；可选列：初评、复评（绩效系数，留空则默认等于初评）、绩效类别、评分理由、分管领导审核后调整。
         </div>
         <div v-if="importResult" class="mt-3">
           <el-alert
@@ -293,7 +289,6 @@ const uploadRef = ref(null)
 const formRef = ref(null)
 const editId = ref(null)
 const formEmployeeId = ref(null)
-const formEmployeeNo = ref('')
 const formEmployeeName = ref('')
 const formRow = ref(null)
 
@@ -305,7 +300,7 @@ const confirmList = ref([])
 
 const TABLE_COLUMNS = [
   { key: 'selection', label: '选择', required: true },
-  { key: 'employee_no', label: '员工编号', required: true },
+  { key: 'index', label: '序号', required: true },
   { key: 'employee_name', label: '姓名', required: true },
   { key: 'contract_company', label: '合同公司' },
   { key: 'department', label: '部门' },
@@ -327,7 +322,7 @@ const TABLE_COLUMNS = [
 ]
 
 const DEFAULT_VISIBLE_COLUMNS = [
-  'selection', 'employee_no', 'employee_name', 'department',
+  'selection', 'index', 'employee_name', 'department',
   'total_work_days', 'attendance_rate', 'performance_standard',
   'performance_category', 'final_score', 'actual_paid', 'action'
 ]
@@ -356,7 +351,6 @@ const filteredRecords = computed(() => {
   if (!filterField.value || !filterValue.value) return records.value
   const fv = filterValue.value.toLowerCase()
   return records.value.filter(r => {
-    if (filterField.value === 'employee_no') return (r.employee_no || '').toLowerCase().includes(fv)
     if (filterField.value === 'employee_name') return (r.employee_name || '').toLowerCase().includes(fv)
     return true
   })
@@ -378,7 +372,10 @@ function tableRowClassName({ row }) {
 function getCurrentVals(row) {
   const cache = editMode.value && editCache[row.employee_id] ? editCache[row.employee_id] : null
   const initial = cache ? cache.initial_score : row.initial_score
-  const final = cache ? cache.final_score : (row.final_score != null ? Number(row.final_score) : null)
+  let final = cache ? cache.final_score : (row.final_score != null ? Number(row.final_score) : null)
+  if (final == null && initial != null) {
+    final = Number(initial)
+  }
   const perfStd = Number(row.performance_standard) || 0
   return { initial: initial != null ? Number(initial) : null, final: final, perfStd }
 }
@@ -435,13 +432,17 @@ function getFormActualPaid() {
 function initEditCache() {
   records.value.forEach(row => {
     if (!row || !row.employee_id) return
+    const finalVal = row.final_score != null ? row.final_score : (row.initial_score != null ? row.initial_score : null)
     editCache[row.employee_id] = reactive({
       initial_score: row.initial_score ?? null,
-      final_score: row.final_score ?? null,
+      final_score: finalVal,
       performance_category: row.performance_category ?? '',
       score_reason: row.score_reason ?? '',
       review_note: row.review_note ?? ''
     })
+    if (row.final_score == null && finalVal != null) {
+      changedSet.value.add(row.employee_id)
+    }
   })
 }
 
@@ -460,9 +461,9 @@ function toggleEditMode() {
       }
       return
     }
+    changedSet.value = new Set()
     initEditCache()
     editMode.value = true
-    changedSet.value = new Set()
   } catch (e) {
     console.error('切换编辑模式失败：', e)
     ElMessage.error('切换编辑模式失败，请刷新页面后重试')
@@ -535,8 +536,13 @@ async function saveAllEdits() {
           payload[field] = val
         }
       })
-      if (!row.id && (payload.final_score == null)) {
-        ElMessage.warning(`员工「${row.employee_name}」未填写复评（绩效系数），跳过保存`)
+      let final_score = payload.final_score
+      if (final_score == null && payload.initial_score != null) {
+        final_score = payload.initial_score
+        payload.final_score = final_score
+      }
+      if (!row.id && (payload.initial_score == null && payload.final_score == null)) {
+        ElMessage.warning(`员工「${row.employee_name}」未填写初评或复评分数，跳过保存`)
         failCount++
         continue
       }
@@ -595,14 +601,14 @@ function showDialog(row) {
   isEdit.value = !!row
   editId.value = row?.id || null
   formEmployeeId.value = row?.employee_id || null
-  formEmployeeNo.value = row?.employee_no || ''
   formEmployeeName.value = row?.employee_name || ''
   formRow.value = row
   if (row) {
+    const finalScore = row.final_score != null ? row.final_score : (row.initial_score != null ? row.initial_score : null)
     Object.assign(form, {
       period: row.period, employee_id: row.employee_id,
       initial_score: row.initial_score,
-      final_score: row.final_score != null ? row.final_score : null,
+      final_score: finalScore,
       performance_category: row.performance_category || '',
       score_reason: row.score_reason || '',
       review_note: row.review_note || ''
@@ -621,7 +627,6 @@ function showDialogForEmployee(row) {
   isEdit.value = false
   editId.value = null
   formEmployeeId.value = row.employee_id
-  formEmployeeNo.value = row.employee_no
   formEmployeeName.value = row.employee_name
   formRow.value = row
   Object.assign(form, {
@@ -632,16 +637,33 @@ function showDialogForEmployee(row) {
   dialogVisible.value = true
 }
 
+function onInitialScoreChange(val) {
+  if (val != null && form.final_score == null) {
+    form.final_score = val
+  }
+}
+
+function onTableInitialScoreChange(empId, val) {
+  if (val != null && editCache[empId] && editCache[empId].final_score == null) {
+    editCache[empId].final_score = val
+  }
+  markChanged(empId)
+}
+
 async function handleSave() {
-  if (form.final_score == null) {
-    ElMessage.warning('请填写复评（绩效系数）')
+  if (form.initial_score == null && form.final_score == null) {
+    ElMessage.warning('请至少填写初评或复评分数')
     return
+  }
+  let final_score = form.final_score
+  if (final_score == null && form.initial_score != null) {
+    final_score = form.initial_score
   }
   saving.value = true
   try {
     const payload = {
       initial_score: form.initial_score,
-      final_score: form.final_score,
+      final_score: final_score,
       performance_category: form.performance_category || null,
       score_reason: form.score_reason || null,
       review_note: form.review_note || null

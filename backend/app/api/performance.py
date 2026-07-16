@@ -351,11 +351,16 @@ def import_performances(
         ).first()
 
         if existing:
-            existing.initial_score = item.initial_score
-            existing.final_score = item.final_score
-            existing.performance_category = item.performance_category
-            existing.score_reason = item.score_reason
-            existing.review_note = item.review_note
+            if item.initial_score is not None:
+                existing.initial_score = item.initial_score
+            if item.final_score is not None:
+                existing.final_score = item.final_score
+            if item.performance_category is not None:
+                existing.performance_category = item.performance_category
+            if item.score_reason is not None:
+                existing.score_reason = item.score_reason
+            if item.review_note is not None:
+                existing.review_note = item.review_note
             existing.reviewer_id = current_user.id
             updated += 1
         else:
@@ -436,9 +441,9 @@ def export_performances(
         perf_std = float(sal.performance_standard) if sal else 0
         initial = float(p.initial_score) if p and p.initial_score is not None else None
         final = float(p.final_score) if p and p.final_score is not None else None
-        coef = final if final is not None else 1.00
-        evaluated = round(perf_std * coef, 2)
-        diff = round(evaluated - perf_std, 2)
+        coef = final
+        evaluated = round(perf_std * coef, 2) if coef is not None else None
+        diff = round(evaluated - perf_std, 2) if evaluated is not None else None
         score_diff = round(final - initial, 2) if (initial is not None and final is not None) else None
         
         if att:
@@ -449,7 +454,7 @@ def export_performances(
             actual_days = standard_salary_days
             
         att_rate_val = round(actual_days / total_days, 4) if total_days > 0 else 0
-        actual_paid_val = round(evaluated * att_rate_val, 2) if total_days > 0 else 0
+        actual_paid_val = round(evaluated * att_rate_val, 2) if evaluated is not None else None
 
         ws.append([
             emp.employee_no,
@@ -464,9 +469,9 @@ def export_performances(
             p.performance_category if p else "",
             initial if initial is not None else "",
             final if final is not None else "",
-            evaluated,
-            diff,
-            actual_paid_val,
+            evaluated if evaluated is not None else "",
+            diff if diff is not None else "",
+            actual_paid_val if actual_paid_val is not None else "",
             score_diff if score_diff is not None else "",
             p.score_reason if p else "",
             p.review_note if p else ""
@@ -536,8 +541,6 @@ async def import_performances_excel(
 
     if "employee_name" not in header_map:
         raise HTTPException(status_code=400, detail="Excel 表头缺少必需列：姓名")
-    if "final_score" not in header_map:
-        raise HTTPException(status_code=400, detail="Excel 表头缺少必需列：复评（绩效系数）")
 
     all_employees = db.query(Employee).all()
     name_count = {}
