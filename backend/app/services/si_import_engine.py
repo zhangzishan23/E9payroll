@@ -894,14 +894,24 @@ def _match_employees(
     return valid_data, skipped
 
 
+def _format_rate(rate: Decimal) -> str:
+    """将小数比例格式化为百分比显示，如 0.1 → 10%，0.005 → 0.50%"""
+    if rate is None:
+        return "无"
+    return f"{(rate * Decimal('100')).quantize(Decimal('0.00'), rounding=ROUND_HALF_EVEN)}%"
+
+
 def _validate_data(
     records: Dict[str, Dict],
     logs: List[Dict],
     batch_id: str,
 ):
     """多层级数据校验"""
+    RATE_TOLERANCE = Decimal("0.001")
+
     for name, record in records.items():
         source_info = _format_source_files(record.get("_sources", []))
+        default_rates = record.get("_default_rates", {})
 
         # 1. 缴费月份检查
         period = record.get("period", "")
@@ -914,29 +924,30 @@ def _validate_data(
                 "error_message": f"员工「{name}」缴费月份缺失或格式错误",
             })
 
-        # 2. 金额逻辑校验：基数 × 比例 ≈ 金额（允许5元误差，适应北京医保"+3元"等固定附加额情况）
+        # 2. 险种校验配置：(金额字段, 比例字段, 基数字段, 险种前缀, 缴费方)
         checks = [
-            ("pension_personal", "pension_personal_rate", "pension_personal_base"),
-            ("pension_company", "pension_company_rate", "pension_company_base"),
-            ("unemployment_personal", "unemployment_personal_rate", "unemployment_personal_base"),
-            ("unemployment_company", "unemployment_company_rate", "unemployment_company_base"),
-            ("medical_personal", "medical_personal_rate", "medical_personal_base"),
-            ("medical_company", "medical_company_rate", "medical_company_base"),
-            ("injury_company", "injury_company_rate", "injury_company_base"),
-            ("hf_personal", "hf_personal_rate", "hf_base"),
-            ("hf_company", "hf_company_rate", "hf_base"),
+            ("pension_personal", "pension_personal_rate", "pension_personal_base", "pension", "personal"),
+            ("pension_company", "pension_company_rate", "pension_company_base", "pension", "company"),
+            ("unemployment_personal", "unemployment_personal_rate", "unemployment_personal_base", "unemployment", "personal"),
+            ("unemployment_company", "unemployment_company_rate", "unemployment_company_base", "unemployment", "company"),
+            ("medical_personal", "medical_personal_rate", "medical_personal_base", "medical", "personal"),
+            ("medical_company", "medical_company_rate", "medical_company_base", "medical", "company"),
+            ("injury_company", "injury_company_rate", "injury_company_base", "injury", "company"),
+            ("hf_personal", "hf_personal_rate", "hf_base", "hf", "personal"),
+            ("hf_company", "hf_company_rate", "hf_base", "hf", "company"),
         ]
-        for amount_field, rate_field, base_field in checks:
+        for amount_field, rate_field, base_field, ins_prefix, payer in checks:
             amount = record.get(amount_field)
             rate = record.get(rate_field)
             base = record.get(base_field)
+            field_label = SI_FIELD_LABELS.get(amount_field, amount_field)
+
             if (amount and isinstance(amount, Decimal) and amount > 0
                     and rate and isinstance(rate, Decimal) and rate > 0
                     and base and isinstance(base, Decimal) and base > 0):
                 expected = (base * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
                 diff = abs(amount - expected)
                 if diff > Decimal("5.00"):
-                    field_label = SI_FIELD_LABELS.get(amount_field, amount_field)
                     logs.append({
                         "file_name": source_info,
                         "employee_name": name,
@@ -944,7 +955,29 @@ def _validate_data(
                         "error_type": "amount_mismatch",
                         "error_message": (
                             f"员工「{name}」{field_label}金额不匹配："
-                            f"基数{base} × 比例{rate} = 期望{expected}，实际{amount}，差额{diff}"
+                            f"基数{base} × 比例{_format_rate(rate)} = 期望{expected}，实际{amount}，差额{diff}"
+                        ),
+                    })
+
+            template_rate = None
+            ins_default = (default_rates or {}).get(ins_prefix, {})
+            if ins_default:
+                template_rate_val = ins_default.get(f"{payer}_rate")
+                if template_rate_val is not None:
+                    template_rate = Decimal(str(template_rate_val))
+
+            if (rate and isinstance(rate, Decimal) and rate > 0
+                    and template_rate is not None and template_rate > 0):
+                rate_diff = abs(rate - template_rate)
+                if rate_diff > RATE_TOLERANCE:
+                    logs.append({
+                        "file_name": source_info,
+                        "employee_name": name,
+                        "error_level": "warning",
+                        "error_type": "rate_mismatch",
+                        "error_message": (
+                            f"员工「{name}」{field_label}比例与模板配置不符："
+                            f"实际比例{_format_rate(rate)}，模板配置{_format_rate(template_rate)}，请确认"
                         ),
                     })
 
@@ -1017,31 +1050,28 @@ def _get_decimal(record: Dict, field: str) -> Optional[Decimal]:
 
 def _smart_calculate_record(record: Dict, default_rates: Dict) -> Dict:
     """
-    智能推算单条记录的缺失字段：
-    1. 使用模板默认比例填充缺失的比例
-    2. 已知金额+基数 → 反算比例
-    3. 已知基数+比例 → 计算金额
-    4. 公积金特殊处理：已知合计+比例 → 拆分个人/单位金额，反推基数
+    智能推算单条记录的缺失字段。优先级：实际导入数据 > 模板默认比例
+    1. 已知金额+基数 → 反算实际比例（最高优先级，覆盖任何默认值）
+    2. 缺失的比例 → 用模板配置的默认比例填充（仅当实际数据反算不出时）
+    3. 根据已有数据推算缺失字段：基数+比例→金额、金额+比例→基数
+    4. 公积金特殊处理：个人/单位比例联动、已知合计+比例→拆分金额/反推基数
     """
     TWO_PLACES = Decimal("0.01")
     FOUR_PLACES = Decimal("0.0001")
 
-    # 各险种配置：(前缀, 是否有个人部分)
     insurance_configs = [
         ("pension", True),
         ("unemployment", True),
         ("medical", True),
-        ("injury", False),  # 工伤保险只有单位部分
+        ("injury", False),
     ]
 
     # ── 1. 处理各社保险种 ──
     for prefix, has_personal in insurance_configs:
-        # 获取默认比例配置
         ins_default = (default_rates or {}).get(prefix, {})
         default_personal_rate = ins_default.get("personal_rate")
         default_company_rate = ins_default.get("company_rate")
 
-        # 字段名
         personal_base = f"{prefix}_personal_base"
         company_base = f"{prefix}_company_base"
         personal_amount = f"{prefix}_personal"
@@ -1049,7 +1079,6 @@ def _smart_calculate_record(record: Dict, default_rates: Dict) -> Dict:
         personal_rate = f"{prefix}_personal_rate"
         company_rate = f"{prefix}_company_rate"
 
-        # 获取当前值
         p_base = _get_decimal(record, personal_base)
         c_base = _get_decimal(record, company_base)
         p_amt = _get_decimal(record, personal_amount) if has_personal else None
@@ -1057,7 +1086,15 @@ def _smart_calculate_record(record: Dict, default_rates: Dict) -> Dict:
         p_rate = _get_decimal(record, personal_rate) if has_personal else None
         c_rate = _get_decimal(record, company_rate)
 
-        # 填充默认比例（如果数据中没有）
+        # 步骤1：如果Excel没有导入比例，但有金额和基数 → 从实际数据反算真实比例
+        if has_personal and p_rate is None and p_amt is not None and p_base is not None and p_base > 0:
+            p_rate = (p_amt / p_base).quantize(FOUR_PLACES, rounding=ROUND_HALF_EVEN)
+            record[personal_rate] = p_rate
+        if c_rate is None and c_amt is not None and c_base is not None and c_base > 0:
+            c_rate = (c_amt / c_base).quantize(FOUR_PLACES, rounding=ROUND_HALF_EVEN)
+            record[company_rate] = c_rate
+
+        # 步骤2：实际数据反算不出的（缺金额或基数），才用模板默认比例填充
         if has_personal and p_rate is None and default_personal_rate is not None:
             p_rate = Decimal(str(default_personal_rate))
             record[personal_rate] = p_rate
@@ -1065,31 +1102,18 @@ def _smart_calculate_record(record: Dict, default_rates: Dict) -> Dict:
             c_rate = Decimal(str(default_company_rate))
             record[company_rate] = c_rate
 
-        # ── 个人部分推算 ──
+        # 步骤3：根据已有基数/比例/金额推算缺失字段
         if has_personal:
-            # 已知金额 + 基数 → 反算比例
-            if p_amt is not None and p_base is not None and p_base > 0 and p_rate is None:
-                p_rate = (p_amt / p_base).quantize(FOUR_PLACES, rounding=ROUND_HALF_EVEN)
-                record[personal_rate] = p_rate
-            # 已知基数 + 比例 → 计算金额
-            elif p_base is not None and p_rate is not None and p_rate > 0 and p_amt is None:
+            if p_base is not None and p_rate is not None and p_rate > 0 and p_amt is None:
                 p_amt = (p_base * p_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_EVEN)
                 record[personal_amount] = p_amt
-            # 已知金额 + 比例 → 反推基数（仅反推本方基数，不跨个人/单位自动填充）
             elif p_amt is not None and p_rate is not None and p_rate > 0 and p_base is None:
                 p_base = (p_amt / p_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_EVEN)
                 record[personal_base] = p_base
 
-        # ── 单位部分推算 ──
-        # 已知金额 + 基数 → 反算比例
-        if c_amt is not None and c_base is not None and c_base > 0 and c_rate is None:
-            c_rate = (c_amt / c_base).quantize(FOUR_PLACES, rounding=ROUND_HALF_EVEN)
-            record[company_rate] = c_rate
-        # 已知基数 + 比例 → 计算金额
-        elif c_base is not None and c_rate is not None and c_rate > 0 and c_amt is None:
+        if c_base is not None and c_rate is not None and c_rate > 0 and c_amt is None:
             c_amt = (c_base * c_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_EVEN)
             record[company_amount] = c_amt
-        # 已知金额 + 比例 → 反推基数（仅反推本方基数，不跨个人/单位自动填充）
         elif c_amt is not None and c_rate is not None and c_rate > 0 and c_base is None:
             c_base = (c_amt / c_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_EVEN)
             record[company_base] = c_base
@@ -1098,7 +1122,7 @@ def _smart_calculate_record(record: Dict, default_rates: Dict) -> Dict:
     hf_default = (default_rates or {}).get("hf", {})
     default_hf_personal_rate = hf_default.get("personal_rate")
     default_hf_company_rate = hf_default.get("company_rate")
-    split_equal = hf_default.get("split_equal", True)  # 默认个人和单位均分
+    split_equal = hf_default.get("split_equal", True)
 
     hf_base = _get_decimal(record, "hf_base")
     hf_personal = _get_decimal(record, "hf_personal")
@@ -1107,7 +1131,15 @@ def _smart_calculate_record(record: Dict, default_rates: Dict) -> Dict:
     hf_company_rate = _get_decimal(record, "hf_company_rate")
     hf_total = _get_decimal(record, "hf_total")
 
-    # 填充默认比例
+    # 步骤1：如果Excel没有导入比例，但有金额和基数 → 从实际数据反算真实比例
+    if hf_personal_rate is None and hf_personal is not None and hf_base is not None and hf_base > 0:
+        hf_personal_rate = (hf_personal / hf_base).quantize(FOUR_PLACES, rounding=ROUND_HALF_EVEN)
+        record["hf_personal_rate"] = hf_personal_rate
+    if hf_company_rate is None and hf_company is not None and hf_base is not None and hf_base > 0:
+        hf_company_rate = (hf_company / hf_base).quantize(FOUR_PLACES, rounding=ROUND_HALF_EVEN)
+        record["hf_company_rate"] = hf_company_rate
+
+    # 步骤2：实际数据反算不出的，才用模板默认比例填充
     if hf_personal_rate is None and default_hf_personal_rate is not None:
         hf_personal_rate = Decimal(str(default_hf_personal_rate))
         record["hf_personal_rate"] = hf_personal_rate
@@ -1115,7 +1147,7 @@ def _smart_calculate_record(record: Dict, default_rates: Dict) -> Dict:
         hf_company_rate = Decimal(str(default_hf_company_rate))
         record["hf_company_rate"] = hf_company_rate
 
-    # 如果配置了均分但只有一个比例，补全另一个
+    # 步骤3：split_equal处理：如果勾选了个人单位比例相同，补全缺失的那个
     if split_equal:
         if hf_personal_rate is not None and hf_company_rate is None:
             hf_company_rate = hf_personal_rate
@@ -1124,8 +1156,7 @@ def _smart_calculate_record(record: Dict, default_rates: Dict) -> Dict:
             hf_personal_rate = hf_company_rate
             record["hf_personal_rate"] = hf_personal_rate
 
-    # ── 公积金推算 ──
-    # 场景A：已知合计(hf_total) + 比例 → 拆分个人/单位金额，并反推基数
+    # 步骤4：已知合计(hf_total)且有比例 → 拆分个人/单位金额，反推基数
     if hf_total is not None and hf_total > 0:
         total_rate = Decimal("0")
         if hf_personal_rate is not None:
@@ -1134,12 +1165,10 @@ def _smart_calculate_record(record: Dict, default_rates: Dict) -> Dict:
             total_rate += hf_company_rate
 
         if total_rate > 0:
-            # 反推基数: 基数 = 合计 / (个人比例 + 单位比例)
             if hf_base is None:
                 hf_base = (hf_total / total_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_EVEN)
                 record["hf_base"] = hf_base
 
-            # 计算个人/单位金额
             if hf_personal is None and hf_personal_rate is not None and hf_base is not None:
                 hf_personal = (hf_base * hf_personal_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_EVEN)
                 record["hf_personal"] = hf_personal
@@ -1147,22 +1176,7 @@ def _smart_calculate_record(record: Dict, default_rates: Dict) -> Dict:
                 hf_company = (hf_base * hf_company_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_EVEN)
                 record["hf_company"] = hf_company
 
-    # 场景B：已知金额 + 基数 → 反算比例
-    if hf_personal is not None and hf_base is not None and hf_base > 0 and hf_personal_rate is None:
-        hf_personal_rate = (hf_personal / hf_base).quantize(FOUR_PLACES, rounding=ROUND_HALF_EVEN)
-        record["hf_personal_rate"] = hf_personal_rate
-        if split_equal and hf_company_rate is None:
-            hf_company_rate = hf_personal_rate
-            record["hf_company_rate"] = hf_company_rate
-
-    if hf_company is not None and hf_base is not None and hf_base > 0 and hf_company_rate is None:
-        hf_company_rate = (hf_company / hf_base).quantize(FOUR_PLACES, rounding=ROUND_HALF_EVEN)
-        record["hf_company_rate"] = hf_company_rate
-        if split_equal and hf_personal_rate is None:
-            hf_personal_rate = hf_company_rate
-            record["hf_personal_rate"] = hf_personal_rate
-
-    # 场景C：已知基数 + 比例 → 计算金额
+    # 步骤5：已知基数 + 比例 → 计算缺失的金额
     if hf_base is not None and hf_personal_rate is not None and hf_personal_rate > 0 and hf_personal is None:
         hf_personal = (hf_base * hf_personal_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_EVEN)
         record["hf_personal"] = hf_personal
@@ -1170,7 +1184,7 @@ def _smart_calculate_record(record: Dict, default_rates: Dict) -> Dict:
         hf_company = (hf_base * hf_company_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_EVEN)
         record["hf_company"] = hf_company
 
-    # 场景D：已知金额 + 比例 → 反推基数
+    # 步骤6：已知金额 + 比例 → 反推基数
     if hf_personal is not None and hf_personal_rate is not None and hf_personal_rate > 0 and hf_base is None:
         hf_base = (hf_personal / hf_personal_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_EVEN)
         record["hf_base"] = hf_base
@@ -1178,7 +1192,7 @@ def _smart_calculate_record(record: Dict, default_rates: Dict) -> Dict:
         hf_base = (hf_company / hf_company_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_EVEN)
         record["hf_base"] = hf_base
 
-    # 如果个人和单位金额有了但合计还没有，计算合计
+    # 个人/单位金额都有了但合计缺失 → 计算合计
     if hf_total is None and hf_personal is not None and hf_company is not None:
         hf_total = hf_personal + hf_company
         record["hf_total"] = hf_total
