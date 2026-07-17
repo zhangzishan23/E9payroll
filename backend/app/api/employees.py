@@ -10,7 +10,7 @@ from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.models.models import Employee, EmployeeSalary, SysDictBase, SysUser
 from app.api.auth import get_current_user, UserInfo, require_permission
-from app.core.query_utils import filter_active_employees
+from app.core.query_utils import filter_active_employees, apply_data_scope
 
 router = APIRouter()
 
@@ -354,6 +354,8 @@ def get_employees(
     current_user: UserInfo = Depends(get_current_user)
 ):
     query = db.query(Employee)
+    if not current_user.is_admin:
+        query = apply_data_scope(query, db, current_user.data_scope, current_user.id)
     if status_id:
         query = query.filter(Employee.status_id == status_id)
     if department_id:
@@ -402,6 +404,8 @@ def export_employees(
     current_user: UserInfo = Depends(get_current_user)
 ):
     query = db.query(Employee)
+    if not current_user.is_admin:
+        query = apply_data_scope(query, db, current_user.data_scope, current_user.id)
     query = filter_active_employees(query, db)
     if filter_field and filter_value:
         if filter_field == 'name':
@@ -791,6 +795,17 @@ def get_employee(employee_id: int, db: Session = Depends(get_db), current_user: 
     emp = db.query(Employee).filter(Employee.id == employee_id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="员工不存在")
+    if not current_user.is_admin:
+        if current_user.data_scope == "self":
+            from app.core.query_utils import get_user_employee_id
+            user_emp_id = get_user_employee_id(db, current_user.id)
+            if user_emp_id != emp.id:
+                raise HTTPException(status_code=403, detail="您没有权限查看该员工信息")
+        elif current_user.data_scope == "dept":
+            from app.core.query_utils import get_user_department_id
+            user_dept_id = get_user_department_id(db, current_user.id)
+            if user_dept_id != emp.department_id:
+                raise HTTPException(status_code=403, detail="您没有权限查看其他部门员工信息")
     return _enrich_employee(emp, db)
 
 

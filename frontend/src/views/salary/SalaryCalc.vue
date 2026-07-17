@@ -30,8 +30,8 @@
           <el-button type="danger" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete" v-permission="'salary:delete'">
             删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
           </el-button>
-          <el-button type="warning" size="small" :disabled="!hasResults" @click="showTaxImport" v-permission="'salary:tax'">报税导入</el-button>
-          <el-button type="success" size="small" :disabled="!hasResults" @click="handleExportTaxTemplate" v-permission="'salary:tax'">导出报税模板</el-button>
+          <el-button type="warning" size="small" :disabled="!hasResults" @click="showTaxImport" v-permission="['salary:tax_import', 'salary:travel_import']">报税导入</el-button>
+          <el-button type="success" size="small" :disabled="!hasResults" @click="handleExportTaxTemplate" v-permission="'salary:tax_export'">导出报税模板</el-button>
           <ColumnSetting
             :columns="SALARY_TABLE_COLUMNS"
             :default-visible-keys="SALARY_DEFAULT_VISIBLE"
@@ -157,7 +157,7 @@
 
     <el-dialog v-model="taxImportVisible" title="报税数据导入" width="700px" append-to-body>
       <el-tabs v-model="taxImportTab" class="mb-4">
-        <el-tab-pane label="个税Excel导入" name="excel">
+        <el-tab-pane v-if="authStore.hasPermission('salary:tax_import')" label="个税Excel导入" name="excel">
           <div class="mb-3 text-sm text-gray-500">
             上传税务局导出的「个人所得税扣缴申报表」Excel文件（支持.xls/.xlsx格式），系统将自动提取姓名和应补/退税额
           </div>
@@ -184,7 +184,7 @@
             已选择文件：{{ taxFile.name }}
           </div>
         </el-tab-pane>
-        <el-tab-pane label="临时性差旅补贴导入" name="travel">
+        <el-tab-pane v-if="authStore.hasPermission('salary:travel_import')" label="临时性差旅补贴导入" name="travel">
           <div class="mb-3 text-sm text-gray-500">
             上传财务提供的差旅补贴Excel文件（支持.xls/.xlsx格式），系统自动识别「明细」（Sheet1）或「数据透视表」（Sheet2）工作表，按员工汇总报税应纳税所得额
           </div>
@@ -211,7 +211,7 @@
             已选择文件：{{ travelFile.name }}
           </div>
         </el-tab-pane>
-        <el-tab-pane label="手动粘贴数据" name="manual">
+        <el-tab-pane v-if="authStore.hasAnyPermission('salary:tax_import', 'salary:travel_import')" label="手动粘贴数据" name="manual">
           <div class="mb-3 text-sm text-gray-500">
             请粘贴财务提供的报税数据（格式：员工编号,上月未报税,差旅未报税,补偿金报税），每行一条
           </div>
@@ -236,6 +236,9 @@ import api from '../../api'
 import { SALARY_COLUMNS, SALARY_EDITABLE_FIELDS, getSalaryFieldLabel } from '../../config/columns'
 import ColumnSetting from '../../components/ColumnSetting.vue'
 import { formatMoney, formatNumber, formatPercent, formatText, isEmptyValue } from '../../utils/format'
+import { useAuthStore } from '../../stores/auth'
+
+const authStore = useAuthStore()
 
 function getDefaultPeriod() {
   const now = new Date()
@@ -704,10 +707,18 @@ const travelFile = ref(null)
 const travelUploadRef = ref(null)
 
 function showTaxImport() {
+  if (!authStore.hasAnyPermission('salary:tax_import', 'salary:travel_import')) {
+    ElMessage.warning('您没有该操作权限，请联系管理员')
+    return
+  }
   taxData.value = ''
   taxFile.value = null
   travelFile.value = null
-  taxImportTab.value = 'excel'
+  if (authStore.hasPermission('salary:tax_import')) {
+    taxImportTab.value = 'excel'
+  } else {
+    taxImportTab.value = 'travel'
+  }
   if (taxUploadRef.value) {
     taxUploadRef.value.clearFiles()
   }
@@ -732,6 +743,12 @@ async function downloadSingleTaxFile(type, filename) {
     params.hide_status_id = Number(hideStatusId)
   }
   const res = await api.get(`/salary/export-tax-template/${periodDate.value}`, { params, responseType: 'blob' })
+  const contentType = res.headers['content-type'] || ''
+  if (contentType.includes('application/json')) {
+    const text = await res.data.text()
+    const json = JSON.parse(text)
+    throw new Error(json.detail || '导出失败')
+  }
   const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
   const url = window.URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -744,6 +761,10 @@ async function downloadSingleTaxFile(type, filename) {
 }
 
 async function handleExportTaxTemplate() {
+  if (!authStore.hasPermission('salary:tax_export')) {
+    ElMessage.warning('您没有该操作权限，请联系管理员')
+    return
+  }
   const period = periodDate.value
   const files = [
     { type: 'salary', filename: `正常工资薪金_${period}.xlsx` },
@@ -752,9 +773,16 @@ async function handleExportTaxTemplate() {
   ]
   for (let i = 0; i < files.length; i++) {
     const { type, filename } = files[i]
-    await downloadSingleTaxFile(type, filename)
-    if (i < files.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 300))
+    try {
+      await downloadSingleTaxFile(type, filename)
+      if (i < files.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 300))
+      }
+    } catch (e) {
+      if (!e.response) {
+        ElMessage.error(e.message || `导出${filename}失败`)
+      }
+      return
     }
   }
   ElMessage.success('报税模板导出成功，共3个文件')
@@ -762,6 +790,10 @@ async function handleExportTaxTemplate() {
 
 async function doTaxImport() {
   if (taxImportTab.value === 'excel') {
+    if (!authStore.hasPermission('salary:tax_import')) {
+      ElMessage.warning('您没有该操作权限，请联系管理员')
+      return
+    }
     if (!taxFile.value) {
       ElMessage.warning('请先选择要上传的Excel文件')
       return
@@ -775,16 +807,16 @@ async function doTaxImport() {
       })
       ElMessage.success(res.data.message)
       taxImportVisible.value = false
-      try {
-        await api.post(`/salary/calculate-net/${periodDate.value}`)
-      } catch {}
       await fetchResults()
     } catch (e) {
-      ElMessage.error(e.response?.data?.detail || '导入失败，请确认文件格式正确')
     } finally {
       taxImporting.value = false
     }
   } else if (taxImportTab.value === 'travel') {
+    if (!authStore.hasPermission('salary:travel_import')) {
+      ElMessage.warning('您没有该操作权限，请联系管理员')
+      return
+    }
     if (!travelFile.value) {
       ElMessage.warning('请先选择要上传的Excel文件')
       return
@@ -800,11 +832,14 @@ async function doTaxImport() {
       taxImportVisible.value = false
       await fetchResults()
     } catch (e) {
-      ElMessage.error(e.response?.data?.detail || '导入失败，请确认文件格式正确')
     } finally {
       taxImporting.value = false
     }
   } else {
+    if (!authStore.hasAnyPermission('salary:tax_import', 'salary:travel_import')) {
+      ElMessage.warning('您没有该操作权限，请联系管理员')
+      return
+    }
     if (!taxData.value.trim()) {
       ElMessage.warning('请输入报税数据')
       return
@@ -830,12 +865,8 @@ async function doTaxImport() {
       const res = await api.post(`/salary/import-tax/${periodDate.value}`, items)
       ElMessage.success(res.data.message)
       taxImportVisible.value = false
-      try {
-        await api.post(`/salary/calculate-net/${periodDate.value}`)
-      } catch {}
       await fetchResults()
     } catch (e) {
-      ElMessage.error('导入失败')
     } finally {
       taxImporting.value = false
     }

@@ -109,7 +109,7 @@ def require_permission(*perm_codes: str):
         if current_user.is_admin:
             return current_user
         if not current_user.has_any_permission(*perm_codes):
-            raise HTTPException(status_code=403, detail="您没有操作权限，请联系管理员")
+            raise HTTPException(status_code=403, detail="您没有该操作权限，请联系管理员")
         return current_user
     return checker
 

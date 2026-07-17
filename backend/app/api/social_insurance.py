@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -9,7 +9,7 @@ import logging
 from openpyxl import Workbook
 from app.core.database import get_db
 from app.core.log_helper import write_log
-from app.core.query_utils import filter_active_employees
+from app.core.query_utils import filter_active_employees, apply_data_scope
 from app.models.models import SocialInsurance, Employee, SiImportTemplate, SiImportLog
 from app.api.auth import get_current_user, UserInfo, require_permission
 from app.services.si_import_engine import (
@@ -246,6 +246,8 @@ def get_social_insurance(
         from app.services.si_import_engine import _calc_summaries
 
         query = db.query(Employee)
+        if not current_user.is_admin:
+            query = apply_data_scope(query, db, current_user.data_scope, current_user.id)
         employees = filter_active_employees(query, db, hide_status_id=hide_status_id).order_by(Employee.employee_no).all()
         si_map = {}
         records = db.query(SocialInsurance).filter(SocialInsurance.period == period).all()
@@ -715,11 +717,19 @@ def export_social_insurance(
 def smart_import_social_insurance(
     period: str,
     files: List[UploadFile] = File(...),
+    file_paths: Optional[str] = Form(None, description="每个文件的相对路径JSON数组，用于文件夹导入时提供上下文关键词"),
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
-    """智能批量导入：支持多文件、Excel+PDF、自动模板匹配、姓名匹配"""
-    result = run_smart_import(db, period, files, current_user.id, current_user.username)
+    """智能批量导入：支持多文件、Excel+PDF、自动模板匹配、姓名匹配，支持文件夹导入"""
+    import json as _json
+    paths_list = None
+    if file_paths:
+        try:
+            paths_list = _json.loads(file_paths)
+        except Exception:
+            paths_list = None
+    result = run_smart_import(db, period, files, current_user.id, current_user.username, file_paths=paths_list)
     write_log(
         db, "data_change", current_user.id, current_user.username,
         "social_insurance", "smart_import",
@@ -862,6 +872,7 @@ def get_import_logs(
 def smart_import_prepare(
     period: str,
     files: List[UploadFile] = File(...),
+    file_paths: Optional[str] = Form(None, description="每个文件的相对路径JSON数组，用于文件夹导入时提供上下文关键词"),
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
@@ -869,9 +880,17 @@ def smart_import_prepare(
     第一步：上传文件并预检查。
     保存文件到临时目录，返回batch_id和模板匹配结果。
     如果有文件未匹配模板，前端引导用户进入批量模板配置流程。
+    支持文件夹导入（通过file_paths传递相对路径）。
     """
     try:
-        batch_meta = save_batch_files(period, files)
+        import json as _json
+        paths_list = None
+        if file_paths:
+            try:
+                paths_list = _json.loads(file_paths)
+            except Exception:
+                paths_list = None
+        batch_meta = save_batch_files(period, files, file_paths=paths_list)
         batch_id = batch_meta["batch_id"]
         precheck_result = precheck_batch(db, batch_id)
         return precheck_result

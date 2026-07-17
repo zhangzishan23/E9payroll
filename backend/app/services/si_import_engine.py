@@ -315,18 +315,38 @@ def _sheet_has_data(file_rows: List[List], min_data_rows: int = 2) -> bool:
     return False
 
 
+def _extract_keywords_from_path(path: str) -> List[str]:
+    """从文件路径中提取所有有意义的关键词（文件夹名、文件名）"""
+    if not path:
+        return []
+    parts = re.split(r'[\\/]+', path)
+    keywords = []
+    for part in parts:
+        if not part:
+            continue
+        part = os.path.splitext(part)[0]
+        tokens = re.split(r'[_\-\s（）()\[\]【】\d]+', part)
+        for t in tokens:
+            t = t.strip()
+            if len(t) >= 2:
+                keywords.append(t.lower())
+    return keywords
+
+
 def _match_template(
     db: Session,
     file_rows: List[List],
     filename: str,
     sheet_name: Optional[str] = None,
     validate_columns: bool = True,
+    context_keywords: Optional[List[str]] = None,
 ) -> Optional[SiImportTemplate]:
     """为文件匹配最合适的导入模板
     
     Args:
         sheet_name: 当前工作表名称，用于匹配模板的sheet_pattern
         validate_columns: 是否验证模板能建立有效的字段映射（默认True）
+        context_keywords: 上下文关键词列表（从文件夹路径等提取，用于辅助匹配）
     """
     templates = (
         db.query(SiImportTemplate)
@@ -336,6 +356,10 @@ def _match_template(
     )
     if not templates:
         return None
+
+    context_keywords = context_keywords or []
+    context_keywords_lower = [kw.lower() for kw in context_keywords if kw]
+    context_text = " ".join(context_keywords_lower)
 
     best_template = None
     best_score = 0
@@ -351,7 +375,6 @@ def _match_template(
             if tpl.sheet_pattern in sheet_name or sheet_name in tpl.sheet_pattern:
                 score += 80  # 工作表名称匹配权重很高
         elif tpl.sheet_pattern and not sheet_name:
-            # 模板要求特定工作表但当前没有工作表信息，降低得分
             score -= 30
 
         # 1. 文件名正则匹配
@@ -370,6 +393,40 @@ def _match_template(
             if all(kw in fname_lower for kw in kw_lower):
                 score += 50
                 has_filename_match = True
+
+        # 1c. 【新增】上下文关键词匹配（文件夹路径）
+        # 从文件夹名中提取的关键词，如果匹配模板的城市、source_category或name中的关键词，加分
+        context_match_score = 0
+        tpl_name_lower = (tpl.name or "").lower()
+        tpl_city_lower = (tpl.city or "").lower()
+        tpl_category = (tpl.source_category or "").lower()
+        
+        category_keywords = {
+            "social_insurance": ["社保", "社会保险", "五险"],
+            "housing_fund": ["公积金", "住房公积金", "汇缴"],
+        }
+        
+        for kw in context_keywords_lower:
+            if not kw:
+                continue
+            if tpl_city_lower and kw in tpl_city_lower:
+                context_match_score += 30
+            if kw in tpl_name_lower:
+                context_match_score += 25
+            if tpl_category:
+                cat_kws = category_keywords.get(tpl_category, [])
+                for cat_kw in cat_kws:
+                    if cat_kw in kw or kw in cat_kw:
+                        context_match_score += 40
+                        break
+            if tpl.file_keywords and isinstance(tpl.file_keywords, list):
+                for fkw in tpl.file_keywords:
+                    if fkw and fkw.lower() in kw:
+                        context_match_score += 20
+                        break
+        
+        if context_match_score > 0:
+            score += min(context_match_score, 60)
 
         # 2. 文件类型匹配
         ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
@@ -391,27 +448,24 @@ def _match_template(
                         ratio = matched / len(mapping_keys)
                         header_match_ratio = max(header_match_ratio, ratio)
                         score += int(ratio * 40)
-                        if ratio >= 0.3:  # 至少匹配30%的列才算有意义的表头匹配
+                        if ratio >= 0.3:
                             has_header_match = True
 
-        # 【关键修复】提高匹配阈值，避免误匹配：
-        # 必须满足以下条件之一才算有效匹配：
-        # 1. 文件名匹配（50分）+ 一些其他得分 ≥ 50
-        # 2. 工作表名称匹配（80分）
-        # 3. 表头列名匹配比例≥50%（得分≥20）+ 文件类型匹配（10分）≥ 30
-        # 4. 总分 ≥ 50（防止仅靠文件类型10分就误匹配）
+        # 匹配有效性判断（上下文关键词匹配也算有效匹配）
+        has_context_match = context_match_score >= 30
         is_valid = False
         if score >= 80 and (tpl.sheet_pattern and sheet_name):
-            is_valid = True  # 工作表精确匹配
+            is_valid = True
         elif has_filename_match and score >= 50:
-            is_valid = True  # 文件名匹配且有一定置信度
+            is_valid = True
+        elif has_context_match and score >= 40:
+            is_valid = True
         elif header_match_ratio >= 0.5 and score >= 30:
-            is_valid = True  # 表头匹配超过一半
+            is_valid = True
         elif score >= 50:
-            is_valid = True  # 总分足够高
+            is_valid = True
 
         if validate_columns and is_valid:
-            # 额外验证：模板必须能建立有效的字段映射，至少能匹配到员工姓名
             try:
                 col_idx = _build_column_index(file_rows, tpl)
                 if "employee_name" not in col_idx:
@@ -1310,6 +1364,7 @@ def run_smart_import(
     files: List,
     user_id: int,
     username: str,
+    file_paths: Optional[List[str]] = None,
 ) -> ImportResult:
     """
     智能导入主流程：
@@ -1319,6 +1374,9 @@ def run_smart_import(
     4. 姓名匹配员工
     5. 数据校验
     6. 保存入库
+    
+    Args:
+        file_paths: 每个文件的相对路径（可选，用于文件夹导入时提供上下文关键词）
     """
     result = ImportResult()
     batch_id = str(uuid.uuid4())
@@ -1327,9 +1385,12 @@ def run_smart_import(
 
     result.total_files = len(files)
 
-    # ── 第1步：文件解析与字段提取 ──
-    for file in files:
-        filename = file.filename or "unknown"
+    for file_idx, file in enumerate(files):
+        raw_filename = file.filename or "unknown"
+        # 提取纯文件名（去掉可能的路径分隔符）
+        filename = os.path.basename(raw_filename.replace('\\', '/'))
+        relative_path = file_paths[file_idx] if file_paths and file_idx < len(file_paths) else raw_filename.replace('\\', '/')
+        context_keywords = _extract_keywords_from_path(relative_path)
         try:
             file_bytes = file.file.read()
             file.file.seek(0)
@@ -1361,8 +1422,7 @@ def run_smart_import(
                     if not _sheet_has_data(file_rows):
                         continue
 
-                    # 匹配模板（传入工作表名称）
-                    template = _match_template(db, file_rows, filename, sheet_name=sheet_name)
+                    template = _match_template(db, file_rows, filename, sheet_name=sheet_name, context_keywords=context_keywords)
                     if not template:
                         # 有数据但无匹配模板，记录警告
                         sheet_display = sheet_name if sheet_name else "(默认工作表)"
@@ -1398,8 +1458,7 @@ def run_smart_import(
                     result.failed_files += 1
                     continue
 
-                # 匹配模板
-                template = _match_template(db, file_rows, filename)
+                template = _match_template(db, file_rows, filename, context_keywords=context_keywords)
                 if not template:
                     logs.append({
                         "file_name": filename,
@@ -2225,10 +2284,12 @@ def _cleanup_expired_batches():
             pass
 
 
-def save_batch_files(period: str, files: List) -> Dict:
+def save_batch_files(period: str, files: List, file_paths: Optional[List[str]] = None) -> Dict:
     """
     保存上传的文件到临时目录，返回batch信息。
-    返回: {batch_id, period, files: [{index, filename, size}]}
+    Args:
+        file_paths: 每个文件的相对路径（用于文件夹导入时保留目录结构），与files一一对应
+    返回: {batch_id, period, files: [{index, filename, relative_path, size}]}
     """
     _cleanup_expired_batches()
 
@@ -2238,8 +2299,16 @@ def save_batch_files(period: str, files: List) -> Dict:
 
     file_infos = []
     for idx, file in enumerate(files):
-        filename = file.filename or f"unknown_{idx}"
-        safe_name = f"{idx}_{filename}"
+        raw_filename = file.filename or f"unknown_{idx}"
+        # 从raw_filename中提取纯文件名（去掉可能的路径分隔符，浏览器文件夹上传时filename可能包含路径）
+        pure_filename = os.path.basename(raw_filename.replace('\\', '/'))
+        # 相对路径优先使用前端传来的file_paths，否则使用raw_filename（包含路径）
+        if file_paths and idx < len(file_paths) and file_paths[idx]:
+            relative_path = file_paths[idx].replace('\\', '/')
+        else:
+            relative_path = raw_filename.replace('\\', '/')
+        
+        safe_name = f"{idx}_{pure_filename}"
         file_path = batch_dir / safe_name
         file_bytes = file.file.read()
         file.file.seek(0)
@@ -2247,7 +2316,8 @@ def save_batch_files(period: str, files: List) -> Dict:
             f.write(file_bytes)
         file_infos.append({
             "index": idx,
-            "filename": filename,
+            "filename": pure_filename,
+            "relative_path": relative_path,
             "size": len(file_bytes),
         })
 
@@ -2287,6 +2357,9 @@ def precheck_batch(db: Session, batch_id: str) -> Dict:
     for finfo in meta.get("files", []):
         idx = finfo["index"]
         filename = finfo["filename"]
+        relative_path = finfo.get("relative_path", filename)
+        context_keywords = _extract_keywords_from_path(relative_path)
+        
         safe_name = f"{idx}_{filename}"
         file_path = batch_dir / safe_name
 
@@ -2306,7 +2379,6 @@ def precheck_batch(db: Session, batch_id: str) -> Dict:
             unmatched_sheet_entries = []
 
             if ext in ("xlsx", "xls"):
-                # Excel文件：遍历所有工作表检查匹配
                 sheet_names = _get_excel_sheet_names(file_bytes, filename)
                 if not sheet_names:
                     sheet_names = [None]
@@ -2321,22 +2393,19 @@ def precheck_batch(db: Session, batch_id: str) -> Dict:
                     if not file_rows or len(file_rows) < 2:
                         continue
 
-                    # 判断该工作表是否包含有效数据
                     if not _sheet_has_data(file_rows):
                         continue
 
                     data_sheet_count += 1
                     sheet_display = sheet_name if sheet_name else f"工作表{data_sheet_count}"
 
-                    # 尝试匹配模板
-                    template = _match_template(db, file_rows, filename, sheet_name=sheet_name)
+                    template = _match_template(db, file_rows, filename, sheet_name=sheet_name, context_keywords=context_keywords)
                     if template:
                         all_matched_sheets.append(sheet_display)
                         if not matched_template_info:
                             matched_template_info = {"name": template.name, "id": template.id}
                     else:
                         file_fully_matched = False
-                        # 为这个未匹配的工作表创建一个待配置条目
                         unmatched_entry = {
                             **finfo,
                             "sheet_name": sheet_name,
@@ -2346,19 +2415,15 @@ def precheck_batch(db: Session, batch_id: str) -> Dict:
                         }
                         unmatched_sheet_entries.append(unmatched_entry)
 
-                # 判断文件匹配状态
                 if data_sheet_count == 0:
-                    # 没有找到任何包含数据的工作表
                     reason = "文件中未找到有效数据工作表"
                     unmatched_files.append({**finfo, "reason": reason, "sheet_name": None})
                     file_results.append({**finfo, "matched": False, "reason": reason, "total_sheets": len(sheet_names)})
                     continue
                 elif not file_fully_matched:
-                    # 有工作表未匹配模板
                     for entry in unmatched_sheet_entries:
                         unmatched_files.append(entry)
                     total_sheets = data_sheet_count
-                    matched_count = len(all_matched_sheets)
                     file_results.append({
                         **finfo,
                         "matched": False,
@@ -2368,7 +2433,6 @@ def precheck_batch(db: Session, batch_id: str) -> Dict:
                     })
                     continue
                 else:
-                    # 所有数据工作表都匹配成功
                     pass
                             
             elif ext == "pdf":
@@ -2381,7 +2445,7 @@ def precheck_batch(db: Session, batch_id: str) -> Dict:
                     unmatched_files.append({**finfo, "reason": "PDF文件中未找到有效数据表格", "sheet_name": None})
                     file_results.append({**finfo, "matched": False, "reason": "PDF文件中未找到有效数据表格"})
                     continue
-                template = _match_template(db, file_rows, filename)
+                template = _match_template(db, file_rows, filename, context_keywords=context_keywords)
                 if template:
                     matched_template_info = {"name": template.name, "id": template.id}
                     all_matched_sheets = ["(PDF)"]
@@ -2511,15 +2575,18 @@ def run_smart_import_from_batch(
             return self._data
 
     temp_files = []
+    file_paths = []
     for finfo in meta.get("files", []):
         idx = finfo["index"]
         filename = finfo["filename"]
+        relative_path = finfo.get("relative_path", filename)
         safe_name = f"{idx}_{filename}"
         file_path = batch_dir / safe_name
         if file_path.exists():
             temp_files.append(TempFileWrapper(filename, file_path))
+            file_paths.append(relative_path)
 
-    result = run_smart_import(db, period, temp_files, user_id, username)
+    result = run_smart_import(db, period, temp_files, user_id, username, file_paths=file_paths)
     # 收集未匹配模板的文件名（仅error级别的no_template错误，即整个文件未匹配到模板）
     # warning级别的是单个工作表未匹配（预检查阶段应已拦截，此处仅作兜底）
     result.no_template_filenames = list({
@@ -2574,6 +2641,7 @@ def create_batch_from_unmatched(original_batch_id: str, failed_filenames: List[s
         new_file_infos.append({
             "index": new_idx,
             "filename": finfo["filename"],
+            "relative_path": finfo.get("relative_path", finfo["filename"]),
             "size": finfo.get("size", 0),
         })
         new_idx += 1

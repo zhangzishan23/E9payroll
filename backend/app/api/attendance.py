@@ -11,7 +11,7 @@ from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.models.models import AttendanceRecord, Employee, SysDictBase
 from app.api.auth import get_current_user, UserInfo, require_permission
-from app.core.query_utils import filter_active_employees
+from app.core.query_utils import filter_active_employees, apply_data_scope
 from app.services import work_calendar as work_cal
 
 router = APIRouter()
@@ -342,7 +342,10 @@ def get_attendance(
     current_user: UserInfo = Depends(get_current_user)
 ):
     if period:
-        employee_query = filter_active_employees(db.query(Employee), db, hide_status_id=hide_status_id)
+        employee_query = db.query(Employee)
+        if not current_user.is_admin:
+            employee_query = apply_data_scope(employee_query, db, current_user.data_scope, current_user.id)
+        employee_query = filter_active_employees(employee_query, db, hide_status_id=hide_status_id)
         if filter_field and filter_value:
             if filter_field == 'employee_no':
                 employee_query = employee_query.filter(Employee.employee_no.ilike(f'%{filter_value}%'))
@@ -373,6 +376,10 @@ def get_attendance(
         return result
 
     query = db.query(AttendanceRecord)
+    if not current_user.is_admin:
+        query = apply_data_scope(query, db, current_user.data_scope, current_user.id,
+                                 employee_model=AttendanceRecord,
+                                 employee_id_field=AttendanceRecord.employee_id)
     if employee_id:
         query = query.filter(AttendanceRecord.employee_id == employee_id)
     records = query.order_by(AttendanceRecord.period.desc(), AttendanceRecord.employee_id).all()
@@ -395,7 +402,10 @@ def export_attendance(
     current_user: UserInfo = Depends(get_current_user)
 ):
     if period:
-        employee_query = filter_active_employees(db.query(Employee), db, hide_status_id=hide_status_id)
+        employee_query = db.query(Employee)
+        if not current_user.is_admin:
+            employee_query = apply_data_scope(employee_query, db, current_user.data_scope, current_user.id)
+        employee_query = filter_active_employees(employee_query, db, hide_status_id=hide_status_id)
         employees = employee_query.order_by(Employee.employee_no).all()
 
         attendance_map = {}
@@ -417,6 +427,10 @@ def export_attendance(
             data.append((emp, att, name_map, adjusted_days))
     else:
         query = db.query(AttendanceRecord)
+        if not current_user.is_admin:
+            query = apply_data_scope(query, db, current_user.data_scope, current_user.id,
+                                     employee_model=AttendanceRecord,
+                                     employee_id_field=AttendanceRecord.employee_id)
         if employee_id:
             query = query.filter(AttendanceRecord.employee_id == employee_id)
         records = query.order_by(AttendanceRecord.period.desc(), AttendanceRecord.employee_id).all()

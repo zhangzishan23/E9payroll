@@ -14,7 +14,11 @@ from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.core.config import DATABASE_URL
 from app.core.security import get_password_hash
-from app.models.models import SysUser, SysRole, SysUserRole, SysPermission, SysDictBase, SysLog, Employee
+from app.models.models import (
+    SysUser, SysRole, SysUserRole, SysPermission, SysDictBase, SysLog, Employee,
+    EmployeeSalary, PerformanceScore, CalculationLog, ApprovalRecord,
+    ExportTemplate, SalaryPeriodStep
+)
 from app.api.auth import get_current_user, UserInfo, require_permission
 
 
@@ -87,7 +91,9 @@ PERMISSION_MODULES = [
             {"key": "edit", "label": "编辑薪资"},
             {"key": "delete", "label": "删除记录"},
             {"key": "calculate", "label": "执行计算"},
-            {"key": "tax", "label": "个税申报"},
+            {"key": "tax_export", "label": "导出报税模板"},
+            {"key": "tax_import", "label": "导入个税申报结果"},
+            {"key": "travel_import", "label": "导入临时性差旅补贴"},
             {"key": "export", "label": "导出薪资"},
         ]
     },
@@ -691,6 +697,19 @@ def assign_permissions(role_id: int, data: PermissionAssign, db: Session = Depen
     return {"message": "权限配置成功"}
 
 
+def _clear_user_references(db: Session, user_id: int):
+    """清理用户在其他表中的外键引用（置为NULL，保留历史记录）"""
+    db.query(SysUserRole).filter(SysUserRole.user_id == user_id).delete()
+    db.query(SysLog).filter(SysLog.user_id == user_id).update({"user_id": None})
+    db.query(EmployeeSalary).filter(EmployeeSalary.operator_id == user_id).update({"operator_id": None})
+    db.query(PerformanceScore).filter(PerformanceScore.reviewer_id == user_id).update({"reviewer_id": None})
+    db.query(CalculationLog).filter(CalculationLog.operator_id == user_id).update({"operator_id": None})
+    db.query(ApprovalRecord).filter(ApprovalRecord.submitter_id == user_id).update({"submitter_id": None})
+    db.query(ApprovalRecord).filter(ApprovalRecord.approver_id == user_id).update({"approver_id": None})
+    db.query(ExportTemplate).filter(ExportTemplate.created_by == user_id).update({"created_by": None})
+    db.query(SalaryPeriodStep).filter(SalaryPeriodStep.confirmed_by == user_id).update({"confirmed_by": None})
+
+
 def _get_user_with_roles(db: Session, user: SysUser) -> dict:
     """获取用户信息及关联角色"""
     user_roles = db.query(SysRole).join(
@@ -779,7 +798,7 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: UserI
         raise HTTPException(status_code=400, detail="超级管理员账号不可删除")
     if db_user.id == current_user.id:
         raise HTTPException(status_code=400, detail="不能删除当前登录用户")
-    db.query(SysUserRole).filter(SysUserRole.user_id == user_id).delete()
+    _clear_user_references(db, user_id)
     db.delete(db_user)
     db.commit()
     write_log(db, "data_change", current_user.id, current_user.username, "system", "delete", f"删除用户 {db_user.username}")
@@ -799,7 +818,7 @@ def batch_delete_users(ids: List[int], db: Session = Depends(get_db), current_us
     if admin_names:
         raise HTTPException(status_code=400, detail=f"超级管理员账号不可删除")
     for user in users:
-        db.query(SysUserRole).filter(SysUserRole.user_id == user.id).delete()
+        _clear_user_references(db, user.id)
         db.delete(user)
     db.commit()
     write_log(db, "data_change", current_user.id, current_user.username, "system", "delete", f"批量删除 {len(users)} 个用户")

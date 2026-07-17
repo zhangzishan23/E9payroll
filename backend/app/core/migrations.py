@@ -20,6 +20,7 @@ def run_migrations():
     _run_salary_export_migrations()
     _run_attendance_lock_migrations()
     _run_salary_split_migrations()
+    _run_permission_split_migration()
 
 
 def _run_pg_migrations():
@@ -441,7 +442,7 @@ def _init_default_roles_and_permissions():
                     "attendance:view", "attendance:export",
                     "performance:view",
                     "insurance:view",
-                    "salary:view", "salary:edit", "salary:calculate", "salary:tax", "salary:export",
+                    "salary:view", "salary:edit", "salary:calculate", "salary:tax_export", "salary:tax_import", "salary:travel_import", "salary:export",
                     "approval:view",
                     "report:view", "report:export",
                 ]
@@ -501,5 +502,43 @@ def _init_default_roles_and_permissions():
     except Exception:
         db.rollback()
         raise
+    finally:
+        db.close()
+
+
+def _run_permission_split_migration():
+    """将旧的 salary:tax 权限拆分为三个细粒度权限：tax_export, tax_import, travel_import"""
+    from app.core.database import SessionLocal
+    from app.models.models import SysPermission
+
+    db = SessionLocal()
+    try:
+        old_perms = db.query(SysPermission).filter(
+            SysPermission.module == "salary",
+            SysPermission.action == "tax"
+        ).all()
+
+        new_actions = ["tax_export", "tax_import", "travel_import"]
+
+        for old_perm in old_perms:
+            for action in new_actions:
+                existing = db.query(SysPermission).filter(
+                    SysPermission.role_id == old_perm.role_id,
+                    SysPermission.module == "salary",
+                    SysPermission.action == action
+                ).first()
+                if not existing:
+                    new_perm = SysPermission(
+                        role_id=old_perm.role_id,
+                        module="salary",
+                        action=action
+                    )
+                    db.add(new_perm)
+
+            db.delete(old_perm)
+
+        db.commit()
+    except Exception:
+        db.rollback()
     finally:
         db.close()

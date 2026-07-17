@@ -179,7 +179,7 @@ const presetTemplates = {
     'attendance:view', 'attendance:export',
     'performance:view',
     'insurance:view',
-    'salary:view', 'salary:edit', 'salary:calculate', 'salary:tax', 'salary:export',
+    'salary:view', 'salary:edit', 'salary:calculate', 'salary:tax_export', 'salary:tax_import', 'salary:travel_import', 'salary:export',
     'approval:view',
     'report:view', 'report:export',
   ],
@@ -251,7 +251,9 @@ async function fetchPermModules() {
       ]},
       { key: 'salary', label: '薪资计算', actions: [
         { key: 'view', label: '查看薪资' }, { key: 'create', label: '生成记录' }, { key: 'edit', label: '编辑薪资' },
-        { key: 'delete', label: '删除记录' }, { key: 'calculate', label: '执行计算' }, { key: 'tax', label: '个税申报' }, { key: 'export', label: '导出薪资' }
+        { key: 'delete', label: '删除记录' }, { key: 'calculate', label: '执行计算' },
+        { key: 'tax_export', label: '导出报税模板' }, { key: 'tax_import', label: '导入个税申报结果' },
+        { key: 'travel_import', label: '导入临时性差旅补贴' }, { key: 'export', label: '导出薪资' }
       ]},
       { key: 'approval', label: '审批流程', actions: [
         { key: 'view', label: '查看审批' }, { key: 'submit', label: '提交审批' }, { key: 'approve', label: '审核操作' }

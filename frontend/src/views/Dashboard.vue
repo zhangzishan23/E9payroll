@@ -1,17 +1,17 @@
 <template>
-  <div class="space-y-6">
-    <div class="apple-card p-6 bg-gradient-to-r from-blue-50 via-white to-blue-50">
+  <div class="space-y-4">
+    <div class="apple-card p-4 bg-gradient-to-r from-blue-50 via-white to-blue-50">
       <div class="flex items-center justify-between">
-        <div class="flex items-center gap-5">
-          <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-200">
-            <el-icon class="text-white text-3xl"><Money /></el-icon>
+        <div class="flex items-center gap-4">
+          <div class="w-14 h-14 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-200">
+            <el-icon class="text-white text-2xl"><Money /></el-icon>
           </div>
           <div>
-            <div class="flex items-center gap-3">
-              <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-700 to-blue-500 bg-clip-text text-transparent">工资计算管家</h1>
+            <div class="flex items-center gap-2">
+              <h1 class="text-xl font-bold bg-gradient-to-r from-blue-700 to-blue-500 bg-clip-text text-transparent">工资计算管家</h1>
               <span class="px-2 py-0.5 bg-blue-100 text-blue-600 text-xs rounded-full font-medium">智能化薪资核算</span>
             </div>
-            <p class="text-gray-600 mt-1">你好，{{ authStore.user?.display_name || '用户' }} 👋 今天是 {{ today }}</p>
+            <p class="text-gray-600 mt-1 text-sm">你好，{{ authStore.user?.display_name || '用户' }} 👋 今天是 {{ today }}</p>
             <p class="text-blue-600 text-sm mt-0.5 font-medium">{{ currentPeriodDisplay }} 工资计算进行中</p>
           </div>
         </div>
@@ -21,27 +21,56 @@
       </div>
     </div>
 
-    <div class="apple-card p-6 bg-gradient-to-r from-amber-50 via-white to-amber-50">
-      <h3 class="text-lg font-semibold text-gray-700 mb-4">🧾 报税快捷操作</h3>
-      <div class="flex flex-wrap gap-3">
-        <el-button type="primary" size="default" @click="handleExportTaxTemplates">
-          <el-icon class="mr-1"><Download /></el-icon>导出报税模板
-        </el-button>
-        <el-button type="warning" size="default" @click="showTravelImport">
-          <el-icon class="mr-1"><UploadFilled /></el-icon>导入临时性差旅补贴
-        </el-button>
-        <el-button type="success" size="default" @click="showTaxImport">
-          <el-icon class="mr-1"><UploadFilled /></el-icon>导入个税申报结果
-        </el-button>
+    <div class="apple-card p-4">
+      <h3 class="text-base font-semibold text-gray-700 mb-3">⚡ 快捷入口</h3>
+      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+        <div class="apple-card p-3 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-blue-300" @click="goTo('/salary')">
+          <el-icon class="text-3xl text-blue-500 mb-1"><Money /></el-icon>
+          <div class="font-semibold text-sm">薪资计算</div>
+          <div class="text-xs text-gray-500">计算当月工资</div>
+        </div>
+        <div class="apple-card p-3 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-green-300" @click="goTo('/attendance')">
+          <el-icon class="text-3xl text-green-500 mb-1"><Calendar /></el-icon>
+          <div class="font-semibold text-sm">考勤管理</div>
+          <div class="text-xs text-gray-500">管理考勤数据</div>
+        </div>
+        <div class="apple-card p-3 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-orange-300" @click="goTo('/insurance')">
+          <el-icon class="text-3xl text-orange-500 mb-1"><CreditCard /></el-icon>
+          <div class="font-semibold text-sm">社保公积金</div>
+          <div class="text-xs text-gray-500">管理社保数据</div>
+        </div>
+        <div class="apple-card p-3 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-purple-300" @click="goTo('/performance')">
+          <el-icon class="text-3xl text-purple-500 mb-1"><TrendCharts /></el-icon>
+          <div class="font-semibold text-sm">绩效评分</div>
+          <div class="text-xs text-gray-500">录入绩效系数</div>
+        </div>
+        <div class="apple-card p-3 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-red-300" @click="goTo('/approval')">
+          <el-icon class="text-3xl text-red-500 mb-1"><Checked /></el-icon>
+          <div class="font-semibold text-sm">审批流程</div>
+          <div class="text-xs text-gray-500">审核薪资数据</div>
+        </div>
+        <div class="apple-card p-3 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-cyan-300" @click="goTo('/reports')">
+          <el-icon class="text-3xl text-cyan-500 mb-1"><Document /></el-icon>
+          <div class="font-semibold text-sm">报表导出</div>
+          <div class="text-xs text-gray-500">导出工资条等</div>
+        </div>
+        <div class="apple-card p-3 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-indigo-300" @click="goTo('/employees')">
+          <el-icon class="text-3xl text-indigo-500 mb-1"><User /></el-icon>
+          <div class="font-semibold text-sm">档案管理</div>
+          <div class="text-xs text-gray-500">管理员工信息</div>
+        </div>
+        <div class="apple-card p-3 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-gray-300" @click="goTo('/insurance-template')">
+          <el-icon class="text-3xl text-gray-500 mb-1"><Setting /></el-icon>
+          <div class="font-semibold text-sm">导入模板</div>
+          <div class="text-xs text-gray-500">配置导入模板</div>
+        </div>
       </div>
-      <p class="text-xs text-gray-500 mt-2">提示：先导出报税模板去报税系统申报，报税后导入「个税申报结果」回填应扣个税额；临时性差旅补贴可单独导入</p>
     </div>
 
-    <div class="apple-card p-6">
-      <h3 class="text-lg font-semibold text-gray-700 mb-4">📋 本月算薪进度</h3>
-      <p class="text-sm text-gray-500 mb-4">点击圆形图标可确认/取消确认步骤，点击标题可跳转至对应页面；绿色闪烁表示数据齐全可确认，红色表示有员工数据不全（仍可强制确认）</p>
+    <div class="apple-card p-4">
+      <h3 class="text-base font-semibold text-gray-700 mb-2">📋 本月算薪进度</h3>
       <div class="relative">
-        <div class="absolute top-5 left-0 right-0 h-1 bg-gray-200 rounded"></div>
+        <div class="absolute top-4 left-0 right-0 h-1 bg-gray-200 rounded"></div>
         <div class="flex justify-between relative z-10">
           <div
             v-for="(step, index) in salarySteps"
@@ -52,19 +81,19 @@
             <div class="relative">
               <div
                 v-if="!step.is_confirmed && step.data_ready"
-                class="absolute top-0 left-0 w-10 h-10 rounded-full animate-ping-ring bg-green-400"
+                class="absolute top-0 left-0 w-8 h-8 rounded-full animate-ping-ring bg-green-400"
               ></div>
               <div
-                class="step-circle w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold text-lg transition-all duration-300 relative z-10"
+                class="step-circle w-8 h-8 rounded-full flex items-center justify-center text-white font-semibold text-sm transition-all duration-300 relative z-10"
                 :class="[getStepCircleClass(step), !step.is_confirmed && step.data_ready ? 'animate-green-blink' : '']"
                 @click.stop="handleStepClick(step)"
               >
-                <el-icon v-if="step.is_confirmed" :size="20"><Check /></el-icon>
+                <el-icon v-if="step.is_confirmed" :size="16"><Check /></el-icon>
                 <span v-else>{{ index + 1 }}</span>
               </div>
             </div>
             <div
-              class="mt-3 text-center"
+              class="mt-2 text-center"
               @click="goTo(step.route)"
             >
               <div class="font-semibold text-sm" :class="step.is_confirmed ? 'text-green-600' : 'text-gray-700'">
@@ -73,59 +102,26 @@
               <div class="text-xs mt-1" :class="getStepDescClass(step)">
                 {{ getStepDesc(step) }}
               </div>
-              <div v-if="step.is_force_confirmed" class="text-xs text-orange-500 mt-0.5">
-                （强制确认）
-              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <div class="apple-card p-6">
-      <h3 class="text-lg font-semibold text-gray-700 mb-4">⚡ 快捷入口</h3>
-      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-        <div class="apple-card p-5 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-blue-300" @click="goTo('/salary')">
-          <el-icon class="text-4xl text-blue-500 mb-3"><Money /></el-icon>
-          <div class="font-semibold">薪资计算</div>
-          <div class="text-xs text-gray-500 mt-1">计算当月工资</div>
-        </div>
-        <div class="apple-card p-5 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-green-300" @click="goTo('/attendance')">
-          <el-icon class="text-4xl text-green-500 mb-3"><Calendar /></el-icon>
-          <div class="font-semibold">考勤管理</div>
-          <div class="text-xs text-gray-500 mt-1">管理考勤数据</div>
-        </div>
-        <div class="apple-card p-5 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-orange-300" @click="goTo('/insurance')">
-          <el-icon class="text-4xl text-orange-500 mb-3"><CreditCard /></el-icon>
-          <div class="font-semibold">社保公积金</div>
-          <div class="text-xs text-gray-500 mt-1">管理社保数据</div>
-        </div>
-        <div class="apple-card p-5 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-purple-300" @click="goTo('/performance')">
-          <el-icon class="text-4xl text-purple-500 mb-3"><TrendCharts /></el-icon>
-          <div class="font-semibold">绩效评分</div>
-          <div class="text-xs text-gray-500 mt-1">录入绩效系数</div>
-        </div>
-        <div class="apple-card p-5 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-red-300" @click="goTo('/approval')">
-          <el-icon class="text-4xl text-red-500 mb-3"><Checked /></el-icon>
-          <div class="font-semibold">审批流程</div>
-          <div class="text-xs text-gray-500 mt-1">审核薪资数据</div>
-        </div>
-        <div class="apple-card p-5 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-cyan-300" @click="goTo('/reports')">
-          <el-icon class="text-4xl text-cyan-500 mb-3"><Document /></el-icon>
-          <div class="font-semibold">报表导出</div>
-          <div class="text-xs text-gray-500 mt-1">导出工资条等</div>
-        </div>
-        <div class="apple-card p-5 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-indigo-300" @click="goTo('/employees')">
-          <el-icon class="text-4xl text-indigo-500 mb-3"><User /></el-icon>
-          <div class="font-semibold">档案管理</div>
-          <div class="text-xs text-gray-500 mt-1">管理员工信息</div>
-        </div>
-        <div class="apple-card p-5 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-transparent hover:border-gray-300" @click="goTo('/insurance-template')">
-          <el-icon class="text-4xl text-gray-500 mb-3"><Setting /></el-icon>
-          <div class="font-semibold">导入模板</div>
-          <div class="text-xs text-gray-500 mt-1">配置导入模板</div>
-        </div>
+    <div class="apple-card p-4 bg-gradient-to-r from-amber-50 via-white to-amber-50" v-if="hasAnyTaxPermission">
+      <h3 class="text-base font-semibold text-gray-700 mb-2">🧾 报税快捷操作</h3>
+      <div class="flex flex-wrap gap-2">
+        <el-button v-permission="'salary:tax_export'" type="primary" size="default" @click="handleExportTaxTemplates">
+          <el-icon class="mr-1"><Download /></el-icon>导出报税模板
+        </el-button>
+        <el-button v-permission="'salary:travel_import'" type="warning" size="default" @click="showTravelImport">
+          <el-icon class="mr-1"><UploadFilled /></el-icon>导入临时性差旅补贴
+        </el-button>
+        <el-button v-permission="'salary:tax_import'" type="success" size="default" @click="showTaxImport">
+          <el-icon class="mr-1"><UploadFilled /></el-icon>导入个税申报结果
+        </el-button>
       </div>
+      <p class="text-xs text-gray-500 mt-1">提示：先导出报税模板去报税系统申报，报税后导入「个税申报结果」回填应扣个税额</p>
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -303,6 +299,10 @@ const hasAnyTodo = computed(() => {
     (stats.salary_total > 0 && stats.tax_missing === 0 && stats.review_passed === stats.salary_total)
 })
 
+const hasAnyTaxPermission = computed(() => {
+  return authStore.hasAnyPermission('salary:tax_export', 'salary:tax_import', 'salary:travel_import')
+})
+
 function fmtMoney(val) {
   if (val == null || val === 0) return ''
   return '¥' + Number(val).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
@@ -471,6 +471,10 @@ const taxFile = ref(null)
 const taxUploadRef = ref(null)
 
 function showTravelImport() {
+  if (!authStore.hasPermission('salary:travel_import')) {
+    ElMessage.warning('您没有该操作权限，请联系管理员')
+    return
+  }
   travelFile.value = null
   if (travelUploadRef.value) {
     travelUploadRef.value.clearFiles()
@@ -479,6 +483,10 @@ function showTravelImport() {
 }
 
 function showTaxImport() {
+  if (!authStore.hasPermission('salary:tax_import')) {
+    ElMessage.warning('您没有该操作权限，请联系管理员')
+    return
+  }
   taxFile.value = null
   if (taxUploadRef.value) {
     taxUploadRef.value.clearFiles()
@@ -494,7 +502,21 @@ function handleTaxFileChange(file) {
   taxFile.value = file.raw
 }
 
+async function extractBlobError(blob) {
+  try {
+    const text = await blob.text()
+    const json = JSON.parse(text)
+    return json.detail || '请求失败'
+  } catch {
+    return '请求失败'
+  }
+}
+
 async function handleExportTaxTemplates() {
+  if (!authStore.hasPermission('salary:tax_export')) {
+    ElMessage.warning('您没有该操作权限，请联系管理员')
+    return
+  }
   const period = statsPeriod.value
   const files = [
     { type: 'salary', filename: `正常工资薪金_${period}.xlsx` },
@@ -505,6 +527,12 @@ async function handleExportTaxTemplates() {
     const { type, filename } = files[i]
     try {
       const res = await api.get(`/salary/export-tax-template/${period}`, { params: { type }, responseType: 'blob' })
+      const contentType = res.headers['content-type'] || ''
+      if (contentType.includes('application/json')) {
+        const errMsg = await extractBlobError(res.data)
+        ElMessage.error(errMsg)
+        return
+      }
       const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
@@ -518,7 +546,6 @@ async function handleExportTaxTemplates() {
         await new Promise(resolve => setTimeout(resolve, 300))
       }
     } catch (e) {
-      ElMessage.error(`导出${filename}失败`)
       return
     }
   }
@@ -526,6 +553,10 @@ async function handleExportTaxTemplates() {
 }
 
 async function doTravelImport() {
+  if (!authStore.hasPermission('salary:travel_import')) {
+    ElMessage.warning('您没有该操作权限，请联系管理员')
+    return
+  }
   if (!travelFile.value) {
     ElMessage.warning('请先选择要上传的Excel文件')
     return
@@ -541,13 +572,16 @@ async function doTravelImport() {
     travelImportVisible.value = false
     await fetchStats()
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '导入失败，请确认文件格式正确')
   } finally {
     travelImporting.value = false
   }
 }
 
 async function doTaxImport() {
+  if (!authStore.hasPermission('salary:tax_import')) {
+    ElMessage.warning('您没有该操作权限，请联系管理员')
+    return
+  }
   if (!taxFile.value) {
     ElMessage.warning('请先选择要上传的Excel文件')
     return
@@ -561,12 +595,8 @@ async function doTaxImport() {
     })
     ElMessage.success(res.data.message)
     taxImportVisible.value = false
-    try {
-      await api.post(`/salary/calculate-net/${statsPeriod.value}`)
-    } catch {}
     await fetchStats()
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '导入失败，请确认文件格式正确')
   } finally {
     taxImporting.value = false
   }

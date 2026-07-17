@@ -643,27 +643,62 @@
           </div>
         </div>
 
-        <el-upload
-          ref="smartUploadRef"
-          :auto-upload="false"
-          multiple
-          accept=".xlsx,.xls,.pdf"
-          :on-change="handleSmartFileChange"
-          :file-list="smartFileList"
-          drag
-        >
-          <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-          <div class="el-upload__text">
-            将文件拖到此处，或<em>点击选择</em>
-          </div>
-          <template #tip>
-            <div class="el-upload__tip">
-              支持 Excel (.xlsx/.xls) 和 PDF (.pdf)，可一次选择多个文件
+        <div class="upload-area mb-4">
+          <el-upload
+            ref="smartUploadRef"
+            :auto-upload="false"
+            multiple
+            accept=".xlsx,.xls,.pdf"
+            :on-change="handleSmartFileChange"
+            :show-file-list="false"
+            drag
+            class="smart-upload-drag"
+          >
+            <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+            <div class="el-upload__text">
+              将文件拖到此处，或<em>点击选择文件</em>
             </div>
-          </template>
-        </el-upload>
+            <template #tip>
+              <div class="el-upload__tip">
+                支持 Excel (.xlsx/.xls) 和 PDF (.pdf)，可一次选择多个文件
+              </div>
+            </template>
+          </el-upload>
+        </div>
+
+        <div class="flex justify-center gap-3 mb-4">
+          <el-button type="primary" :icon="FolderAdd" @click="triggerFolderSelect">
+            选择文件夹
+          </el-button>
+          <input
+            ref="folderInputRef"
+            type="file"
+            webkitdirectory
+            directory
+            multiple
+            accept=".xlsx,.xls,.pdf"
+            class="hidden"
+            @change="handleFolderSelect"
+          />
+        </div>
+
+        <div v-if="smartFiles.length > 0" class="selected-files mb-4">
+          <div class="text-sm text-gray-600 mb-2">已选择 {{ smartFiles.length }} 个文件：</div>
+          <el-table :data="smartFileListDisplay" border stripe size="small" max-height="200">
+            <el-table-column prop="relativePath" label="文件路径" min-width="300" show-overflow-tooltip />
+            <el-table-column prop="size" label="大小" width="100">
+              <template #default="{ row }">{{ formatFileSize(row.size) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="70" fixed="right">
+              <template #default="{ $index }">
+                <el-button type="danger" link size="small" @click="removeSelectedFile($index)">移除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
 
         <div class="flex justify-center mt-4">
+          <el-button @click="clearSelectedFiles" :disabled="smartFiles.length === 0">清空列表</el-button>
           <el-button type="primary" :loading="smartImporting" :disabled="smartFiles.length === 0" @click="doSmartImport">
             开始智能导入
           </el-button>
@@ -747,7 +782,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
-import { Plus, Download, Upload, Delete, InfoFilled, UploadFilled, WarningFilled, CopyDocument, Setting } from '@element-plus/icons-vue'
+import { Plus, Download, Upload, Delete, InfoFilled, UploadFilled, WarningFilled, CopyDocument, Setting, FolderAdd } from '@element-plus/icons-vue'
 import api from '../../api'
 import ColumnSetting from '../../components/ColumnSetting.vue'
 import { formatMoney, formatPercent } from '../../utils/format'
@@ -807,10 +842,20 @@ const importResult = ref(null)
 const uploadRef = ref(null)
 // 智能导入相关
 const smartUploadRef = ref(null)
+const folderInputRef = ref(null)
 const smartFiles = ref([])
 const smartFileList = ref([])
 const smartImportResult = ref(null)
 const smartBatchId = ref(null)
+
+const smartFileListDisplay = computed(() => {
+  return smartFiles.value.map((item, idx) => ({
+    name: item.file.name,
+    relativePath: item.relativePath,
+    size: item.file.size,
+    index: idx
+  }))
+})
 const formRef = ref(null)
 const editId = ref(null)
 const formEmployeeId = ref(null)
@@ -1255,6 +1300,14 @@ async function doImport() {
 }
 
 // ── 智能导入 ──
+function formatFileSize(bytes) {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+}
+
 function showSmartImport() {
   smartFiles.value = []
   smartFileList.value = []
@@ -1263,12 +1316,78 @@ function showSmartImport() {
 }
 
 function handleSmartFileChange(file) {
-  smartFiles.value.push(file.raw)
+  const exists = smartFiles.value.some(item => 
+    item.file.name === file.raw.name && item.file.size === file.raw.size && item.relativePath === file.raw.name
+  )
+  if (!exists) {
+    smartFiles.value.push({
+      file: file.raw,
+      relativePath: file.raw.name
+    })
+    smartFileList.value.push({
+      name: file.raw.name,
+      relativePath: file.raw.name,
+      size: file.raw.size
+    })
+  }
+}
+
+function triggerFolderSelect() {
+  folderInputRef.value?.click()
+}
+
+function handleFolderSelect(e) {
+  const files = e.target.files
+  if (!files || files.length === 0) return
+  
+  let addedCount = 0
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i]
+    const ext = f.name.toLowerCase().split('.').pop()
+    if (!['xlsx', 'xls', 'pdf'].includes(ext)) continue
+    
+    const relativePath = f.webkitRelativePath || f.name
+    const exists = smartFiles.value.some(item => 
+      item.file.name === f.name && item.relativePath === relativePath
+    )
+    if (!exists) {
+      smartFiles.value.push({
+        file: f,
+        relativePath: relativePath
+      })
+      smartFileList.value.push({
+        name: f.name,
+        relativePath: relativePath,
+        size: f.size
+      })
+      addedCount++
+    }
+  }
+  
+  if (addedCount > 0) {
+    ElMessage.success(`已添加 ${addedCount} 个文件`)
+  }
+  e.target.value = ''
+}
+
+function removeSelectedFile(index) {
+  smartFiles.value.splice(index, 1)
+  smartFileList.value.splice(index, 1)
+}
+
+function clearSelectedFiles() {
+  smartFiles.value = []
+  smartFileList.value = []
+  if (smartUploadRef.value) {
+    smartUploadRef.value.clearFiles()
+  }
+  if (folderInputRef.value) {
+    folderInputRef.value.value = ''
+  }
 }
 
 function resetSmartImport() {
-  smartFiles.value = []
-  smartFileList.value = []
+  clearSelectedFiles()
   smartImportResult.value = null
   smartBatchId.value = null
 }
@@ -1281,9 +1400,12 @@ async function doSmartImport() {
   smartImporting.value = true
   try {
     const formData = new FormData()
-    smartFiles.value.forEach(f => {
-      formData.append('files', f)
+    const filePaths = []
+    smartFiles.value.forEach(item => {
+      formData.append('files', item.file)
+      filePaths.push(item.relativePath)
     })
+    formData.append('file_paths', JSON.stringify(filePaths))
 
     // 第一步：上传文件并预检查
     const prepareRes = await api.post(`/social-insurance/smart-import-prepare/${periodDate.value}`, formData, {
@@ -1504,5 +1626,8 @@ async function checkBatchExecute() {
 }
 .import-tabs :deep(.el-tabs__content) {
   padding: 0;
+}
+.hidden {
+  display: none !important;
 }
 </style>

@@ -8,7 +8,7 @@ from decimal import Decimal
 from openpyxl import Workbook
 from app.core.database import get_db
 from app.core.log_helper import write_log
-from app.core.query_utils import filter_active_employees
+from app.core.query_utils import filter_active_employees, apply_data_scope
 from app.services.work_calendar import get_month_salary_days
 from app.models.models import PerformanceScore, Employee, EmployeeSalary, AttendanceRecord
 from app.api.auth import get_current_user, UserInfo, require_permission
@@ -141,6 +141,8 @@ def get_performances(
     if period:
         from datetime import date
         query = db.query(Employee)
+        if not current_user.is_admin:
+            query = apply_data_scope(query, db, current_user.data_scope, current_user.id)
         employees = filter_active_employees(query, db, hide_status_id=hide_status_id).order_by(Employee.employee_no).all()
         perf_map = {}
         records = db.query(PerformanceScore).filter(PerformanceScore.period == period).all()

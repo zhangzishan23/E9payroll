@@ -11,7 +11,7 @@ import xlrd
 import uuid
 from app.core.database import get_db
 from app.core.log_helper import write_log
-from app.core.query_utils import filter_active_employees
+from app.core.query_utils import filter_active_employees, apply_data_scope
 from app.services.work_calendar import get_month_salary_days
 from app.models.models import (
     Employee, EmployeeSalary, EmployeeSalaryAdjustment, AttendanceRecord, PerformanceScore,
@@ -398,7 +398,12 @@ def ensure_salary_records(
 
 
 def _perform_gross_calculation(db, period, hide_status_id, current_user=None, batch_no=None):
+    is_batch_calc = batch_no is not None
+    is_admin = current_user and current_user.is_admin
+
     query = db.query(Employee)
+    if current_user and not is_admin:
+        query = apply_data_scope(query, db, current_user.data_scope, current_user.id)
     active_employees = filter_active_employees(query, db, hide_status_id=hide_status_id).order_by(Employee.employee_no).all()
 
     period_end = _get_period_end(period)
@@ -475,24 +480,33 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
             has_si_data = si is not None
             has_any_data = has_salary_data or has_si_data
 
+            db.query(SalaryCalculation).filter(
+                SalaryCalculation.period == period,
+                SalaryCalculation.employee_id == emp.id
+            ).delete(synchronize_session=False)
+
+            records_to_create = []
+
             if not has_any_data:
-                if emp.id not in existing_emp_ids:
-                    empty_record = SalaryCalculation(
-                        period=period,
-                        employee_id=emp.id,
-                        contract_company=contract_company_name,
-                        pay_company_id=emp.contract_company_id,
-                        pay_company_name=contract_company_name,
-                        record_type='single',
-                        department=name_map.get(emp.department_id, ''),
-                        position=name_map.get(emp.position_id, ''),
-                        cost_owner=emp.cost_owner or '',
-                        status=name_map.get(emp.status_id, ''),
-                        entry_date=emp.entry_date,
-                        calculation_status="待核算",
-                        review_status=""
-                    )
-                    db.add(empty_record)
+                empty_record = SalaryCalculation(
+                    period=period,
+                    employee_id=emp.id,
+                    contract_company=contract_company_name,
+                    pay_company_id=emp.contract_company_id,
+                    pay_company_name=contract_company_name,
+                    record_type='single',
+                    department=name_map.get(emp.department_id, ''),
+                    position=name_map.get(emp.position_id, ''),
+                    cost_owner=emp.cost_owner or '',
+                    status=name_map.get(emp.status_id, ''),
+                    entry_date=emp.entry_date,
+                    calculation_status="待核算",
+                    review_status=""
+                )
+                records_to_create.append(empty_record)
+                for rec in records_to_create:
+                    db.add(rec)
+                success_count += 1
                 continue
 
             if has_salary_data:
@@ -574,14 +588,9 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                 si_personal = round(p + u + m, 2) if any(v is not None for v in [pension_personal, unemployment_personal, medical_personal]) else None
                 si_hf_total = round(p + u + m + h, 2) if any(v is not None for v in [pension_personal, unemployment_personal, medical_personal, hf_personal]) else None
 
-            db.query(SalaryCalculation).filter(
-                SalaryCalculation.period == period,
-                SalaryCalculation.employee_id == emp.id
-            ).delete(synchronize_session=False)
+            should_split = split_target is not None and has_salary_data and has_si_data and si_hf_total is not None and si_hf_total > 0
 
-            records_to_create = []
-
-            if split_target:
+            if should_split:
                 contract_existing = existing_by_emp.get((emp.id, emp.contract_company_id))
                 yijiu_existing_keys = [k for k in existing_by_emp.keys() if k[0] == emp.id and k[1] != emp.contract_company_id]
                 payroll_existing = existing_by_emp.get(yijiu_existing_keys[0]) if yijiu_existing_keys else None
@@ -900,8 +909,16 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                     net_salary = None
                     calc_status = "待核算"
 
-                pay_company_id = emp.contract_company_id
-                pay_company_name_val = contract_company_name
+                if split_target is not None:
+                    if has_salary_data and not has_si_data:
+                        pay_company_id = split_target.id
+                        pay_company_name_val = split_target.name
+                    else:
+                        pay_company_id = emp.contract_company_id
+                        pay_company_name_val = contract_company_name
+                else:
+                    pay_company_id = emp.contract_company_id
+                    pay_company_name_val = contract_company_name
                 record_type_val = 'single'
 
                 single_record = SalaryCalculation(
@@ -977,9 +994,10 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
             failed_count += 1
 
     active_emp_ids = {e.id for e in active_employees}
-    for old_calc in all_existing:
-        if old_calc.employee_id not in active_emp_ids:
-            db.delete(old_calc)
+    if is_batch_calc and is_admin:
+        for old_calc in all_existing:
+            if old_calc.employee_id not in active_emp_ids:
+                db.delete(old_calc)
 
     if current_user and batch_no:
         start_time = datetime.now()
@@ -1221,10 +1239,12 @@ def get_calculation_results(
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
-    _perform_gross_calculation(db, period, hide_status_id)
+    _perform_gross_calculation(db, period, hide_status_id, current_user)
     db.commit()
 
     query = db.query(Employee)
+    if not current_user.is_admin:
+        query = apply_data_scope(query, db, current_user.data_scope, current_user.id)
     active_employees = filter_active_employees(query, db, hide_status_id=hide_status_id).all()
     active_emp_ids = {e.id: e for e in active_employees}
 
@@ -1237,6 +1257,8 @@ def get_calculation_results(
     ).all()}
 
     calcs_query = db.query(SalaryCalculation).filter(SalaryCalculation.period == period)
+    if not current_user.is_admin:
+        calcs_query = apply_data_scope(calcs_query, db, current_user.data_scope, current_user.id, employee_id_field=SalaryCalculation.employee_id)
     if pay_company_id:
         calcs_query = calcs_query.filter(SalaryCalculation.pay_company_id == pay_company_id)
     calcs = calcs_query.order_by(SalaryCalculation.employee_id, SalaryCalculation.record_type).all()
@@ -1339,7 +1361,10 @@ def get_pay_companies(
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
 ):
-    calcs = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()
+    calcs_query = db.query(SalaryCalculation).filter(SalaryCalculation.period == period)
+    if not current_user.is_admin:
+        calcs_query = apply_data_scope(calcs_query, db, current_user.data_scope, current_user.id, employee_id_field=SalaryCalculation.employee_id)
+    calcs = calcs_query.all()
     companies = []
     seen = set()
     for c in calcs:
@@ -1533,7 +1558,7 @@ def update_calculation_result(
     )
 
 
-@router.post("/calculate-net/{period}", response_model=CalculationSummary, dependencies=[Depends(require_permission("salary:calculate"))])
+@router.post("/calculate-net/{period}", response_model=CalculationSummary, dependencies=[Depends(require_permission("salary:calculate", "salary:tax_import", "salary:travel_import"))])
 def calculate_net_salary(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     calcs = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()
     if not calcs:
@@ -1779,7 +1804,7 @@ class TaxImportItem(BaseModel):
     compensation_tax: Optional[float] = 0
 
 
-@router.post("/import-tax/{period}", dependencies=[Depends(require_permission("salary:tax"))])
+@router.post("/import-tax/{period}", dependencies=[Depends(require_permission("salary:tax_import", "salary:travel_import"))])
 def import_tax_data(
     period: str,
     items: List[TaxImportItem],
@@ -2195,7 +2220,7 @@ def _parse_tax_refund_excel(file_content: bytes) -> List[dict]:
     return results
 
 
-@router.post("/upload-tax-excel/{period}", dependencies=[Depends(require_permission("salary:tax"))])
+@router.post("/upload-tax-excel/{period}", dependencies=[Depends(require_permission("salary:tax_import"))])
 async def upload_tax_excel(
     period: str,
     file: UploadFile = File(...),
@@ -2317,7 +2342,7 @@ async def upload_tax_excel(
     }
 
 
-@router.get("/export-tax-template/{period}", dependencies=[Depends(require_permission("salary:tax"))])
+@router.get("/export-tax-template/{period}", dependencies=[Depends(require_permission("salary:tax_export"))])
 def export_tax_template(
     period: str,
     type: str = Query("salary", description="导出类型: salary(正常工资薪金), bonus(全年一次性奖金), severance(解除劳动合同一次性补偿金)"),
@@ -2711,7 +2736,7 @@ def _parse_travel_untaxed_excel(file_content: bytes) -> dict:
     return rounded
 
 
-@router.post("/import-travel-untaxed/{period}", dependencies=[Depends(require_permission("salary:tax"))])
+@router.post("/import-travel-untaxed/{period}", dependencies=[Depends(require_permission("salary:travel_import"))])
 async def import_travel_untaxed(
     period: str,
     file: UploadFile = File(...),
@@ -2753,6 +2778,37 @@ async def import_travel_untaxed(
         if calc:
             existing_travel = _safe_float(calc.travel_untaxed) or 0
             calc.travel_untaxed = round(existing_travel + amount, 2)
+
+            gross = _safe_float(calc.gross_salary)
+            si_hf = _safe_float(calc.si_hf_total)
+            pretax = _safe_float(calc.pretax_adjustment) or 0
+            posttax = _safe_float(calc.posttax_adjustment) or 0
+            tax = _safe_float(calc.tax_deduction)
+            special_deduction = _safe_float(calc.special_deduction) or 0
+
+            if si_hf is None and gross is not None:
+                pension = _safe_float(calc.pension_personal) or 0
+                unemployment = _safe_float(calc.unemployment_personal) or 0
+                medical = _safe_float(calc.medical_personal) or 0
+                hf = _safe_float(calc.housing_fund_personal) or 0
+                si_hf = pension + unemployment + medical + hf
+                calc.si_hf_total = si_hf if si_hf > 0 else None
+
+            if gross is not None:
+                sh = si_hf or 0
+                calc.salary_after_si_hf = round(gross + pretax - sh, 2)
+                if tax is not None:
+                    calc.net_salary = round(gross + pretax - sh - tax + posttax, 2)
+                    calc.calculation_status = "实发已核算"
+                else:
+                    calc.net_salary = round(gross + pretax - sh + posttax, 2)
+                    calc.calculation_status = "应发已核算"
+                lm = _safe_float(calc.last_month_untaxed) or 0
+                tu = _safe_float(calc.travel_untaxed) or 0
+                ct = _safe_float(calc.compensation_tax) or 0
+                sp = _safe_float(calc.severance_pay) or 0
+                yeb = _safe_float(calc.year_end_bonus_untaxed) or 0
+                calc.actual_taxable = round(gross + pretax + lm + tu + ct + sp + yeb - special_deduction, 2)
 
         imported += 1
     
