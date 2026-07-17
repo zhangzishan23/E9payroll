@@ -11,16 +11,16 @@
           <el-option label="状态" value="status" />
         </el-select>
         <el-input v-model="filterValue" placeholder="筛选值" size="small" clearable class="!w-36" @input="fetchData" @clear="fetchData" />
-        <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)">新增</el-button>
-        <el-button :icon="Upload" size="small" @click="showImport">导入</el-button>
-        <el-button type="info" :icon="Download" size="small" @click="downloadTemplate">下载模板</el-button>
-        <el-button type="success" :icon="Download" size="small" @click="handleExport">导出</el-button>
-        <el-tooltip content="仅同步「数据字典-部门」中已启动的部门员工" placement="bottom">
-          <el-button type="warning" size="small" :loading="syncingRoster" @click="syncRoster">
+        <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)" v-permission="'employee:create'">新增</el-button>
+        <el-button :icon="Upload" size="small" @click="showImport" v-permission="'employee:import'">导入</el-button>
+        <el-button type="info" :icon="Download" size="small" @click="downloadTemplate" v-permission="'employee:import'">下载模板</el-button>
+        <el-button type="success" :icon="Download" size="small" @click="handleExport" v-permission="'employee:export'">导出</el-button>
+        <el-tooltip content="一键从钉钉同步部门和员工信息（已禁用的部门不同步）" placement="bottom">
+          <el-button type="warning" size="small" :loading="syncingRoster" @click="syncRoster" v-permission="'employee:sync'">
             <el-icon class="mr-1"><Refresh /></el-icon>同步钉钉
           </el-button>
         </el-tooltip>
-        <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">
+        <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete" v-permission="'employee:delete'">
           删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
         </el-button>
         <el-divider direction="vertical" />
@@ -36,7 +36,7 @@
           </el-select>
         </el-tooltip>
         <el-divider direction="vertical" />
-        <el-button size="small" :type="editMode ? 'warning' : 'default'" @click="toggleEditMode">
+        <el-button size="small" :type="editMode ? 'warning' : 'default'" @click="toggleEditMode" v-permission="'employee:edit'">
           {{ editMode ? '退出编辑' : '编辑' }}
         </el-button>
         <ColumnSetting
@@ -46,7 +46,7 @@
           storage-key="employee_table_columns"
         />
         <template v-if="editMode">
-          <el-button type="primary" size="small" :loading="savingEdits" :disabled="changedSet.size === 0" @click="confirmEdits">
+          <el-button type="primary" size="small" :loading="savingEdits" :disabled="changedSet.size === 0" @click="confirmEdits" v-permission="'employee:edit'">
             保存{{ changedSet.size ? `(${changedSet.size})` : '' }}
           </el-button>
           <el-button size="small" :disabled="changedSet.size === 0" @click="cancelEdits">取消</el-button>
@@ -80,7 +80,7 @@
             <template v-if="editMode">
               <el-input-number v-model="editCache[row.id].base_salary" :min="0" :precision="2" size="small" class="cell-number" controls-position="right" @change="markChanged(row.id)" />
             </template>
-            <template v-else>{{ row.base_salary != null ? row.base_salary : '' }}</template>
+            <template v-else>{{ formatMoney(row.base_salary) }}</template>
           </template>
         </el-table-column>
         <el-table-column v-if="isColumnVisible('performance_standard')" prop="performance_standard" label="绩效标准" width="100">
@@ -88,7 +88,7 @@
             <template v-if="editMode">
               <el-input-number v-model="editCache[row.id].performance_standard" :min="0" :precision="2" size="small" class="cell-number" controls-position="right" @change="markChanged(row.id)" />
             </template>
-            <template v-else>{{ row.performance_standard != null ? row.performance_standard : '' }}</template>
+            <template v-else>{{ formatMoney(row.performance_standard) }}</template>
           </template>
         </el-table-column>
         <el-table-column v-if="isColumnVisible('meal_allowance')" prop="meal_allowance" label="餐补" width="85">
@@ -96,7 +96,7 @@
             <template v-if="editMode">
               <el-input-number v-model="editCache[row.id].meal_allowance" :min="0" :precision="2" size="small" class="cell-number" controls-position="right" @change="markChanged(row.id)" />
             </template>
-            <template v-else>{{ row.meal_allowance != null ? row.meal_allowance : '' }}</template>
+            <template v-else>{{ formatMoney(row.meal_allowance) }}</template>
           </template>
         </el-table-column>
         <el-table-column v-if="isColumnVisible('transport_allowance')" prop="transport_allowance" label="交通补贴" width="95">
@@ -104,7 +104,7 @@
             <template v-if="editMode">
               <el-input-number v-model="editCache[row.id].transport_allowance" :min="0" :precision="2" size="small" class="cell-number" controls-position="right" @change="markChanged(row.id)" />
             </template>
-            <template v-else>{{ row.transport_allowance != null ? row.transport_allowance : '' }}</template>
+            <template v-else>{{ formatMoney(row.transport_allowance) }}</template>
           </template>
         </el-table-column>
         <el-table-column v-if="isColumnVisible('communication_allowance')" prop="communication_allowance" label="通讯补贴" width="95">
@@ -112,7 +112,7 @@
             <template v-if="editMode">
               <el-input-number v-model="editCache[row.id].communication_allowance" :min="0" :precision="2" size="small" class="cell-number" controls-position="right" @change="markChanged(row.id)" />
             </template>
-            <template v-else>{{ row.communication_allowance != null ? row.communication_allowance : '' }}</template>
+            <template v-else>{{ formatMoney(row.communication_allowance) }}</template>
           </template>
         </el-table-column>
         <el-table-column v-if="isColumnVisible('computer_allowance')" prop="computer_allowance" label="电脑补贴" width="95">
@@ -120,7 +120,7 @@
             <template v-if="editMode">
               <el-input-number v-model="editCache[row.id].computer_allowance" :min="0" :precision="2" size="small" class="cell-number" controls-position="right" @change="markChanged(row.id)" />
             </template>
-            <template v-else>{{ row.computer_allowance != null ? row.computer_allowance : '' }}</template>
+            <template v-else>{{ formatMoney(row.computer_allowance) }}</template>
           </template>
         </el-table-column>
         <el-table-column v-if="isColumnVisible('housing_allowance')" prop="housing_allowance" label="住房补贴" width="95">
@@ -128,12 +128,12 @@
             <template v-if="editMode">
               <el-input-number v-model="editCache[row.id].housing_allowance" :min="0" :precision="2" size="small" class="cell-number" controls-position="right" @change="markChanged(row.id)" />
             </template>
-            <template v-else>{{ row.housing_allowance != null ? row.housing_allowance : '' }}</template>
+            <template v-else>{{ formatMoney(row.housing_allowance) }}</template>
           </template>
         </el-table-column>
         <el-table-column v-if="isColumnVisible('monthly_standard')" label="月薪标准" width="100">
           <template #default="{ row }">
-            {{ monthlyStandard(row) }}
+            {{ formatMoney(monthlyStandard(row)) }}
           </template>
         </el-table-column>
         <el-table-column v-if="isColumnVisible('salary_effective_date')" prop="salary_effective_date" label="薪资生效日" width="120">
@@ -177,9 +177,9 @@
         <el-table-column v-if="isColumnVisible('action')" label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <div class="action-cell">
-            <el-button type="primary" link size="small" @click="showDialog(row)">详细编辑</el-button>
+            <el-button type="primary" link size="small" @click="showDialog(row)" v-permission="'employee:edit'">详细编辑</el-button>
             <el-button type="success" link size="small" @click="showSalaryHistory(row)">薪资历史</el-button>
-            <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+            <el-button type="danger" link size="small" @click="handleDelete(row)" v-permission="'employee:delete'">删除</el-button>
           </div>
         </template>
       </el-table-column>
@@ -452,25 +452,25 @@
       <el-table :data="salaryHistory" border stripe max-height="400" v-loading="salaryHistoryLoading">
         <el-table-column prop="effective_date" label="生效日期" width="110" />
         <el-table-column prop="base_salary" label="基本工资" width="100" align="right">
-          <template #default="{ row }">{{ Number(row.base_salary || 0).toFixed(2) }}</template>
+          <template #default="{ row }">{{ formatMoney(row.base_salary) }}</template>
         </el-table-column>
         <el-table-column prop="performance_standard" label="绩效标准" width="100" align="right">
-          <template #default="{ row }">{{ Number(row.performance_standard || 0).toFixed(2) }}</template>
+          <template #default="{ row }">{{ formatMoney(row.performance_standard) }}</template>
         </el-table-column>
         <el-table-column prop="meal_allowance" label="餐补" width="80" align="right">
-          <template #default="{ row }">{{ Number(row.meal_allowance || 0).toFixed(2) }}</template>
+          <template #default="{ row }">{{ formatMoney(row.meal_allowance) }}</template>
         </el-table-column>
         <el-table-column prop="transport_allowance" label="交通补贴" width="90" align="right">
-          <template #default="{ row }">{{ Number(row.transport_allowance || 0).toFixed(2) }}</template>
+          <template #default="{ row }">{{ formatMoney(row.transport_allowance) }}</template>
         </el-table-column>
         <el-table-column prop="communication_allowance" label="通讯补贴" width="90" align="right">
-          <template #default="{ row }">{{ Number(row.communication_allowance || 0).toFixed(2) }}</template>
+          <template #default="{ row }">{{ formatMoney(row.communication_allowance) }}</template>
         </el-table-column>
         <el-table-column prop="computer_allowance" label="电脑补贴" width="90" align="right">
-          <template #default="{ row }">{{ Number(row.computer_allowance || 0).toFixed(2) }}</template>
+          <template #default="{ row }">{{ formatMoney(row.computer_allowance) }}</template>
         </el-table-column>
         <el-table-column prop="housing_allowance" label="住房补贴" width="90" align="right">
-          <template #default="{ row }">{{ Number(row.housing_allowance || 0).toFixed(2) }}</template>
+          <template #default="{ row }">{{ formatMoney(row.housing_allowance) }}</template>
         </el-table-column>
         <el-table-column prop="change_reason" label="变更原因" min-width="100">
           <template #default="{ row }">{{ row.change_reason || '-' }}</template>
@@ -483,7 +483,7 @@
         </el-table-column>
         <el-table-column label="操作" width="70" fixed="right">
           <template #default="{ row }">
-            <el-button type="danger" link size="small" @click="handleDeleteSalary(row)">删除</el-button>
+            <el-button type="danger" link size="small" @click="handleDeleteSalary(row)" v-permission="'employee:edit'">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -560,6 +560,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Download, Upload, Delete, ArrowLeft, Refresh } from '@element-plus/icons-vue'
 import api from '../../api'
 import ColumnSetting from '../../components/ColumnSetting.vue'
+import { formatMoney, formatInt } from '../../utils/format'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -791,7 +792,7 @@ function monthlyStandard(row) {
   const computer = Number(row.computer_allowance) || 0
   const housing = Number(row.housing_allowance) || 0
   const total = base + perf + meal + transport + comm + computer + housing
-  return total.toFixed(2)
+  return total === 0 ? null : total
 }
 
 function toggleEditMode() {
@@ -1268,10 +1269,11 @@ async function syncRoster() {
     const res = await api.post('/dingtalk/sync/roster')
     const data = res.data
     if (data.errors && data.errors.length) {
-      ElMessage.warning(`同步完成：新增${data.created}人，更新${data.updated}人，但有${data.errors.length}个错误`)
+      ElMessage.warning(data.message || `同步完成：新增${data.created}人，更新${data.updated}人，但有${data.errors.length}个错误`)
     } else {
-      ElMessage.success(`钉钉花名册同步完成：新增${data.created}人，更新${data.updated}人`)
+      ElMessage.success(data.message || `钉钉同步完成：新增${data.created}人，更新${data.updated}人`)
     }
+    await fetchDicts()
     await fetchData()
   } catch (e) {
     ElMessage.error('同步失败：' + (e.response?.data?.detail || e.message))

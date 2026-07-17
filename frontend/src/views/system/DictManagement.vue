@@ -7,14 +7,11 @@
         <el-option label="部门" value="department" />
         <el-option label="职务" value="position" />
         <el-option label="用工状态" value="employee_status" />
-        <el-option label="假期类型" value="leave_type" />
-        <el-option label="薪资项目" value="salary_item" />
-        <el-option label="法定节假日" value="holiday" />
       </el-select>
-      <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)">新增</el-button>
-      <el-button type="success" :icon="Upload" size="small" @click="showImport">导入</el-button>
-      <el-button type="info" :icon="Download" size="small" :disabled="!items.length" @click="handleExport">导出</el-button>
-      <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}</el-button>
+      <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)" v-permission="'system:dict'">新增</el-button>
+      <el-button type="success" :icon="Upload" size="small" @click="showImport" v-permission="'system:dict'">导入</el-button>
+      <el-button type="info" :icon="Download" size="small" :disabled="!items.length" @click="handleExport" v-permission="'system:dict'">导出</el-button>
+      <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete" v-permission="'system:dict'">删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}</el-button>
       <el-divider direction="vertical" />
       <el-tooltip content="展开/折叠所有层级" placement="bottom">
         <el-switch
@@ -25,10 +22,10 @@
           @change="handleExpandChange"
         />
       </el-tooltip>
-      <el-button type="warning" size="small" @click="switchDisplayMode">
+      <el-button type="warning" size="small" @click="switchDisplayMode" v-permission="'system:dict'">
         <el-icon class="mr-1"><Sort /></el-icon>{{ treeMode ? '平铺' : '树形' }}
       </el-button>
-      <el-button v-if="category === 'department'" type="primary" size="small" @click="handleSyncRootDepts" :loading="syncingDepts">
+      <el-button v-if="category === 'department'" type="primary" size="small" @click="handleSyncRootDepts" :loading="syncingDepts" v-permission="'system:dict'">
         <el-icon class="mr-1"><Refresh /></el-icon>数据同步
       </el-button>
     </div>
@@ -65,15 +62,15 @@
       </el-table-column>
       <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
-          <el-button type="primary" link size="small" @click="showDialog(row)">编辑</el-button>
-          <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+          <el-button type="primary" link size="small" @click="showDialog(row)" v-permission="'system:dict'">编辑</el-button>
+          <el-button type="danger" link size="small" @click="handleDelete(row)" v-permission="'system:dict'">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
 
     <div v-if="category === 'department'" class="mt-3 text-sm text-gray-500 flex items-center gap-1">
       <el-icon><InfoFilled /></el-icon>
-      <span>启动的部门，在员工档案「同步钉钉」时才会同步该部门员工数据</span>
+      <span>员工档案同步钉钉时会自动同步部门；此处可手动调整部门层级、启停状态，或单独刷新部门数据</span>
     </div>
 
     <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑字典项' : '新增字典项'" width="520px" append-to-body>

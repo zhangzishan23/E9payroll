@@ -9,7 +9,7 @@ from openpyxl import Workbook
 from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.models.models import Employee, EmployeeSalary, SysDictBase, SysUser
-from app.api.auth import get_current_user, UserInfo
+from app.api.auth import get_current_user, UserInfo, require_permission
 from app.core.query_utils import filter_active_employees
 
 router = APIRouter()
@@ -341,7 +341,7 @@ def _batch_load_enrich_data(db: Session, employee_ids: list = None) -> tuple:
     return name_map, salary_map
 
 
-@router.get("/", response_model=List[EmployeeOut])
+@router.get("/", response_model=List[EmployeeOut], dependencies=[Depends(require_permission("employee:view"))])
 def get_employees(
     status_id: Optional[int] = Query(None),
     department_id: Optional[int] = Query(None),
@@ -394,7 +394,7 @@ def get_employees(
     return [_enrich_employee(e, name_map=name_map, salary_map=salary_map) for e in employees]
 
 
-@router.get("/export")
+@router.get("/export", dependencies=[Depends(require_permission("employee:export"))])
 def export_employees(
     filter_field: Optional[str] = Query(None),
     filter_value: Optional[str] = Query(None),
@@ -462,7 +462,7 @@ def export_employees(
     )
 
 
-@router.get("/import-template")
+@router.get("/import-template", dependencies=[Depends(require_permission("employee:import"))])
 def download_import_template(
     current_user: UserInfo = Depends(get_current_user)
 ):
@@ -529,7 +529,7 @@ def download_import_template(
     )
 
 
-@router.post("/import")
+@router.post("/import", dependencies=[Depends(require_permission("employee:import"))])
 async def import_employees(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -679,7 +679,7 @@ async def import_employees(
     }
 
 
-@router.post("/batch-delete")
+@router.post("/batch-delete", dependencies=[Depends(require_permission("employee:delete"))])
 def batch_delete_employees(ids: List[int], db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     if not ids:
         raise HTTPException(status_code=400, detail="请提供要删除的员工ID列表")
@@ -694,7 +694,7 @@ def batch_delete_employees(ids: List[int], db: Session = Depends(get_db), curren
     return {"message": f"成功删除 {len(employees)} 名员工", "deleted_count": len(employees)}
 
 
-@router.post("/export-selected")
+@router.post("/export-selected", dependencies=[Depends(require_permission("employee:export"))])
 def export_selected_employees(ids: List[int], db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     if not ids:
         raise HTTPException(status_code=400, detail="请提供要导出的员工ID列表")
@@ -731,7 +731,7 @@ def export_selected_employees(ids: List[int], db: Session = Depends(get_db), cur
     )
 
 
-@router.post("/salaries", response_model=SalaryOut)
+@router.post("/salaries", response_model=SalaryOut, dependencies=[Depends(require_permission("employee:edit"))])
 def create_employee_salary(salary: SalaryCreate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     employee = db.query(Employee).filter(Employee.id == salary.employee_id).first()
     if not employee:
@@ -750,7 +750,7 @@ def create_employee_salary(salary: SalaryCreate, db: Session = Depends(get_db), 
         raise HTTPException(status_code=500, detail=f"薪资记录创建失败：{str(e)}")
 
 
-@router.get("/{employee_id}/salaries", response_model=List[SalaryOut])
+@router.get("/{employee_id}/salaries", response_model=List[SalaryOut], dependencies=[Depends(require_permission("employee:view"))])
 def get_employee_salaries(employee_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     salaries = db.query(EmployeeSalary).filter(
         EmployeeSalary.employee_id == employee_id
@@ -773,7 +773,7 @@ def get_employee_salaries(employee_id: int, db: Session = Depends(get_db), curre
     return result
 
 
-@router.delete("/salaries/{salary_id}")
+@router.delete("/salaries/{salary_id}", dependencies=[Depends(require_permission("employee:edit"))])
 def delete_employee_salary(salary_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     sal = db.query(EmployeeSalary).filter(EmployeeSalary.id == salary_id).first()
     if not sal:
@@ -786,7 +786,7 @@ def delete_employee_salary(salary_id: int, db: Session = Depends(get_db), curren
     return {"message": "删除成功"}
 
 
-@router.get("/{employee_id}", response_model=EmployeeOut)
+@router.get("/{employee_id}", response_model=EmployeeOut, dependencies=[Depends(require_permission("employee:view"))])
 def get_employee(employee_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     emp = db.query(Employee).filter(Employee.id == employee_id).first()
     if not emp:
@@ -794,7 +794,7 @@ def get_employee(employee_id: int, db: Session = Depends(get_db), current_user: 
     return _enrich_employee(emp, db)
 
 
-@router.post("/", response_model=EmployeeOut)
+@router.post("/", response_model=EmployeeOut, dependencies=[Depends(require_permission("employee:create"))])
 def create_employee(emp: EmployeeCreate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     existing = db.query(Employee).filter(Employee.id_card == emp.id_card).first()
     if existing:
@@ -818,7 +818,7 @@ def create_employee(emp: EmployeeCreate, db: Session = Depends(get_db), current_
     return _enrich_employee(db_emp, db)
 
 
-@router.put("/{employee_id}", response_model=EmployeeOut)
+@router.put("/{employee_id}", response_model=EmployeeOut, dependencies=[Depends(require_permission("employee:edit"))])
 def update_employee(employee_id: int, emp: EmployeeUpdate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     db_emp = db.query(Employee).filter(Employee.id == employee_id).first()
     if not db_emp:
@@ -842,7 +842,7 @@ def update_employee(employee_id: int, emp: EmployeeUpdate, db: Session = Depends
     return _enrich_employee(db_emp, db)
 
 
-@router.delete("/{employee_id}")
+@router.delete("/{employee_id}", dependencies=[Depends(require_permission("employee:delete"))])
 def delete_employee(employee_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     db_emp = db.query(Employee).filter(Employee.id == employee_id).first()
     if not db_emp:

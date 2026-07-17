@@ -10,7 +10,7 @@ import calendar
 from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.models.models import AttendanceRecord, Employee, SysDictBase
-from app.api.auth import get_current_user, UserInfo
+from app.api.auth import get_current_user, UserInfo, require_permission
 from app.core.query_utils import filter_active_employees
 from app.services import work_calendar as work_cal
 
@@ -331,7 +331,7 @@ class AttendanceUpdate(BaseModel):
 
 # ==================== 考勤查询 ====================
 
-@router.get("/", response_model=List[AttendanceOut])
+@router.get("/", response_model=List[AttendanceOut], dependencies=[Depends(require_permission("attendance:view"))])
 def get_attendance(
     period: Optional[str] = Query(None),
     employee_id: Optional[int] = Query(None),
@@ -386,7 +386,7 @@ def get_attendance(
 
 # ==================== 导出 ====================
 
-@router.get("/export")
+@router.get("/export", dependencies=[Depends(require_permission("attendance:export"))])
 def export_attendance(
     period: Optional[str] = Query(None),
     employee_id: Optional[int] = Query(None),
@@ -480,7 +480,7 @@ def export_attendance(
 
 # ==================== 新增 ====================
 
-@router.post("/", response_model=AttendanceOut)
+@router.post("/", response_model=AttendanceOut, dependencies=[Depends(require_permission("attendance:create"))])
 def create_attendance(att: AttendanceCreate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     existing = db.query(AttendanceRecord).filter(
         AttendanceRecord.period == att.period,
@@ -547,7 +547,7 @@ def create_attendance(att: AttendanceCreate, db: Session = Depends(get_db), curr
 
 # ==================== 特殊申请 API ====================
 
-@router.get("/special-applies")
+@router.get("/special-applies", dependencies=[Depends(require_permission("attendance:view", "attendance:writeoff"))])
 def get_special_applies(
     period: str = Query(..., description="核算周期 YYYYMM"),
     db: Session = Depends(get_db),
@@ -578,7 +578,7 @@ def get_special_applies(
         raise HTTPException(status_code=400, detail=f"获取特殊申请失败: {str(e)}")
 
 
-@router.post("/apply-special-applies")
+@router.post("/apply-special-applies", dependencies=[Depends(require_permission("attendance:writeoff"))])
 def apply_special_applies(
     period: str = Form(...),
     apply_ids: Optional[str] = Form(None, description="逗号分隔的申请单ID，为空则应用所有"),
@@ -606,7 +606,7 @@ def apply_special_applies(
 
 # ==================== 缺卡自动核销 API ====================
 
-@router.get("/missed-punch-check")
+@router.get("/missed-punch-check", dependencies=[Depends(require_permission("attendance:writeoff"))])
 def check_missed_punch(
     period: str = Query(..., description="核算周期 YYYYMM"),
     db: Session = Depends(get_db),
@@ -624,7 +624,7 @@ def check_missed_punch(
         raise HTTPException(status_code=400, detail=f"检查缺卡申请失败: {str(e)}")
 
 
-@router.post("/missed-punch-write-off")
+@router.post("/missed-punch-write-off", dependencies=[Depends(require_permission("attendance:writeoff"))])
 def write_off_missed_punch(
     period: str = Form(..., description="核算周期 YYYYMM"),
     apply_all: bool = Form(False, description="是否核销所有匹配的员工"),
@@ -664,7 +664,7 @@ def write_off_missed_punch(
 
 # ==================== 批量删除 ====================
 
-@router.post("/batch-delete")
+@router.post("/batch-delete", dependencies=[Depends(require_permission("attendance:delete"))])
 def batch_delete_attendance(ids: List[int], db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     if not ids:
         raise HTTPException(status_code=400, detail="请提供要删除的考勤记录ID列表")
@@ -680,7 +680,7 @@ def batch_delete_attendance(ids: List[int], db: Session = Depends(get_db), curre
 
 # ==================== 编辑 ====================
 
-@router.put("/{record_id}", response_model=AttendanceOut)
+@router.put("/{record_id}", response_model=AttendanceOut, dependencies=[Depends(require_permission("attendance:edit"))])
 def update_attendance(record_id: int, data: AttendanceUpdate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     att = db.query(AttendanceRecord).filter(AttendanceRecord.id == record_id).first()
     if not att:
@@ -703,7 +703,7 @@ def update_attendance(record_id: int, data: AttendanceUpdate, db: Session = Depe
 
 # ==================== 导入 ====================
 
-@router.post("/import")
+@router.post("/import", dependencies=[Depends(require_permission("attendance:import"))])
 async def import_attendance(
     file: UploadFile = File(...),
     period: str = Form(...),
@@ -965,7 +965,7 @@ class WorkCalendarBatchUpdate(BaseModel):
     updates: List[WorkCalendarDayUpdate]
 
 
-@router.get("/work-calendar/{year}")
+@router.get("/work-calendar/{year}", dependencies=[Depends(require_permission("attendance:view"))])
 def get_work_calendar(
     year: int,
     db: Session = Depends(get_db),
@@ -981,7 +981,7 @@ def get_work_calendar(
     }
 
 
-@router.put("/work-calendar/{year}")
+@router.put("/work-calendar/{year}", dependencies=[Depends(require_permission("attendance:edit"))])
 def update_work_calendar(
     year: int,
     data: WorkCalendarBatchUpdate,
@@ -1000,7 +1000,7 @@ def update_work_calendar(
     }
 
 
-@router.post("/work-calendar/{year}/toggle-day")
+@router.post("/work-calendar/{year}/toggle-day", dependencies=[Depends(require_permission("attendance:edit"))])
 def toggle_work_calendar_day(
     year: int,
     date_str: str = Form(..., alias="date"),
@@ -1052,7 +1052,7 @@ def toggle_work_calendar_day(
     }
 
 
-@router.post("/work-calendar/{year}/ai-generate")
+@router.post("/work-calendar/{year}/ai-generate", dependencies=[Depends(require_permission("attendance:edit"))])
 def ai_generate_work_calendar(
     year: int,
     db: Session = Depends(get_db),
@@ -1084,7 +1084,7 @@ def ai_generate_work_calendar(
     }
 
 
-@router.post("/work-calendar/recalculate")
+@router.post("/work-calendar/recalculate", dependencies=[Depends(require_permission("attendance:edit"))])
 def recalculate_attendance_days(
     period: Optional[str] = Form(None, description="指定月份重算，支持逗号分隔多个月份(如202606,202607)，为空则重算所有月份"),
     db: Session = Depends(get_db),
@@ -1119,7 +1119,7 @@ def recalculate_attendance_days(
 
 # ==================== 兼容旧版月度计薪日历API ====================
 
-@router.get("/salary-calendar")
+@router.get("/salary-calendar", dependencies=[Depends(require_permission("attendance:view"))])
 def get_salary_calendar(
     period: str = Query(..., description="核算周期 YYYYMM"),
     db: Session = Depends(get_db),
@@ -1164,7 +1164,7 @@ def get_salary_calendar(
 
 # ==================== 数据锁定 API ====================
 
-@router.post("/{record_id}/lock-row")
+@router.post("/{record_id}/lock-row", dependencies=[Depends(require_permission("attendance:edit"))])
 def lock_row(
     record_id: int,
     locked: bool = Form(True),
@@ -1189,7 +1189,7 @@ def lock_row(
     return AttendanceOut.from_record(att, emp, db=db, name_map=name_map)
 
 
-@router.post("/{record_id}/lock-field")
+@router.post("/{record_id}/lock-field", dependencies=[Depends(require_permission("attendance:edit"))])
 def lock_field(
     record_id: int,
     field: str = Form(...),

@@ -14,6 +14,8 @@ from app.api import auth, employees, attendance, salary, approval, reports, syst
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     run_migrations()
+    from app.core.migrations import _init_default_roles_and_permissions
+    _init_default_roles_and_permissions()
     start_scheduler()
     yield
     stop_scheduler()

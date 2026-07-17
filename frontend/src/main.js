@@ -6,6 +6,7 @@ import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
+import { useAuthStore } from './stores/auth'
 import './style.css'
 
 const app = createApp(App)
@@ -18,5 +19,24 @@ app.use(ElementPlus, { locale: zhCn })
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
 }
+
+app.directive('permission', {
+  mounted(el, binding) {
+    const authStore = useAuthStore()
+    const { value } = binding
+    if (authStore.isAdmin) return
+
+    let hasPerm = false
+    if (Array.isArray(value)) {
+      hasPerm = value.some(p => authStore.hasPermission(p))
+    } else if (typeof value === 'string') {
+      hasPerm = authStore.hasPermission(value)
+    }
+
+    if (!hasPerm) {
+      el.parentNode?.removeChild(el)
+    }
+  }
+})
 
 app.mount('#app')

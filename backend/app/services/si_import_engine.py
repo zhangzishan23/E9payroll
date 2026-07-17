@@ -31,7 +31,6 @@ BATCH_EXPIRE_SECONDS = 3600
 # ── 所有可映射字段及其中文标签 ──────────────────────────────────────────
 SI_FIELD_LABELS = {
     "employee_name": "员工姓名",
-    "employee_social_insurance_no": "个人社保号",
     "period": "缴费月份",
     "pension_personal_base": "养老保险个人基数",
     "pension_company_base": "养老保险单位基数",
@@ -1237,7 +1236,6 @@ def _save_records(
 
         # 所有可写入的业务字段（合计字段最后统一计算，不在此处设置）
         business_fields = [
-            "employee_social_insurance_no",
             # 社保 — 各险种单独基数
             "pension_personal_base", "pension_company_base",
             "unemployment_personal_base", "unemployment_company_base",
@@ -1520,8 +1518,6 @@ def _keyword_match_columns(column_names: List[str], source_category: str) -> Dic
     RULES = [
         # ── 姓名 ──
                 (["姓名", "员工姓名", "人员姓名", "名字"], "employee_name"),
-        # ── 社保号 ──
-                (["社保号", "社会保障号", "个人社保号", "社保卡号", "电脑序号", "个人编号"], "employee_social_insurance_no"),
         # ── 养老保险 ──
                 (["养老个人基数", "养老保险个人缴费基数", "基本养老保险个人缴费基数"], "pension_personal_base"),
                 (["养老单位基数", "养老保险单位缴费基数", "基本养老保险单位缴费基数"], "pension_company_base"),

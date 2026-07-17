@@ -18,7 +18,7 @@ from app.models.models import (
     SocialInsurance, LegacyAdjustment, TravelReimbursement, LaborCompensation,
     SalaryCalculation, CalculationLog, SysDictBase
 )
-from app.api.auth import get_current_user, UserInfo
+from app.api.auth import get_current_user, UserInfo, require_permission
 
 router = APIRouter()
 
@@ -204,13 +204,13 @@ class CalculationSummary(BaseModel):
     batch_no: str
 
 
-@router.get("/periods")
+@router.get("/periods", dependencies=[Depends(require_permission("salary:view"))])
 def get_available_periods(db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     periods = db.query(SalaryCalculation.period).distinct().order_by(SalaryCalculation.period.desc()).all()
     return [p[0] for p in periods]
 
 
-@router.get("/check-completeness/{period}", response_model=DataCompletenessOut)
+@router.get("/check-completeness/{period}", response_model=DataCompletenessOut, dependencies=[Depends(require_permission("salary:view"))])
 def check_data_completeness(period: str, hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"), db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     query = db.query(Employee)
     active_employees = filter_active_employees(query, db, hide_status_id=hide_status_id).order_by(Employee.employee_no).all()
@@ -322,7 +322,7 @@ def check_data_completeness(period: str, hide_status_id: Optional[int] = Query(N
     )
 
 
-@router.post("/ensure-records/{period}")
+@router.post("/ensure-records/{period}", dependencies=[Depends(require_permission("salary:create"))])
 def ensure_salary_records(
     period: str,
     hide_status_id: Optional[int] = Query(None),
@@ -471,8 +471,11 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
             contract_company_name = name_map.get(emp.contract_company_id, '')
             split_target = split_config.get(emp.contract_company_id)
 
-            if not sal:
-                failed_count += 1
+            has_salary_data = sal is not None
+            has_si_data = si is not None
+            has_any_data = has_salary_data or has_si_data
+
+            if not has_any_data:
                 if emp.id not in existing_emp_ids:
                     empty_record = SalaryCalculation(
                         period=period,
@@ -492,14 +495,24 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                     db.add(empty_record)
                 continue
 
-            base_salary = float(sal.base_salary)
-            perf_std = float(sal.performance_standard)
-            meal = float(sal.meal_allowance or 0)
-            transport = float(sal.transport_allowance or 0)
-            comm = float(sal.communication_allowance or 0)
-            computer = float(sal.computer_allowance or 0)
-            housing = float(sal.housing_allowance or 0)
-            allowance_total = meal + transport + comm + computer + housing
+            if has_salary_data:
+                base_salary = float(sal.base_salary)
+                perf_std = float(sal.performance_standard)
+                meal = float(sal.meal_allowance or 0)
+                transport = float(sal.transport_allowance or 0)
+                comm = float(sal.communication_allowance or 0)
+                computer = float(sal.computer_allowance or 0)
+                housing = float(sal.housing_allowance or 0)
+                allowance_total = meal + transport + comm + computer + housing
+            else:
+                base_salary = None
+                perf_std = None
+                meal = None
+                transport = None
+                comm = None
+                computer = None
+                housing = None
+                allowance_total = None
 
             if att:
                 att_rate = float(att.attendance_rate) if att.attendance_rate else 1.00
@@ -511,21 +524,27 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                 actual_work_days = standard_salary_days
 
             adj = adjustments.get(emp.id)
-            if adj:
+            if adj and has_salary_data:
                 base_salary_prorated = float(adj.base_salary_prorated or 0)
                 perf_std_prorated = float(adj.performance_standard_prorated or 0)
                 commission_prorated = float(adj.commission_prorated) if adj.commission_prorated is not None else None
                 adjustment_id = adj.id
                 monthly_standard = round(base_salary_prorated + perf_std_prorated + allowance_total, 2)
-            else:
+            elif has_salary_data:
                 base_salary_prorated = base_salary
                 perf_std_prorated = perf_std
                 commission_prorated = None
                 adjustment_id = None
-                monthly_standard = round(base_salary + perf_std + allowance_total, 2)
+                monthly_standard = round(base_salary + perf_std + (allowance_total or 0), 2)
+            else:
+                base_salary_prorated = None
+                perf_std_prorated = None
+                commission_prorated = None
+                adjustment_id = None
+                monthly_standard = None
 
             perf_coef = float(perf.final_score) if perf and perf.final_score is not None else None
-            actual_perf = round(perf_std_prorated * perf_coef, 2) if perf_coef is not None else None
+            actual_perf = round(perf_std_prorated * perf_coef, 2) if perf_coef is not None and perf_std_prorated is not None else None
             effective_performance = round(actual_perf * att_rate, 2) if actual_perf is not None else None
 
             travel_untaxed = travel_reimbs.get(emp.id) if emp.id in travel_reimbs else None
@@ -534,15 +553,26 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
             pretax_adj = float(legacy["pretax"]) if legacy and legacy["pretax"] is not None else None
             posttax_adj = float(legacy["posttax"]) if legacy and legacy["posttax"] is not None else None
 
-            commission_calc = _safe_float(commission_prorated) or 0
-            gross_salary = round((base_salary_prorated + allowance_total + commission_calc) * att_rate + (effective_performance or 0), 2)
+            if has_salary_data:
+                commission_calc = _safe_float(commission_prorated) or 0
+                gross_salary = round((base_salary_prorated + (allowance_total or 0) + commission_calc) * att_rate + (effective_performance or 0), 2)
+            else:
+                gross_salary = None
 
-            pension_personal = float(si.pension_personal or 0) if si else 0
-            unemployment_personal = float(si.unemployment_personal or 0) if si else 0
-            medical_personal = float(si.medical_personal or 0) if si else 0
-            si_personal = pension_personal + unemployment_personal + medical_personal
-            hf_personal = float(si.hf_personal) if si else 0
-            si_hf_total = si_personal + hf_personal
+            pension_personal = float(si.pension_personal) if si and si.pension_personal is not None else None
+            unemployment_personal = float(si.unemployment_personal) if si and si.unemployment_personal is not None else None
+            medical_personal = float(si.medical_personal) if si and si.medical_personal is not None else None
+            hf_personal = float(si.hf_personal) if si and si.hf_personal is not None else None
+            
+            si_personal = None
+            si_hf_total = None
+            if has_si_data:
+                p = pension_personal or 0
+                u = unemployment_personal or 0
+                m = medical_personal or 0
+                h = hf_personal or 0
+                si_personal = round(p + u + m, 2) if any(v is not None for v in [pension_personal, unemployment_personal, medical_personal]) else None
+                si_hf_total = round(p + u + m + h, 2) if any(v is not None for v in [pension_personal, unemployment_personal, medical_personal, hf_personal]) else None
 
             db.query(SalaryCalculation).filter(
                 SalaryCalculation.period == period,
@@ -551,7 +581,7 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
 
             records_to_create = []
 
-            if split_target and si_hf_total > 0:
+            if split_target:
                 contract_existing = existing_by_emp.get((emp.id, emp.contract_company_id))
                 yijiu_existing_keys = [k for k in existing_by_emp.keys() if k[0] == emp.id and k[1] != emp.contract_company_id]
                 payroll_existing = existing_by_emp.get(yijiu_existing_keys[0]) if yijiu_existing_keys else None
@@ -573,26 +603,33 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
 
                 if contract_existing:
                     contract_bonus_final = _merge_val(contract_existing, contract_existing.commission_bonus, None)
-                    contract_pretax_final = _merge_val(contract_existing, contract_existing.pretax_adjustment, 0)
-                    contract_posttax_final = _merge_val(contract_existing, contract_existing.posttax_adjustment, 0)
+                    contract_pretax_final = _merge_val(contract_existing, contract_existing.pretax_adjustment, None)
+                    contract_posttax_final = _merge_val(contract_existing, contract_existing.posttax_adjustment, None)
                 else:
                     contract_bonus_final = None
-                    contract_pretax_final = 0
-                    contract_posttax_final = 0
+                    contract_pretax_final = None
+                    contract_posttax_final = None
 
-                contract_gross = round(si_hf_total, 2)
+                contract_gross = round(si_hf_total, 2) if si_hf_total is not None else None
                 contract_si = si_hf_total
-                contract_sh = si_hf_total
+                contract_sh = si_hf_total if si_hf_total is not None else 0
                 contract_pretax_calc = _safe_float(contract_pretax_final) or 0
                 contract_posttax_calc = _safe_float(contract_posttax_final) or 0
-                contract_salary_after_si = round(contract_gross + contract_pretax_calc - contract_sh, 2)
-                contract_actual_taxable = round(contract_gross + contract_pretax_calc, 2)
-                if contract_tax is not None:
-                    contract_net = round(contract_gross + contract_pretax_calc - contract_sh - contract_tax + contract_posttax_calc, 2)
-                    contract_status = "实发已核算"
+                
+                if contract_gross is not None:
+                    contract_salary_after_si = round(contract_gross + contract_pretax_calc - contract_sh, 2)
+                    contract_actual_taxable = round(contract_gross + contract_pretax_calc, 2)
+                    if contract_tax is not None:
+                        contract_net = round(contract_gross + contract_pretax_calc - contract_sh - contract_tax + contract_posttax_calc, 2)
+                        contract_status = "实发已核算"
+                    else:
+                        contract_net = round(contract_gross + contract_pretax_calc - contract_sh + contract_posttax_calc, 2)
+                        contract_status = "应发已核算"
                 else:
-                    contract_net = round(contract_gross + contract_pretax_calc - contract_sh + contract_posttax_calc, 2)
-                    contract_status = "应发已核算"
+                    contract_salary_after_si = None
+                    contract_actual_taxable = None
+                    contract_net = None
+                    contract_status = "待核算"
 
                 contract_record = SalaryCalculation(
                     period=period,
@@ -606,25 +643,25 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                     cost_owner=emp.cost_owner or '',
                     status=name_map.get(emp.status_id, ''),
                     entry_date=emp.entry_date,
-                    base_salary=0,
-                    base_salary_prorated=0,
-                    performance_standard_prorated=0,
+                    base_salary=None,
+                    base_salary_prorated=None,
+                    performance_standard_prorated=None,
                     adjustment_id=None,
-                    monthly_standard=0,
-                    performance_standard=0,
+                    monthly_standard=None,
+                    performance_standard=None,
                     performance_coefficient=None,
-                    actual_performance=0,
-                    effective_performance=0,
-                    meal_allowance=0,
-                    transport_allowance=0,
-                    communication_allowance=0,
-                    computer_allowance=0,
-                    housing_allowance=0,
-                    allowance_total=0,
-                    commission_bonus=0,
-                    pretax_adjustment=contract_pretax_final if contract_pretax_final not in (None, 0) else None,
+                    actual_performance=None,
+                    effective_performance=None,
+                    meal_allowance=None,
+                    transport_allowance=None,
+                    communication_allowance=None,
+                    computer_allowance=None,
+                    housing_allowance=None,
+                    allowance_total=None,
+                    commission_bonus=contract_bonus_final,
+                    pretax_adjustment=contract_pretax_final,
                     pretax_adjustment_reason=contract_existing.pretax_adjustment_reason if contract_existing else None,
-                    posttax_adjustment=contract_posttax_final if contract_posttax_final not in (None, 0) else None,
+                    posttax_adjustment=contract_posttax_final,
                     posttax_adjustment_reason=contract_existing.posttax_adjustment_reason if contract_existing else None,
                     total_work_days=total_work_days,
                     actual_work_days=actual_work_days,
@@ -650,11 +687,13 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                     remark=contract_remark,
                     review_status=contract_existing.review_status if contract_existing else "",
                     calculation_status=contract_status,
-                    data_completeness="完整"
+                    data_completeness="完整" if has_si_data else "部分缺失"
                 )
                 records_to_create.append(contract_record)
-                total_gross += contract_gross
-                total_net += contract_net
+                if contract_gross is not None:
+                    total_gross += contract_gross
+                if contract_net is not None:
+                    total_net += contract_net
 
                 payroll_tax = _safe_float(payroll_existing.tax_deduction) if payroll_existing else None
                 payroll_last_month = _safe_float(payroll_existing.last_month_untaxed) if payroll_existing else None
@@ -705,7 +744,11 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                     payroll_pretax_reason = None
                     payroll_posttax_reason = None
 
-                payroll_gross = round(max(0, gross_salary - si_hf_total), 2)
+                if gross_salary is not None:
+                    si_hf_deduct = si_hf_total if si_hf_total is not None else 0
+                    payroll_gross = round(max(0, gross_salary - si_hf_deduct), 2)
+                else:
+                    payroll_gross = None
                 payroll_si = 0
 
                 payroll_pretax_calc = _safe_float(payroll_pretax_final) or 0
@@ -717,18 +760,26 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                 payroll_year_end_calc = _safe_float(payroll_year_end) or 0
                 payroll_special_calc = _safe_float(payroll_special) or 0
 
-                payroll_monthly_standard = round(monthly_standard - si_hf_total, 2) if monthly_standard else round(payroll_gross, 2)
-                if base_salary_prorated and perf_std_prorated is not None and allowance_total is not None:
-                    payroll_monthly_standard = round((base_salary_prorated + perf_std_prorated + allowance_total) - si_hf_total, 2)
-
-                payroll_actual_taxable = round(payroll_gross + payroll_pretax_calc + payroll_last_month_calc + payroll_travel_calc + payroll_comp_calc + payroll_severance_calc + payroll_year_end_calc - payroll_special_calc, 2)
-                payroll_salary_after_si = round(payroll_gross + payroll_pretax_calc - payroll_si, 2)
-                if payroll_tax is not None:
-                    payroll_net = round(payroll_gross + payroll_pretax_calc - payroll_si - payroll_tax + payroll_posttax_calc, 2)
-                    payroll_status = "实发已核算"
+                if monthly_standard is not None:
+                    si_hf_deduct = si_hf_total if si_hf_total is not None else 0
+                    payroll_monthly_standard = round(monthly_standard - si_hf_deduct, 2)
                 else:
-                    payroll_net = round(payroll_gross + payroll_pretax_calc - payroll_si + payroll_posttax_calc, 2)
-                    payroll_status = "应发已核算"
+                    payroll_monthly_standard = None
+
+                if payroll_gross is not None:
+                    payroll_actual_taxable = round(payroll_gross + payroll_pretax_calc + payroll_last_month_calc + payroll_travel_calc + payroll_comp_calc + payroll_severance_calc + payroll_year_end_calc - payroll_special_calc, 2)
+                    payroll_salary_after_si = round(payroll_gross + payroll_pretax_calc - payroll_si, 2)
+                    if payroll_tax is not None:
+                        payroll_net = round(payroll_gross + payroll_pretax_calc - payroll_si - payroll_tax + payroll_posttax_calc, 2)
+                        payroll_status = "实发已核算"
+                    else:
+                        payroll_net = round(payroll_gross + payroll_pretax_calc - payroll_si + payroll_posttax_calc, 2)
+                        payroll_status = "应发已核算"
+                else:
+                    payroll_actual_taxable = None
+                    payroll_salary_after_si = None
+                    payroll_net = None
+                    payroll_status = "待核算"
 
                 payroll_record = SalaryCalculation(
                     period=period,
@@ -786,11 +837,13 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                     remark=payroll_remark,
                     review_status=payroll_review,
                     calculation_status=payroll_status,
-                    data_completeness="完整"
+                    data_completeness="完整" if has_salary_data else "部分缺失"
                 )
                 records_to_create.append(payroll_record)
-                total_gross += payroll_gross
-                total_net += payroll_net
+                if payroll_gross is not None:
+                    total_gross += payroll_gross
+                if payroll_net is not None:
+                    total_net += payroll_net
             else:
                 existing_single = None
                 for k, v in existing_by_emp.items():
@@ -831,23 +884,25 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                 last_month_calc = _safe_float(last_month_untaxed_val) or 0
                 travel_calc = _safe_float(travel_untaxed_final) or 0
 
-                actual_taxable = round(gross_salary + pretax_calc + last_month_calc + travel_calc, 2)
-                salary_after_si_hf_val = round(gross_salary + pretax_calc - si_hf_total, 2)
-                if tax_deduction_val is not None:
-                    net_salary = round(gross_salary + pretax_calc - si_hf_total - tax_deduction_val + posttax_calc, 2)
-                    calc_status = "实发已核算"
+                sh = si_hf_total if si_hf_total is not None else 0
+                if gross_salary is not None:
+                    actual_taxable = round(gross_salary + pretax_calc + last_month_calc + travel_calc, 2)
+                    salary_after_si_hf_val = round(gross_salary + pretax_calc - sh, 2)
+                    if tax_deduction_val is not None:
+                        net_salary = round(gross_salary + pretax_calc - sh - tax_deduction_val + posttax_calc, 2)
+                        calc_status = "实发已核算"
+                    else:
+                        net_salary = round(gross_salary + pretax_calc - sh + posttax_calc, 2)
+                        calc_status = "应发已核算"
                 else:
-                    net_salary = round(gross_salary + pretax_calc - si_hf_total + posttax_calc, 2)
-                    calc_status = "应发已核算"
+                    actual_taxable = None
+                    salary_after_si_hf_val = None
+                    net_salary = None
+                    calc_status = "待核算"
 
                 pay_company_id = emp.contract_company_id
-                if split_target and si_hf_total <= 0:
-                    pay_company_id = split_target.id
-                    pay_company_name_val = split_target.name
-                    record_type_val = 'payroll'
-                else:
-                    pay_company_name_val = contract_company_name
-                    record_type_val = 'single'
+                pay_company_name_val = contract_company_name
+                record_type_val = 'single'
 
                 single_record = SalaryCalculation(
                     period=period,
@@ -907,8 +962,10 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                     calculation_status=calc_status
                 )
                 records_to_create.append(single_record)
-                total_gross += gross_salary
-                total_net += net_salary
+                if gross_salary is not None:
+                    total_gross += gross_salary
+                if net_salary is not None:
+                    total_net += net_salary
 
             for rec in records_to_create:
                 db.add(rec)
@@ -957,7 +1014,7 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
     }
 
 
-@router.post("/calculate/{period}", response_model=CalculationSummary)
+@router.post("/calculate/{period}", response_model=CalculationSummary, dependencies=[Depends(require_permission("salary:calculate"))])
 def calculate_salary(period: str, hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"), db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     batch_no = f"CALC-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
     result = _perform_gross_calculation(db, period, hide_status_id, current_user, batch_no)
@@ -1156,7 +1213,7 @@ def _build_employee_salary_data(
     }
 
 
-@router.get("/results/{period}", response_model=List[SalaryCalcOut])
+@router.get("/results/{period}", response_model=List[SalaryCalcOut], dependencies=[Depends(require_permission("salary:view"))])
 def get_calculation_results(
     period: str,
     hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"),
@@ -1276,7 +1333,7 @@ def get_calculation_results(
     return results
 
 
-@router.get("/pay-companies/{period}")
+@router.get("/pay-companies/{period}", dependencies=[Depends(require_permission("salary:view"))])
 def get_pay_companies(
     period: str,
     db: Session = Depends(get_db),
@@ -1300,7 +1357,7 @@ def get_pay_companies(
     return companies
 
 
-@router.put("/results/{calc_id}", response_model=SalaryCalcOut)
+@router.put("/results/{calc_id}", response_model=SalaryCalcOut, dependencies=[Depends(require_permission("salary:edit"))])
 def update_calculation_result(
     calc_id: int,
     data: SalaryCalcUpdate,
@@ -1476,7 +1533,7 @@ def update_calculation_result(
     )
 
 
-@router.post("/calculate-net/{period}", response_model=CalculationSummary)
+@router.post("/calculate-net/{period}", response_model=CalculationSummary, dependencies=[Depends(require_permission("salary:calculate"))])
 def calculate_net_salary(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     calcs = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()
     if not calcs:
@@ -1613,7 +1670,7 @@ def calculate_net_salary(period: str, db: Session = Depends(get_db), current_use
     )
 
 
-@router.get("/logs/{period}")
+@router.get("/logs/{period}", dependencies=[Depends(require_permission("salary:view"))])
 def get_calculation_logs(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     logs = db.query(CalculationLog).filter(CalculationLog.period == period).order_by(CalculationLog.start_time.desc()).all()
     return [
@@ -1632,7 +1689,7 @@ def get_calculation_logs(period: str, db: Session = Depends(get_db), current_use
     ]
 
 
-@router.get("/export/{period}")
+@router.get("/export/{period}", dependencies=[Depends(require_permission("salary:export"))])
 def export_salary_results(
     period: str,
     hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"),
@@ -1722,7 +1779,7 @@ class TaxImportItem(BaseModel):
     compensation_tax: Optional[float] = 0
 
 
-@router.post("/import-tax/{period}")
+@router.post("/import-tax/{period}", dependencies=[Depends(require_permission("salary:tax"))])
 def import_tax_data(
     period: str,
     items: List[TaxImportItem],
@@ -1793,7 +1850,7 @@ def import_tax_data(
     return {"message": msg, "updated": updated, "created": created}
 
 
-@router.post("/batch-delete")
+@router.post("/batch-delete", dependencies=[Depends(require_permission("salary:delete"))])
 def batch_delete_salary_calculations(ids: List[int], db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     if not ids:
         raise HTTPException(status_code=400, detail="请提供要删除的核算记录ID列表")
@@ -1886,7 +1943,7 @@ def _calc_prorated(adj: EmployeeSalaryAdjustment):
     adj.total_after = round(base_after + float(adj.bonus_after or 0) + perf_after, 2)
 
 
-@router.get("/adjustments/{period}", response_model=List[SalaryAdjustmentOut])
+@router.get("/adjustments/{period}", response_model=List[SalaryAdjustmentOut], dependencies=[Depends(require_permission("salary:view"))])
 def get_adjustments(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     """获取指定月份的月中调薪记录"""
     adjs = db.query(EmployeeSalaryAdjustment).filter(
@@ -1922,7 +1979,7 @@ def get_adjustments(period: str, db: Session = Depends(get_db), current_user: Us
     ]
 
 
-@router.post("/adjustments", response_model=SalaryAdjustmentOut)
+@router.post("/adjustments", response_model=SalaryAdjustmentOut, dependencies=[Depends(require_permission("salary:edit"))])
 def create_adjustment(data: SalaryAdjustmentIn, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     """创建月中调薪记录（自动计算折算后工资）"""
     emp = db.query(Employee).filter(Employee.id == data.employee_id).first()
@@ -1979,7 +2036,7 @@ def create_adjustment(data: SalaryAdjustmentIn, db: Session = Depends(get_db), c
     )
 
 
-@router.put("/adjustments/{adj_id}", response_model=SalaryAdjustmentOut)
+@router.put("/adjustments/{adj_id}", response_model=SalaryAdjustmentOut, dependencies=[Depends(require_permission("salary:edit"))])
 def update_adjustment(adj_id: int, data: SalaryAdjustmentIn, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     """更新月中调薪记录（重新计算折算后工资）"""
     adj = db.query(EmployeeSalaryAdjustment).filter(EmployeeSalaryAdjustment.id == adj_id).first()
@@ -2035,7 +2092,7 @@ def update_adjustment(adj_id: int, data: SalaryAdjustmentIn, db: Session = Depen
     )
 
 
-@router.delete("/adjustments/{adj_id}")
+@router.delete("/adjustments/{adj_id}", dependencies=[Depends(require_permission("salary:edit"))])
 def delete_adjustment(adj_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     """删除月中调薪记录"""
     adj = db.query(EmployeeSalaryAdjustment).filter(EmployeeSalaryAdjustment.id == adj_id).first()
@@ -2138,7 +2195,7 @@ def _parse_tax_refund_excel(file_content: bytes) -> List[dict]:
     return results
 
 
-@router.post("/upload-tax-excel/{period}")
+@router.post("/upload-tax-excel/{period}", dependencies=[Depends(require_permission("salary:tax"))])
 async def upload_tax_excel(
     period: str,
     file: UploadFile = File(...),
@@ -2260,7 +2317,7 @@ async def upload_tax_excel(
     }
 
 
-@router.get("/export-tax-template/{period}")
+@router.get("/export-tax-template/{period}", dependencies=[Depends(require_permission("salary:tax"))])
 def export_tax_template(
     period: str,
     type: str = Query("salary", description="导出类型: salary(正常工资薪金), bonus(全年一次性奖金), severance(解除劳动合同一次性补偿金)"),
@@ -2654,7 +2711,7 @@ def _parse_travel_untaxed_excel(file_content: bytes) -> dict:
     return rounded
 
 
-@router.post("/import-travel-untaxed/{period}")
+@router.post("/import-travel-untaxed/{period}", dependencies=[Depends(require_permission("salary:tax"))])
 async def import_travel_untaxed(
     period: str,
     file: UploadFile = File(...),

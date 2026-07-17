@@ -7,14 +7,14 @@
         <el-option label="员工姓名" value="employee_name" />
       </el-select>
       <el-input v-model="filterValue" placeholder="筛选值" size="small" clearable class="!w-36" @input="applyFilter" />
-      <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)">录入</el-button>
-      <el-button :icon="Upload" size="small" @click="showImport">导入</el-button>
-      <el-button type="success" :icon="Download" size="small" @click="handleExport">导出</el-button>
-      <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">
+      <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)" v-permission="'performance:create'">录入</el-button>
+      <el-button :icon="Upload" size="small" @click="showImport" v-permission="'performance:import'">导入</el-button>
+      <el-button type="success" :icon="Download" size="small" @click="handleExport" v-permission="'performance:export'">导出</el-button>
+      <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete" v-permission="'performance:delete'">
         删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
       </el-button>
       <el-divider direction="vertical" />
-      <el-button size="small" :type="editMode ? 'warning' : 'default'" @click="toggleEditMode">
+      <el-button size="small" :type="editMode ? 'warning' : 'default'" @click="toggleEditMode" v-permission="'performance:edit'">
         {{ editMode ? '退出编辑' : '编辑' }}
       </el-button>
       <ColumnSetting
@@ -24,7 +24,7 @@
         storage-key="performance_table_columns"
       />
       <template v-if="editMode">
-        <el-button type="primary" size="small" :loading="savingEdits" :disabled="changedSet.size === 0" @click="confirmEdits">
+        <el-button type="primary" size="small" :loading="savingEdits" :disabled="changedSet.size === 0" @click="confirmEdits" v-permission="'performance:edit'">
           保存{{ changedSet.size ? `(${changedSet.size})` : '' }}
         </el-button>
         <el-button size="small" :disabled="changedSet.size === 0" @click="cancelEdits">取消</el-button>
@@ -39,18 +39,18 @@
       <el-table-column v-if="isColumnVisible('department')" prop="department" label="部门" width="120" show-overflow-tooltip />
       <el-table-column v-if="isColumnVisible('position')" prop="position" label="职务" width="120" show-overflow-tooltip />
       <el-table-column v-if="isColumnVisible('total_work_days')" prop="total_work_days" label="应计薪天数" width="120" align="center">
-        <template #default="{ row }">{{ row.total_work_days != null ? row.total_work_days : '' }}</template>
+        <template #default="{ row }">{{ formatInt(row.total_work_days) }}</template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('actual_work_days')" prop="actual_work_days" label="实际计薪天数" width="120" align="center">
-        <template #default="{ row }">{{ row.actual_work_days != null ? row.actual_work_days : '' }}</template>
+        <template #default="{ row }">{{ formatInt(row.actual_work_days) }}</template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('attendance_rate')" label="出勤率" width="90" align="center">
         <template #default="{ row }">
-          <span v-if="row.attendance_rate != null">{{ (row.attendance_rate * 100).toFixed(1) }}%</span>
+          <span>{{ formatPercent(row.attendance_rate) }}</span>
         </template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('performance_standard')" prop="performance_standard" label="绩效奖金标准" width="120" align="right">
-        <template #default="{ row }">{{ (getRowPerfStd(row) || 0).toFixed(2) }}</template>
+        <template #default="{ row }">{{ formatMoney(getRowPerfStd(row)) }}</template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('performance_category')" prop="performance_category" label="绩效类别" width="100">
         <template #default="{ row }">
@@ -65,7 +65,7 @@
           <template v-if="editMode && editCache[row.employee_id]">
             <el-input-number v-model="editCache[row.employee_id].initial_score" :min="0" :max="3" :precision="2" :step="0.1" size="small" controls-position="right" class="cell-number" @change="(val) => onTableInitialScoreChange(row.employee_id, val)" />
           </template>
-          <template v-else>{{ row.initial_score != null ? row.initial_score : '' }}</template>
+          <template v-else>{{ formatNumber(row.initial_score, 2) }}</template>
         </template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('final_score')" prop="final_score" label="复评（绩效系数）" width="130" align="center">
@@ -75,32 +75,32 @@
           </template>
           <template v-else>
             <span v-if="getRowCoefficient(row) != null" :class="(getRowCoefficient(row)) >= 1 ? 'text-green-600' : 'text-red-600'" class="font-semibold">
-              {{ getRowCoefficient(row).toFixed(2) }}
+              {{ formatNumber(getRowCoefficient(row), 2) }}
             </span>
           </template>
         </template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('evaluated')" label="评价后绩效标准" width="130" align="right">
         <template #default="{ row }">
-          <span v-if="getRowEvaluated(row) != null" class="font-medium">{{ getRowEvaluated(row).toFixed(2) }}</span>
+          <span v-if="getRowEvaluated(row) != null" class="font-medium">{{ formatMoney(getRowEvaluated(row)) }}</span>
         </template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('diff')" label="差额" width="100" align="right">
         <template #default="{ row }">
           <span v-if="getRowDiff(row) != null" :class="getRowDiff(row) > 0 ? 'text-green-500' : getRowDiff(row) < 0 ? 'text-red-500' : ''">
-            {{ getRowDiff(row).toFixed(2) }}
+            {{ formatMoney(getRowDiff(row)) }}
           </span>
         </template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('actual_paid')" label="实发绩效金额" width="120" align="right">
         <template #default="{ row }">
-          <span v-if="getRowActualPaid(row) != null" class="font-semibold text-purple-600">{{ getRowActualPaid(row).toFixed(2) }}</span>
+          <span v-if="getRowActualPaid(row) != null" class="font-semibold text-purple-600">{{ formatMoney(getRowActualPaid(row)) }}</span>
         </template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('score_diff')" label="调整差异" width="100" align="center">
         <template #default="{ row }">
           <span :class="getRowScoreDiff(row) != null && getRowScoreDiff(row) !== 0 ? (getRowScoreDiff(row) > 0 ? 'text-green-500' : 'text-red-500') : ''">
-            {{ getRowScoreDiff(row) != null ? getRowScoreDiff(row).toFixed(2) : '' }}
+            {{ formatNumber(getRowScoreDiff(row), 2) }}
           </span>
         </template>
       </el-table-column>
@@ -123,9 +123,9 @@
       <el-table-column v-if="isColumnVisible('action')" label="操作" width="130" fixed="right">
         <template #default="{ row }">
           <div class="action-cell">
-            <el-button v-if="row.id && !editMode" type="primary" link size="small" @click="showDialog(row)">编辑</el-button>
-            <el-button v-else-if="!row.id && !editMode" type="success" link size="small" @click="showDialogForEmployee(row)">录入</el-button>
-            <el-button v-if="row.id && !editMode" type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+            <el-button v-if="row.id && !editMode" type="primary" link size="small" @click="showDialog(row)" v-permission="'performance:edit'">编辑</el-button>
+            <el-button v-else-if="!row.id && !editMode" type="success" link size="small" @click="showDialogForEmployee(row)" v-permission="'performance:create'">录入</el-button>
+            <el-button v-if="row.id && !editMode" type="danger" link size="small" @click="handleDelete(row)" v-permission="'performance:delete'">删除</el-button>
           </div>
         </template>
       </el-table-column>
@@ -243,6 +243,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Download, Upload, Delete } from '@element-plus/icons-vue'
 import api from '../../api'
 import ColumnSetting from '../../components/ColumnSetting.vue'
+import { formatNumber, formatInt, formatMoney, formatPercent } from '../../utils/format'
 
 function getDefaultPeriod() {
   const now = new Date()
@@ -381,7 +382,8 @@ function getCurrentVals(row) {
 }
 
 function getRowPerfStd(row) {
-  return Number(row.performance_standard) || 0
+  const val = Number(row.performance_standard)
+  return val || null
 }
 
 function getRowCoefficient(row) {
@@ -392,13 +394,15 @@ function getRowCoefficient(row) {
 function getRowEvaluated(row) {
   const { final, perfStd } = getCurrentVals(row)
   if (final == null) return null
-  return perfStd * Number(final)
+  const result = perfStd * Number(final)
+  return result === 0 ? null : result
 }
 
 function getRowDiff(row) {
   const { final, perfStd } = getCurrentVals(row)
   if (final == null) return null
-  return perfStd * Number(final) - perfStd
+  const result = perfStd * Number(final) - perfStd
+  return result === 0 ? null : result
 }
 
 function getRowScoreDiff(row) {
@@ -410,7 +414,7 @@ function getRowScoreDiff(row) {
 function getRowAttendanceRate(row) {
   const total = Number(row.total_work_days) || 0
   const actual = Number(row.actual_work_days) || 0
-  if (total <= 0) return row.attendance_rate != null ? Number(row.attendance_rate) : 0
+  if (total <= 0) return row.attendance_rate != null ? Number(row.attendance_rate) : null
   return actual / total
 }
 
@@ -418,7 +422,8 @@ function getRowActualPaid(row) {
   const evaluated = getRowEvaluated(row)
   if (evaluated == null) return null
   const attRate = getRowAttendanceRate(row)
-  return evaluated * attRate
+  const result = evaluated * attRate
+  return result === 0 ? null : result
 }
 
 function getFormActualPaid() {

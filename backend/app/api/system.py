@@ -15,7 +15,121 @@ from app.core.log_helper import write_log
 from app.core.config import DATABASE_URL
 from app.core.security import get_password_hash
 from app.models.models import SysUser, SysRole, SysUserRole, SysPermission, SysDictBase, SysLog, Employee
-from app.api.auth import get_current_user, UserInfo
+from app.api.auth import get_current_user, UserInfo, require_permission
+
+
+PERMISSION_MODULES = [
+    {
+        "key": "dashboard",
+        "label": "工作台",
+        "actions": [
+            {"key": "view", "label": "查看工作台"}
+        ]
+    },
+    {
+        "key": "employee",
+        "label": "人事档案",
+        "actions": [
+            {"key": "view", "label": "查看档案"},
+            {"key": "create", "label": "新增员工"},
+            {"key": "edit", "label": "编辑档案"},
+            {"key": "delete", "label": "删除员工"},
+            {"key": "export", "label": "导出花名册"},
+            {"key": "import", "label": "批量导入"},
+            {"key": "sync", "label": "同步钉钉"},
+        ]
+    },
+    {
+        "key": "attendance",
+        "label": "考勤管理",
+        "actions": [
+            {"key": "view", "label": "查看考勤"},
+            {"key": "create", "label": "新增记录"},
+            {"key": "edit", "label": "编辑考勤"},
+            {"key": "delete", "label": "删除记录"},
+            {"key": "export", "label": "导出考勤"},
+            {"key": "import", "label": "导入考勤"},
+            {"key": "sync", "label": "同步钉钉"},
+            {"key": "writeoff", "label": "缺卡核销"},
+        ]
+    },
+    {
+        "key": "performance",
+        "label": "绩效评分",
+        "actions": [
+            {"key": "view", "label": "查看绩效"},
+            {"key": "create", "label": "新增评分"},
+            {"key": "edit", "label": "编辑评分"},
+            {"key": "delete", "label": "删除评分"},
+            {"key": "export", "label": "导出绩效"},
+            {"key": "import", "label": "导入绩效"},
+        ]
+    },
+    {
+        "key": "insurance",
+        "label": "社保公积金",
+        "actions": [
+            {"key": "view", "label": "查看社保"},
+            {"key": "create", "label": "新增记录"},
+            {"key": "edit", "label": "编辑社保"},
+            {"key": "delete", "label": "删除记录"},
+            {"key": "export", "label": "导出社保"},
+            {"key": "import", "label": "导入社保"},
+            {"key": "template", "label": "管理导入模板"},
+        ]
+    },
+    {
+        "key": "salary",
+        "label": "薪资计算",
+        "actions": [
+            {"key": "view", "label": "查看薪资"},
+            {"key": "create", "label": "生成记录"},
+            {"key": "edit", "label": "编辑薪资"},
+            {"key": "delete", "label": "删除记录"},
+            {"key": "calculate", "label": "执行计算"},
+            {"key": "tax", "label": "个税申报"},
+            {"key": "export", "label": "导出薪资"},
+        ]
+    },
+    {
+        "key": "approval",
+        "label": "审批流程",
+        "actions": [
+            {"key": "view", "label": "查看审批"},
+            {"key": "submit", "label": "提交审批"},
+            {"key": "approve", "label": "审核操作"},
+        ]
+    },
+    {
+        "key": "report",
+        "label": "报表导出",
+        "actions": [
+            {"key": "view", "label": "查看报表"},
+            {"key": "export", "label": "导出报表"},
+            {"key": "view_my_slip", "label": "查看个人工资条"},
+        ]
+    },
+    {
+        "key": "system",
+        "label": "系统管理",
+        "actions": [
+            {"key": "view", "label": "查看系统设置"},
+            {"key": "user", "label": "用户管理"},
+            {"key": "role", "label": "角色权限"},
+            {"key": "dict", "label": "数据字典"},
+            {"key": "log", "label": "操作日志"},
+            {"key": "backup", "label": "数据备份"},
+        ]
+    },
+    {
+        "key": "profile",
+        "label": "个人中心",
+        "actions": [
+            {"key": "view", "label": "查看个人信息"},
+            {"key": "edit", "label": "修改个人信息"},
+        ]
+    },
+]
 
 router = APIRouter()
 
@@ -79,12 +193,22 @@ class PermissionAssign(BaseModel):
     permissions: List[dict]
 
 
+class UserRoleOut(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
 class UserOut(BaseModel):
     id: int
     username: str
     display_name: str
     is_admin: bool
     is_active: bool
+    role_ids: List[int] = []
+    role_names: List[str] = []
     created_at: Optional[str] = None
 
     @field_validator('created_at', mode='before')
@@ -103,6 +227,7 @@ class UserCreate(BaseModel):
     password: str
     display_name: str
     is_admin: bool = False
+    is_active: bool = True
     role_ids: List[int] = []
 
 
@@ -111,6 +236,10 @@ class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_admin: Optional[bool] = None
     role_ids: Optional[List[int]] = None
+
+
+class PasswordReset(BaseModel):
+    new_password: str = "123456"
 
 
 class LogOut(BaseModel):
@@ -164,12 +293,10 @@ def get_dict(category: str, db: Session = Depends(get_db), current_user: UserInf
 
 @router.get("/dict/{category}/tree", response_model=List[DictTreeNode])
 def get_dict_tree(category: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    """返回指定分类的树形结构数据，支持层级展示"""
     items = db.query(SysDictBase).filter(
         SysDictBase.category == category,
     ).order_by(SysDictBase.sort_order).all()
 
-    # 构建 id -> node 映射
     node_map = {}
     for item in items:
         node_map[item.id] = {
@@ -184,7 +311,6 @@ def get_dict_tree(category: str, db: Session = Depends(get_db), current_user: Us
             "children": []
         }
 
-    # 构建树形结构
     roots = []
     for item in items:
         node = node_map[item.id]
@@ -193,7 +319,6 @@ def get_dict_tree(category: str, db: Session = Depends(get_db), current_user: Us
         else:
             roots.append(node)
 
-    # 清理空 children 数组
     def clean_children(nodes):
         for node in nodes:
             if not node["children"]:
@@ -212,9 +337,7 @@ def get_all_dicts(db: Session = Depends(get_db), current_user: UserInfo = Depend
 
 
 @router.post("/dict", response_model=DictItemOut)
-def create_dict(item: DictItemCreate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可操作数据字典")
+def create_dict(item: DictItemCreate, db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:dict"))):
     existing = db.query(SysDictBase).filter(
         SysDictBase.category == item.category,
         SysDictBase.code == item.code
@@ -230,10 +353,7 @@ def create_dict(item: DictItemCreate, db: Session = Depends(get_db), current_use
 
 
 @router.put("/dict/{dict_id}/toggle")
-def toggle_dict(dict_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    """切换字典项的启用/禁用状态"""
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可操作数据字典")
+def toggle_dict(dict_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:dict"))):
     db_item = db.query(SysDictBase).filter(SysDictBase.id == dict_id).first()
     if not db_item:
         raise HTTPException(status_code=404, detail="字典项不存在")
@@ -246,9 +366,7 @@ def toggle_dict(dict_id: int, db: Session = Depends(get_db), current_user: UserI
 
 
 @router.put("/dict/{dict_id}", response_model=DictItemOut)
-def update_dict(dict_id: int, item: DictItemUpdate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可操作数据字典")
+def update_dict(dict_id: int, item: DictItemUpdate, db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:dict"))):
     db_item = db.query(SysDictBase).filter(SysDictBase.id == dict_id).first()
     if not db_item:
         raise HTTPException(status_code=404, detail="字典项不存在")
@@ -262,9 +380,7 @@ def update_dict(dict_id: int, item: DictItemUpdate, db: Session = Depends(get_db
 
 
 @router.delete("/dict/{dict_id}")
-def delete_dict(dict_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可操作数据字典")
+def delete_dict(dict_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:dict"))):
     db_item = db.query(SysDictBase).filter(SysDictBase.id == dict_id).first()
     if not db_item:
         raise HTTPException(status_code=404, detail="字典项不存在")
@@ -275,9 +391,7 @@ def delete_dict(dict_id: int, db: Session = Depends(get_db), current_user: UserI
 
 
 @router.post("/dict/batch-delete")
-def batch_delete_dict(ids: List[int], db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可操作数据字典")
+def batch_delete_dict(ids: List[int], db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:dict"))):
     if not ids:
         raise HTTPException(status_code=400, detail="请提供要删除的字典项ID列表")
     items = db.query(SysDictBase).filter(SysDictBase.id.in_(ids)).all()
@@ -294,21 +408,13 @@ def batch_delete_dict(ids: List[int], db: Session = Depends(get_db), current_use
 def dedup_dict(
     category: Optional[str] = Query(None, description="指定分类去重，为空则处理所有分类"),
     db: Session = Depends(get_db),
-    current_user: UserInfo = Depends(get_current_user),
+    current_user: UserInfo = Depends(require_permission("system:dict")),
 ):
-    """
-    数据字典去重：对指定分类（或全部分类）按名称去重，保留首次出现的记录，删除重复项。
-    并更新外键引用的员工记录，指向保留的记录。
-    """
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可操作数据字典")
-
     q = db.query(SysDictBase)
     if category:
         q = q.filter(SysDictBase.category == category)
     items = q.order_by(SysDictBase.id).all()
 
-    # 按 (category, name) 分组，保留第一条，标记后面的为重复
     seen = {}
     to_delete = []
     kept_ids = set()
@@ -323,7 +429,6 @@ def dedup_dict(
     if not to_delete:
         return {"message": "没有发现重复数据", "deleted_count": 0, "affected_categories": []}
 
-    # 更新外键引用：将员工表中指向被删除字典项的 FK 更新为保留的字典项
     affected_categories = set()
     for dup in to_delete:
         kept = seen[(dup.category, dup.name.strip())]
@@ -363,10 +468,8 @@ async def import_dict(
     file: UploadFile = File(...),
     category: str = Form(...),
     db: Session = Depends(get_db),
-    current_user: UserInfo = Depends(get_current_user)
+    current_user: UserInfo = Depends(require_permission("system:dict"))
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可操作数据字典")
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="仅支持 .xlsx 或 .xls 格式的 Excel 文件")
 
@@ -457,7 +560,7 @@ async def import_dict(
 def export_dict(
     category: str,
     db: Session = Depends(get_db),
-    current_user: UserInfo = Depends(get_current_user)
+    current_user: UserInfo = Depends(require_permission("system:dict"))
 ):
     items = db.query(SysDictBase).filter(
         SysDictBase.category == category
@@ -486,15 +589,23 @@ def export_dict(
     )
 
 
+@router.get("/permissions")
+def get_permission_list(current_user: UserInfo = Depends(get_current_user)):
+    """获取所有可用权限清单，用于角色权限配置界面"""
+    if not (current_user.is_admin or current_user.has_permission("system:role")):
+        raise HTTPException(status_code=403, detail="您没有权限查看权限清单")
+    return PERMISSION_MODULES
+
+
 @router.get("/roles", response_model=List[RoleOut])
 def get_roles(db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    if not (current_user.is_admin or current_user.has_permission("system:role") or current_user.has_permission("system:user")):
+        raise HTTPException(status_code=403, detail="您没有权限查看角色列表")
     return db.query(SysRole).all()
 
 
 @router.post("/roles", response_model=RoleOut)
-def create_role(role: RoleCreate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可操作角色")
+def create_role(role: RoleCreate, db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:role"))):
     existing = db.query(SysRole).filter(SysRole.name == role.name).first()
     if existing:
         raise HTTPException(status_code=400, detail=f"角色 [{role.name}] 已存在")
@@ -507,9 +618,7 @@ def create_role(role: RoleCreate, db: Session = Depends(get_db), current_user: U
 
 
 @router.put("/roles/{role_id}", response_model=RoleOut)
-def update_role(role_id: int, role: RoleUpdate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可操作角色")
+def update_role(role_id: int, role: RoleUpdate, db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:role"))):
     db_role = db.query(SysRole).filter(SysRole.id == role_id).first()
     if not db_role:
         raise HTTPException(status_code=404, detail="角色不存在")
@@ -523,14 +632,13 @@ def update_role(role_id: int, role: RoleUpdate, db: Session = Depends(get_db), c
 
 
 @router.delete("/roles/{role_id}")
-def delete_role(role_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可操作角色")
+def delete_role(role_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:role"))):
     db_role = db.query(SysRole).filter(SysRole.id == role_id).first()
     if not db_role:
         raise HTTPException(status_code=404, detail="角色不存在")
-    if db_role.is_preset:
-        raise HTTPException(status_code=400, detail="预置角色不可删除")
+    user_count = db.query(SysUserRole).filter(SysUserRole.role_id == role_id).count()
+    if user_count > 0:
+        raise HTTPException(status_code=400, detail=f"该角色下还有 {user_count} 个用户，请先解除用户关联后再删除")
     db.query(SysUserRole).filter(SysUserRole.role_id == role_id).delete()
     db.query(SysPermission).filter(SysPermission.role_id == role_id).delete()
     db.delete(db_role)
@@ -540,17 +648,19 @@ def delete_role(role_id: int, db: Session = Depends(get_db), current_user: UserI
 
 
 @router.post("/roles/batch-delete")
-def batch_delete_roles(ids: List[int], db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可操作角色")
+def batch_delete_roles(ids: List[int], db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:role"))):
     if not ids:
         raise HTTPException(status_code=400, detail="请提供要删除的角色ID列表")
     roles = db.query(SysRole).filter(SysRole.id.in_(ids)).all()
     if not roles:
         raise HTTPException(status_code=404, detail="未找到指定的角色")
-    preset_roles = [r.name for r in roles if r.is_preset]
-    if preset_roles:
-        raise HTTPException(status_code=400, detail=f"预置角色不可删除：{', '.join(preset_roles)}")
+    used_roles = []
+    for role in roles:
+        user_count = db.query(SysUserRole).filter(SysUserRole.role_id == role.id).count()
+        if user_count > 0:
+            used_roles.append(f"{role.name}({user_count}人)")
+    if used_roles:
+        raise HTTPException(status_code=400, detail=f"以下角色下还有用户，请先解除关联：{', '.join(used_roles)}")
     for role in roles:
         db.query(SysUserRole).filter(SysUserRole.role_id == role.id).delete()
         db.query(SysPermission).filter(SysPermission.role_id == role.id).delete()
@@ -562,31 +672,50 @@ def batch_delete_roles(ids: List[int], db: Session = Depends(get_db), current_us
 
 @router.get("/roles/{role_id}/permissions")
 def get_role_permissions(role_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+    if not (current_user.is_admin or current_user.has_permission("system:role")):
+        raise HTTPException(status_code=403, detail="您没有权限查看角色权限")
     perms = db.query(SysPermission).filter(SysPermission.role_id == role_id).all()
     return [{"module": p.module, "action": p.action} for p in perms]
 
 
 @router.post("/roles/{role_id}/permissions")
-def assign_permissions(role_id: int, data: PermissionAssign, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可配置权限")
+def assign_permissions(role_id: int, data: PermissionAssign, db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:role"))):
+    db_role = db.query(SysRole).filter(SysRole.id == role_id).first()
+    if not db_role:
+        raise HTTPException(status_code=404, detail="角色不存在")
     db.query(SysPermission).filter(SysPermission.role_id == role_id).delete()
     for perm in data.permissions:
         db.add(SysPermission(role_id=role_id, module=perm["module"], action=perm["action"]))
     db.commit()
+    write_log(db, "data_change", current_user.id, current_user.username, "system", "edit", f"配置角色权限: {db_role.name}")
     return {"message": "权限配置成功"}
 
 
+def _get_user_with_roles(db: Session, user: SysUser) -> dict:
+    """获取用户信息及关联角色"""
+    user_roles = db.query(SysRole).join(
+        SysUserRole, SysUserRole.role_id == SysRole.id
+    ).filter(SysUserRole.user_id == user.id).all()
+    return {
+        "id": user.id,
+        "username": user.username,
+        "display_name": user.display_name,
+        "is_admin": user.is_admin,
+        "is_active": user.is_active,
+        "role_ids": [r.id for r in user_roles],
+        "role_names": [r.name for r in user_roles],
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+    }
+
+
 @router.get("/users", response_model=List[UserOut])
-def get_users(db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
+def get_users(db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:user"))):
     users = db.query(SysUser).all()
-    return users
+    return [_get_user_with_roles(db, u) for u in users]
 
 
 @router.post("/users", response_model=UserOut)
-def create_user(user: UserCreate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可创建用户")
+def create_user(user: UserCreate, db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:user"))):
     existing = db.query(SysUser).filter(SysUser.username == user.username).first()
     if existing:
         raise HTTPException(status_code=400, detail=f"用户名 [{user.username}] 已存在")
@@ -594,7 +723,8 @@ def create_user(user: UserCreate, db: Session = Depends(get_db), current_user: U
         username=user.username,
         password_hash=get_password_hash(user.password),
         display_name=user.display_name,
-        is_admin=user.is_admin
+        is_admin=user.is_admin,
+        is_active=user.is_active,
     )
     db.add(db_user)
     db.flush()
@@ -603,16 +733,16 @@ def create_user(user: UserCreate, db: Session = Depends(get_db), current_user: U
     db.commit()
     db.refresh(db_user)
     write_log(db, "data_change", current_user.id, current_user.username, "system", "create", f"新增用户 {user.username}")
-    return db_user
+    return _get_user_with_roles(db, db_user)
 
 
 @router.put("/users/{user_id}", response_model=UserOut)
-def update_user(user_id: int, user: UserUpdate, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可编辑用户")
+def update_user(user_id: int, user: UserUpdate, db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:user"))):
     db_user = db.query(SysUser).filter(SysUser.id == user_id).first()
     if not db_user:
         raise HTTPException(status_code=404, detail="用户不存在")
+    if db_user.username == "admin" and user.is_active is False:
+        raise HTTPException(status_code=400, detail="超级管理员账号不可禁用")
     update_data = user.model_dump(exclude_unset=True)
     role_ids = update_data.pop("role_ids", None)
     for key, value in update_data.items():
@@ -624,20 +754,56 @@ def update_user(user_id: int, user: UserUpdate, db: Session = Depends(get_db), c
     db.commit()
     db.refresh(db_user)
     write_log(db, "data_change", current_user.id, current_user.username, "system", "edit", f"编辑用户 (id={user_id})")
-    return db_user
+    return _get_user_with_roles(db, db_user)
 
 
-@router.delete("/users/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可删除用户")
+@router.post("/users/{user_id}/reset-password")
+def reset_user_password(user_id: int, data: PasswordReset, db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:user"))):
     db_user = db.query(SysUser).filter(SysUser.id == user_id).first()
     if not db_user:
         raise HTTPException(status_code=404, detail="用户不存在")
+    if len(data.new_password) < 6:
+        raise HTTPException(status_code=400, detail="新密码长度不能少于6位")
+    db_user.password_hash = get_password_hash(data.new_password)
+    db.commit()
+    write_log(db, "data_change", current_user.id, current_user.username, "system", "edit", f"重置用户密码: {db_user.username}")
+    return {"message": f"密码重置成功，新密码为：{data.new_password}"}
+
+
+@router.delete("/users/{user_id}")
+def delete_user(user_id: int, db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:user"))):
+    db_user = db.query(SysUser).filter(SysUser.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if db_user.username == "admin":
+        raise HTTPException(status_code=400, detail="超级管理员账号不可删除")
+    if db_user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能删除当前登录用户")
+    db.query(SysUserRole).filter(SysUserRole.user_id == user_id).delete()
     db.delete(db_user)
     db.commit()
     write_log(db, "data_change", current_user.id, current_user.username, "system", "delete", f"删除用户 {db_user.username}")
     return {"message": "删除成功"}
+
+
+@router.post("/users/batch-delete")
+def batch_delete_users(ids: List[int], db: Session = Depends(get_db), current_user: UserInfo = Depends(require_permission("system:user"))):
+    if not ids:
+        raise HTTPException(status_code=400, detail="请提供要删除的用户ID列表")
+    if current_user.id in ids:
+        raise HTTPException(status_code=400, detail="不能删除当前登录用户")
+    users = db.query(SysUser).filter(SysUser.id.in_(ids)).all()
+    if not users:
+        raise HTTPException(status_code=404, detail="未找到指定的用户")
+    admin_names = [u.username for u in users if u.username == "admin"]
+    if admin_names:
+        raise HTTPException(status_code=400, detail=f"超级管理员账号不可删除")
+    for user in users:
+        db.query(SysUserRole).filter(SysUserRole.user_id == user.id).delete()
+        db.delete(user)
+    db.commit()
+    write_log(db, "data_change", current_user.id, current_user.username, "system", "delete", f"批量删除 {len(users)} 个用户")
+    return {"message": f"成功删除 {len(users)} 个用户", "deleted_count": len(users)}
 
 
 @router.get("/logs", response_model=List[LogOut])
@@ -645,7 +811,7 @@ def get_logs(
     log_type: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
-    current_user: UserInfo = Depends(get_current_user)
+    current_user: UserInfo = Depends(require_permission("system:log"))
 ):
     query = db.query(SysLog)
     if log_type:
@@ -681,13 +847,12 @@ def _get_backup_dir() -> Path:
 
 
 @router.get("/backups")
-def list_backups(current_user: UserInfo = Depends(get_current_user)):
+def list_backups(current_user: UserInfo = Depends(require_permission("system:backup"))):
     """列出所有备份文件"""
     backup_dir = _get_backup_dir()
     if not backup_dir.exists():
         return {"backups": []}
     files = []
-    # 支持 .db (SQLite) 和 .sql (PostgreSQL) 两种备份格式
     for pattern in ["e9_salary_*.db", "e9_salary_*.sql"]:
         for f in sorted(backup_dir.glob(pattern), reverse=True):
             stat = f.stat()
@@ -697,7 +862,6 @@ def list_backups(current_user: UserInfo = Depends(get_current_user)):
                 "size_display": f"{stat.st_size / 1024:.1f} KB",
                 "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
             })
-    # 按时间倒序排列
     files.sort(key=lambda x: x["created_at"], reverse=True)
     return {"backups": files}
 
@@ -705,7 +869,7 @@ def list_backups(current_user: UserInfo = Depends(get_current_user)):
 @router.post("/backup")
 def create_backup(
     db: Session = Depends(get_db),
-    current_user: UserInfo = Depends(get_current_user),
+    current_user: UserInfo = Depends(require_permission("system:backup")),
 ):
     """手动创建数据库备份"""
     db_info = _parse_db_url()

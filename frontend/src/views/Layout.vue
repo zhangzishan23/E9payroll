@@ -37,54 +37,53 @@
           <p class="text-xs text-gray-400 mt-1">{{ authStore.user?.display_name }}</p>
         </div>
 
-        <el-menu-item index="/dashboard">
+        <el-menu-item index="/dashboard" v-if="authStore.hasPermission('dashboard:view')">
           <el-icon><HomeFilled /></el-icon>
           <span>工作台</span>
         </el-menu-item>
-        <el-menu-item index="/employees">
+        <el-menu-item index="/employees" v-if="authStore.hasPermission('employee:view')">
           <el-icon><User /></el-icon>
           <span>档案管理</span>
         </el-menu-item>
-        <el-menu-item index="/attendance">
+        <el-menu-item index="/attendance" v-if="authStore.hasPermission('attendance:view')">
           <el-icon><Calendar /></el-icon>
           <span>考勤管理</span>
         </el-menu-item>
-        <el-menu-item index="/performance">
+        <el-menu-item index="/performance" v-if="authStore.hasPermission('performance:view')">
           <el-icon><TrendCharts /></el-icon>
           <span>绩效评分</span>
         </el-menu-item>
-        <el-menu-item index="/insurance">
+        <el-menu-item index="/insurance" v-if="authStore.hasPermission('insurance:view')">
           <el-icon><CreditCard /></el-icon>
           <span>社保公积金</span>
         </el-menu-item>
-        <el-menu-item index="/insurance-template">
+        <el-menu-item index="/insurance-template" v-if="authStore.hasPermission('insurance:template')">
           <el-icon><Setting /></el-icon>
           <span>导入模板</span>
         </el-menu-item>
-        <el-menu-item index="/salary">
+        <el-menu-item index="/salary" v-if="authStore.hasPermission('salary:view')">
           <el-icon><Money /></el-icon>
-          <span>薪资核算</span>
+          <span>薪资计算</span>
         </el-menu-item>
-        <el-menu-item index="/approval">
+        <el-menu-item index="/approval" v-if="authStore.hasPermission('approval:view')">
           <el-icon><Checked /></el-icon>
           <span>审批流程</span>
         </el-menu-item>
-        <el-menu-item index="/reports">
+        <el-menu-item index="/reports" v-if="authStore.hasAnyPermission('report:view', 'report:view_my_slip')">
           <el-icon><Document /></el-icon>
           <span>报表导出</span>
         </el-menu-item>
 
-        <el-sub-menu index="system" v-if="authStore.user?.is_admin">
+        <el-sub-menu index="system" v-if="showSystemMenu">
           <template #title>
             <el-icon><Setting /></el-icon>
             <span>系统管理</span>
           </template>
-          <el-menu-item index="/system/users">用户管理</el-menu-item>
-          <el-menu-item index="/system/roles">角色管理</el-menu-item>
-          <el-menu-item index="/system/dict">数据字典</el-menu-item>
-          <el-menu-item index="/system/dict?category=department">部门管理</el-menu-item>
-          <el-menu-item index="/system/logs">操作日志</el-menu-item>
-          <el-menu-item index="/system/backup">数据备份</el-menu-item>
+          <el-menu-item index="/system/users" v-if="authStore.hasPermission('system:user')">用户管理</el-menu-item>
+          <el-menu-item index="/system/roles" v-if="authStore.hasPermission('system:role')">角色管理</el-menu-item>
+          <el-menu-item index="/system/dict" v-if="authStore.hasPermission('system:dict')">数据字典</el-menu-item>
+          <el-menu-item index="/system/logs" v-if="authStore.hasPermission('system:log')">操作日志</el-menu-item>
+          <el-menu-item index="/system/backup" v-if="authStore.hasPermission('system:backup')">数据备份</el-menu-item>
         </el-sub-menu>
 
         <div class="px-4 pt-6 pb-4 space-y-2">
@@ -122,6 +121,12 @@ import { useAuthStore } from '../stores/auth'
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+
+const showSystemMenu = computed(() => {
+  return authStore.hasAnyPermission(
+    'system:user', 'system:role', 'system:dict', 'system:log', 'system:backup'
+  )
+})
 
 const STORAGE_KEY = 'e9salary_sidebar_pinned'
 

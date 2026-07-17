@@ -4,7 +4,7 @@
       <h3 class="text-lg font-semibold text-gray-700 shrink-0 mr-1">数据备份</h3>
       <div class="flex items-center gap-2">
         <el-button type="info" size="small" :icon="Refresh" @click="fetchBackups">刷新</el-button>
-        <el-button type="primary" size="small" :icon="Download" :loading="backingUp" @click="doBackup">
+        <el-button type="primary" size="small" :icon="Download" :loading="backingUp" @click="doBackup" v-permission="'system:backup'">
           立即备份
         </el-button>
       </div>

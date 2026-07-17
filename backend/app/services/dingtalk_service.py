@@ -901,19 +901,30 @@ def get_user_detail(user_id: str) -> dict:
 
 # ========== 同步逻辑 ==========
 
-def sync_roster_to_db(db_session, mode: str = "full") -> dict:
+def sync_roster_to_db(db_session, mode: str = "full", auto_sync_depts: bool = True) -> dict:
     """
     将钉钉花名册同步到系统 Employee 表。
     mode: "full" 全量同步 / "incremental" 增量同步（基于数据更新时间戳）
+    auto_sync_depts: 是否自动同步部门（默认True，简化首次使用流程）
     匹配逻辑：优先按 dingtalk_user_id 匹配，其次按手机号。
     冲突处理：本地优先，已存在的员工非空字段不会被钉钉覆盖。
-    返回: {"created": 0, "updated": 0, "errors": []}
+    返回: {"created": 0, "updated": 0, "errors": [], "depts_synced": {...}}
     """
     from app.models.models import Employee, SysDictBase
 
     started_at = datetime.now()
     sync_type = f"roster_{mode}"
-    stats = {"created": 0, "updated": 0, "errors": []}
+    stats = {"created": 0, "updated": 0, "errors": [], "depts_synced": None}
+
+    # 0. 自动同步部门（简化首次使用流程，用户无需手动先同步部门）
+    if auto_sync_depts:
+        try:
+            dept_stats = sync_root_depts_to_db(db_session)
+            stats["depts_synced"] = dept_stats
+            logger.info("员工同步前自动同步部门：新增%d，更新%d", dept_stats["created"], dept_stats["updated"])
+        except Exception as e:
+            logger.warning("自动同步部门失败（非致命错误）: %s", str(e))
+            stats["errors"].append(f"自动同步部门失败: {str(e)}")
 
     # 1. 获取所有员工 userId
     try:

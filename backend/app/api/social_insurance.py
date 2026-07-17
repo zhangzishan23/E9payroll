@@ -11,7 +11,7 @@ from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.core.query_utils import filter_active_employees
 from app.models.models import SocialInsurance, Employee, SiImportTemplate, SiImportLog
-from app.api.auth import get_current_user, UserInfo
+from app.api.auth import get_current_user, UserInfo, require_permission
 from app.services.si_import_engine import (
     run_smart_import, SI_FIELD_LABELS, auto_detect_template,
     save_batch_files, precheck_batch, auto_detect_from_batch,
@@ -235,7 +235,7 @@ class SiImportLogOut(BaseModel):
         from_attributes = True
 
 
-@router.get("/", response_model=List[SocialInsuranceOut])
+@router.get("/", response_model=List[SocialInsuranceOut], dependencies=[Depends(require_permission("insurance:view"))])
 def get_social_insurance(
     period: Optional[str] = Query(None),
     hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"),
@@ -291,7 +291,7 @@ def get_social_insurance(
     return [SocialInsuranceOut.model_validate(r) for r in records]
 
 
-@router.post("/", response_model=SocialInsuranceOut)
+@router.post("/", response_model=SocialInsuranceOut, dependencies=[Depends(require_permission("insurance:create"))])
 def create_social_insurance(
     data: SocialInsuranceCreate,
     db: Session = Depends(get_db),
@@ -328,7 +328,7 @@ def create_social_insurance(
     return out
 
 
-@router.put("/{record_id}", response_model=SocialInsuranceOut)
+@router.put("/{record_id}", response_model=SocialInsuranceOut, dependencies=[Depends(require_permission("insurance:edit"))])
 def update_social_insurance(
     record_id: int,
     data: SocialInsuranceUpdate,
@@ -358,7 +358,7 @@ def update_social_insurance(
     return out
 
 
-@router.post("/batch-delete")
+@router.post("/batch-delete", dependencies=[Depends(require_permission("insurance:delete"))])
 def batch_delete_social_insurance(
     ids: List[int],
     db: Session = Depends(get_db),
@@ -378,7 +378,7 @@ def batch_delete_social_insurance(
     return {"message": f"成功删除 {deleted_count} 条社保公积金记录", "deleted_count": deleted_count}
 
 
-@router.delete("/{record_id}")
+@router.delete("/{record_id}", dependencies=[Depends(require_permission("insurance:delete"))])
 def delete_social_insurance(
     record_id: int,
     db: Session = Depends(get_db),
@@ -410,7 +410,7 @@ def _safe_float(val):
         return None
 
 
-@router.post("/import/{period}")
+@router.post("/import/{period}", dependencies=[Depends(require_permission("insurance:import"))])
 def import_social_insurance(
     period: str,
     file: UploadFile = File(...),
@@ -645,7 +645,7 @@ def import_social_insurance(
     return {"message": f"导入完成：新增 {created} 条，更新 {updated} 条，跳过 {skipped} 条不匹配的员工记录", "created": created, "updated": updated, "skipped": skipped}
 
 
-@router.get("/export/{period}")
+@router.get("/export/{period}", dependencies=[Depends(require_permission("insurance:export"))])
 def export_social_insurance(
     period: str,
     hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"),
@@ -711,7 +711,7 @@ def export_social_insurance(
 
 
 # ── 智能导入（多文件批量上传）──────────────────────────────────────────
-@router.post("/smart-import/{period}")
+@router.post("/smart-import/{period}", dependencies=[Depends(require_permission("insurance:import"))])
 def smart_import_social_insurance(
     period: str,
     files: List[UploadFile] = File(...),
@@ -739,7 +739,7 @@ def smart_import_social_insurance(
 
 
 # ── 模板自动识别（上传样本文件，自动生成模板配置）───────────────────
-@router.post("/templates/auto-detect")
+@router.post("/templates/auto-detect", dependencies=[Depends(require_permission("insurance:template"))])
 def auto_detect_template_config(
     file: UploadFile = File(...),
     current_user: UserInfo = Depends(get_current_user)
@@ -756,7 +756,7 @@ def auto_detect_template_config(
 
 
 # ── 字段标签列表（供前端下拉菜单使用）─────────────────────────────────
-@router.get("/field-labels")
+@router.get("/field-labels", dependencies=[Depends(require_permission("insurance:view"))])
 def get_field_labels(
     current_user: UserInfo = Depends(get_current_user)
 ):
@@ -765,7 +765,7 @@ def get_field_labels(
 
 
 # ── 导入模板 CRUD ─────────────────────────────────────────────────────
-@router.get("/templates", response_model=List[SiImportTemplateOut])
+@router.get("/templates", response_model=List[SiImportTemplateOut], dependencies=[Depends(require_permission("insurance:template"))])
 def list_templates(
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user)
@@ -776,7 +776,7 @@ def list_templates(
 DEFAULT_NUMBER_FORMAT = {"remove_chars": [",", "，"], "decimal_separator": "."}
 
 
-@router.post("/templates", response_model=SiImportTemplateOut)
+@router.post("/templates", response_model=SiImportTemplateOut, dependencies=[Depends(require_permission("insurance:template"))])
 def create_template(
     data: SiImportTemplateCreate,
     db: Session = Depends(get_db),
@@ -801,7 +801,7 @@ def create_template(
     return tpl
 
 
-@router.put("/templates/{template_id}", response_model=SiImportTemplateOut)
+@router.put("/templates/{template_id}", response_model=SiImportTemplateOut, dependencies=[Depends(require_permission("insurance:template"))])
 def update_template(
     template_id: int,
     data: SiImportTemplateUpdate,

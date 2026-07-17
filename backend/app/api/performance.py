@@ -11,7 +11,7 @@ from app.core.log_helper import write_log
 from app.core.query_utils import filter_active_employees
 from app.services.work_calendar import get_month_salary_days
 from app.models.models import PerformanceScore, Employee, EmployeeSalary, AttendanceRecord
-from app.api.auth import get_current_user, UserInfo
+from app.api.auth import get_current_user, UserInfo, require_permission
 
 router = APIRouter()
 
@@ -131,7 +131,7 @@ def _batch_load_dict_names(db: Session) -> dict:
     return {d.id: d.name for d in dict_items}
 
 
-@router.get("/", response_model=List[PerformanceOut])
+@router.get("/", response_model=List[PerformanceOut], dependencies=[Depends(require_permission("performance:view"))])
 def get_performances(
     period: Optional[str] = Query(None),
     hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"),
@@ -218,7 +218,7 @@ def get_performances(
     return result
 
 
-@router.post("/", response_model=PerformanceOut)
+@router.post("/", response_model=PerformanceOut, dependencies=[Depends(require_permission("performance:create"))])
 def create_performance(
     data: PerformanceCreate,
     db: Session = Depends(get_db),
@@ -269,7 +269,7 @@ def create_performance(
     return out
 
 
-@router.put("/{perf_id}", response_model=PerformanceOut)
+@router.put("/{perf_id}", response_model=PerformanceOut, dependencies=[Depends(require_permission("performance:edit"))])
 def update_performance(
     perf_id: int,
     data: PerformanceUpdate,
@@ -312,7 +312,7 @@ def update_performance(
     return out
 
 
-@router.delete("/{perf_id}")
+@router.delete("/{perf_id}", dependencies=[Depends(require_permission("performance:delete"))])
 def delete_performance(
     perf_id: int,
     db: Session = Depends(get_db),
@@ -327,7 +327,7 @@ def delete_performance(
     return {"message": "删除成功"}
 
 
-@router.post("/import/{period}")
+@router.post("/import/{period}", dependencies=[Depends(require_permission("performance:import"))])
 def import_performances(
     period: str,
     items: List[PerformanceImportItem],
@@ -387,7 +387,7 @@ def import_performances(
     }
 
 
-@router.get("/export/{period}")
+@router.get("/export/{period}", dependencies=[Depends(require_permission("performance:export"))])
 def export_performances(
     period: str,
     hide_status_id: Optional[int] = Query(None, description="要隐藏的员工状态ID"),
@@ -487,7 +487,7 @@ def export_performances(
     )
 
 
-@router.post("/batch-delete")
+@router.post("/batch-delete", dependencies=[Depends(require_permission("performance:delete"))])
 def batch_delete_performances(ids: List[int], db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     if not ids:
         raise HTTPException(status_code=400, detail="请提供要删除的绩效记录ID列表")
@@ -501,7 +501,7 @@ def batch_delete_performances(ids: List[int], db: Session = Depends(get_db), cur
     return {"message": f"成功删除 {len(records)} 条绩效记录", "deleted_count": len(records)}
 
 
-@router.post("/import-excel")
+@router.post("/import-excel", dependencies=[Depends(require_permission("performance:import"))])
 async def import_performances_excel(
     file: UploadFile = File(...),
     period: str = Form(...),

@@ -57,7 +57,7 @@
         <div class="mb-3 flex items-center gap-2">
           <el-tag type="warning" size="small">共 {{ contractWarning.total_count }} 人合同即将到期</el-tag>
           <el-tag v-if="contractWarning.expired_count > 0" type="danger" size="small">{{ contractWarning.expired_count }} 人已过期</el-tag>
-          <el-button type="primary" size="small" text @click="exportContractWarning">导出预警名单</el-button>
+          <el-button type="primary" size="small" text @click="exportContractWarning" v-permission="'report:export'">导出预警名单</el-button>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           <div
@@ -84,7 +84,7 @@
     <div class="apple-card p-6">
       <div class="flex items-center justify-between mb-6">
         <h3 class="text-lg font-semibold text-gray-700">报表导出中心</h3>
-        <el-button type="primary" @click="showConfigDialog">
+        <el-button type="primary" @click="showConfigDialog" v-permission="'report:export'">
           <el-icon><Setting /></el-icon>
           导出表配置
         </el-button>
@@ -95,7 +95,7 @@
           <el-icon class="text-5xl text-blue-500 mb-4"><Document /></el-icon>
           <div class="font-semibold text-lg">员工花名册</div>
           <div class="text-sm text-gray-500 mt-2">导出全量员工基本信息</div>
-          <el-button type="primary" class="mt-4" size="default">立即导出</el-button>
+          <el-button type="primary" class="mt-4" size="default" @click.stop="exportReport('roster')" v-permission="'report:export'">立即导出</el-button>
         </div>
 
         <div class="apple-card p-6 text-center border-2 border-dashed border-green-200 hover:border-green-400 hover:shadow-lg transition-shadow">
@@ -106,7 +106,7 @@
             <el-select v-model="selectedTemplate" placeholder="选择模板" size="small" class="!w-32" clearable>
               <el-option v-for="tpl in salaryTemplates" :key="tpl.id" :label="tpl.name + (tpl.is_default ? ' (默认)' : '')" :value="tpl.id" />
             </el-select>
-            <el-button type="primary" size="small" @click="exportSalaryByTemplate">导出Excel</el-button>
+            <el-button type="primary" size="small" @click="exportSalaryByTemplate" v-permission="'report:export'">导出Excel</el-button>
           </div>
         </div>
 
@@ -117,7 +117,7 @@
           </div>
           <div class="flex items-center gap-2 justify-center mb-4">
             <el-date-picker v-model="attPeriod" type="month" placeholder="选择月份" size="small" class="!w-40" value-format="YYYYMM" />
-            <el-button type="primary" size="small" @click="exportReport('attendance')">导出Excel</el-button>
+            <el-button type="primary" size="small" @click="exportReport('attendance')" v-permission="'report:export'">导出Excel</el-button>
           </div>
         </div>
       </div>
@@ -128,7 +128,7 @@
         <el-tab-pane label="薪资表模板" name="salary">
           <div class="mb-4 flex justify-between items-center">
             <div class="text-sm text-gray-500">配置不同用途的薪资导出表字段</div>
-            <el-button type="primary" size="small" @click="createNewTemplate">
+            <el-button type="primary" size="small" @click="createNewTemplate" v-permission="'report:export'">
               <el-icon><Plus /></el-icon>
               新建模板
             </el-button>
@@ -154,9 +154,9 @@
             </el-table-column>
             <el-table-column label="操作" width="200" fixed="right">
               <template #default="{ row }">
-                <el-link type="primary" size="small" @click="editTemplate(row)">编辑</el-link>
-                <el-link v-if="!row.is_default" type="success" size="small" class="ml-2" @click="setDefaultTemplate(row)">设为默认</el-link>
-                <el-link v-if="!row.is_default" type="danger" size="small" class="ml-2" @click="deleteTemplate(row)">删除</el-link>
+                <el-link type="primary" size="small" @click="editTemplate(row)" v-permission="'report:export'">编辑</el-link>
+                <el-link v-if="!row.is_default" type="success" size="small" class="ml-2" @click="setDefaultTemplate(row)" v-permission="'report:export'">设为默认</el-link>
+                <el-link v-if="!row.is_default" type="danger" size="small" class="ml-2" @click="deleteTemplate(row)" v-permission="'report:export'">删除</el-link>
               </template>
             </el-table-column>
           </el-table>
@@ -165,7 +165,7 @@
         <el-tab-pane label="花名册模板" name="roster">
           <div class="mb-4 flex justify-between items-center">
             <div class="text-sm text-gray-500">配置员工花名册导出表字段</div>
-            <el-button type="primary" size="small" @click="createNewTemplate">
+            <el-button type="primary" size="small" @click="createNewTemplate" v-permission="'report:export'">
               <el-icon><Plus /></el-icon>
               新建模板
             </el-button>
@@ -186,9 +186,9 @@
             </el-table-column>
             <el-table-column label="操作" width="200" fixed="right">
               <template #default="{ row }">
-                <el-link type="primary" size="small" @click="editTemplate(row)">编辑</el-link>
-                <el-link v-if="!row.is_default" type="success" size="small" class="ml-2" @click="setDefaultTemplate(row)">设为默认</el-link>
-                <el-link v-if="!row.is_default" type="danger" size="small" class="ml-2" @click="deleteTemplate(row)">删除</el-link>
+                <el-link type="primary" size="small" @click="editTemplate(row)" v-permission="'report:export'">编辑</el-link>
+                <el-link v-if="!row.is_default" type="success" size="small" class="ml-2" @click="setDefaultTemplate(row)" v-permission="'report:export'">设为默认</el-link>
+                <el-link v-if="!row.is_default" type="danger" size="small" class="ml-2" @click="deleteTemplate(row)" v-permission="'report:export'">删除</el-link>
               </template>
             </el-table-column>
           </el-table>
@@ -197,7 +197,7 @@
         <el-tab-pane label="考勤表模板" name="attendance">
           <div class="mb-4 flex justify-between items-center">
             <div class="text-sm text-gray-500">配置考勤统计表导出表字段</div>
-            <el-button type="primary" size="small" @click="createNewTemplate">
+            <el-button type="primary" size="small" @click="createNewTemplate" v-permission="'report:export'">
               <el-icon><Plus /></el-icon>
               新建模板
             </el-button>
@@ -218,9 +218,9 @@
             </el-table-column>
             <el-table-column label="操作" width="200" fixed="right">
               <template #default="{ row }">
-                <el-link type="primary" size="small" @click="editTemplate(row)">编辑</el-link>
-                <el-link v-if="!row.is_default" type="success" size="small" class="ml-2" @click="setDefaultTemplate(row)">设为默认</el-link>
-                <el-link v-if="!row.is_default" type="danger" size="small" class="ml-2" @click="deleteTemplate(row)">删除</el-link>
+                <el-link type="primary" size="small" @click="editTemplate(row)" v-permission="'report:export'">编辑</el-link>
+                <el-link v-if="!row.is_default" type="success" size="small" class="ml-2" @click="setDefaultTemplate(row)" v-permission="'report:export'">设为默认</el-link>
+                <el-link v-if="!row.is_default" type="danger" size="small" class="ml-2" @click="deleteTemplate(row)" v-permission="'report:export'">删除</el-link>
               </template>
             </el-table-column>
           </el-table>
@@ -229,7 +229,7 @@
         <el-tab-pane label="社保表模板" name="social_insurance">
           <div class="mb-4 flex justify-between items-center">
             <div class="text-sm text-gray-500">配置社保公积金导出表字段</div>
-            <el-button type="primary" size="small" @click="createNewTemplate">
+            <el-button type="primary" size="small" @click="createNewTemplate" v-permission="'report:export'">
               <el-icon><Plus /></el-icon>
               新建模板
             </el-button>
@@ -250,9 +250,9 @@
             </el-table-column>
             <el-table-column label="操作" width="200" fixed="right">
               <template #default="{ row }">
-                <el-link type="primary" size="small" @click="editTemplate(row)">编辑</el-link>
-                <el-link v-if="!row.is_default" type="success" size="small" class="ml-2" @click="setDefaultTemplate(row)">设为默认</el-link>
-                <el-link v-if="!row.is_default" type="danger" size="small" class="ml-2" @click="deleteTemplate(row)">删除</el-link>
+                <el-link type="primary" size="small" @click="editTemplate(row)" v-permission="'report:export'">编辑</el-link>
+                <el-link v-if="!row.is_default" type="success" size="small" class="ml-2" @click="setDefaultTemplate(row)" v-permission="'report:export'">设为默认</el-link>
+                <el-link v-if="!row.is_default" type="danger" size="small" class="ml-2" @click="deleteTemplate(row)" v-permission="'report:export'">删除</el-link>
               </template>
             </el-table-column>
           </el-table>

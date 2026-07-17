@@ -14,7 +14,7 @@ from openpyxl import Workbook
 
 from app.core.database import get_db
 from app.core.log_helper import write_log
-from app.api.auth import get_current_user, UserInfo
+from app.api.auth import get_current_user, UserInfo, require_permission
 from app.services.dingtalk_service import (
     sync_roster_to_db,
     sync_attendance_to_db,
@@ -60,23 +60,35 @@ class SyncLogItem(BaseModel):
         from_attributes = True
 
 
-@router.post("/sync/roster", response_model=SyncResult)
+@router.post("/sync/roster", response_model=SyncResult, dependencies=[Depends(require_permission("employee:sync"))])
 def api_sync_roster(
     mode: str = Query("full", description="同步模式：full 全量 / incremental 增量"),
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user),
 ):
-    """从钉钉同步花名册到系统员工档案"""
+    """从钉钉同步花名册到系统员工档案（自动先同步部门）"""
     try:
         stats = sync_roster_to_db(db, mode=mode)
+
+        dept_msg = ""
+        if stats.get("depts_synced"):
+            ds = stats["depts_synced"]
+            if ds["created"] > 0 or ds["updated"] > 0:
+                dept_msg = f"（自动同步部门：新增{ds['created']}个，更新{ds['updated']}个）"
+
         write_log(
             db, "sync", current_user.id, current_user.username,
             "dingtalk", "sync_roster",
-            f"花名册同步完成({mode})：新增{stats['created']}，更新{stats['updated']}"
+            f"花名册同步完成({mode})：新增{stats['created']}，更新{stats['updated']}{dept_msg}"
         )
+
+        msg = f"钉钉同步完成({mode})：新增 {stats['created']} 人，更新 {stats['updated']} 人"
+        if dept_msg:
+            msg += dept_msg
+
         return SyncResult(
             success=len(stats["errors"]) == 0,
-            message=f"花名册同步完成({mode})：新增 {stats['created']} 人，更新 {stats['updated']} 人",
+            message=msg,
             created=stats["created"],
             updated=stats["updated"],
             errors=stats["errors"],
@@ -85,7 +97,7 @@ def api_sync_roster(
         raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
 
 
-@router.post("/sync/attendance", response_model=SyncResult)
+@router.post("/sync/attendance", response_model=SyncResult, dependencies=[Depends(require_permission("attendance:sync"))])
 def api_sync_attendance(
     period: str = Query(..., description="考勤月份，格式 YYYYMM，如 202406"),
     db: Session = Depends(get_db),
@@ -109,7 +121,7 @@ def api_sync_attendance(
         raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
 
 
-@router.get("/sync/logs", response_model=list[SyncLogItem])
+@router.get("/sync/logs", response_model=list[SyncLogItem], dependencies=[Depends(require_permission("employee:sync"))])
 def api_sync_logs(
     sync_type: Optional[str] = Query(None, description="同步类型筛选"),
     limit: int = Query(20, description="返回条数"),
@@ -138,7 +150,7 @@ def api_sync_logs(
     ]
 
 
-@router.post("/sync/cleanup-daily")
+@router.post("/sync/cleanup-daily", dependencies=[Depends(require_permission("attendance:sync"))])
 def api_cleanup_daily(
     keep_days: int = Query(60, description="保留天数，默认60天"),
     db: Session = Depends(get_db),
@@ -157,7 +169,7 @@ def api_cleanup_daily(
         raise HTTPException(status_code=500, detail=f"清理失败: {str(e)}")
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(require_permission("employee:view", "attendance:view"))])
 def api_dingtalk_status(
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user),
@@ -196,7 +208,7 @@ def api_dingtalk_status(
     return result
 
 
-@router.post("/sync/root-depts")
+@router.post("/sync/root-depts", dependencies=[Depends(require_permission("employee:sync"))])
 def api_sync_root_depts(
     db: Session = Depends(get_db),
     current_user: UserInfo = Depends(get_current_user),
@@ -214,7 +226,7 @@ def api_sync_root_depts(
         raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
 
 
-@router.get("/raw-attendance/columns")
+@router.get("/raw-attendance/columns", dependencies=[Depends(require_permission("attendance:sync"))])
 def api_raw_attendance_columns(
     current_user: UserInfo = Depends(get_current_user),
 ):
@@ -231,7 +243,7 @@ def api_raw_attendance_columns(
         raise HTTPException(status_code=500, detail=f"获取考勤列定义失败: {str(e)}")
 
 
-@router.get("/raw-attendance/export")
+@router.get("/raw-attendance/export", dependencies=[Depends(require_permission("attendance:export"))])
 def api_raw_attendance_export(
     period: str = Query(..., description="考勤月份，格式 YYYYMM，如 202406"),
     db: Session = Depends(get_db),

@@ -11,26 +11,27 @@
           <el-input v-model="filterValue" placeholder="筛选" clearable class="!w-24 shrink-0" size="small" @input="fetchResults" />
         </div>
         <div class="flex items-center gap-1">
-          <el-button type="primary" size="small" :loading="checking" @click="checkCompleteness">检查</el-button>
+          <el-button type="primary" size="small" :loading="checking" @click="checkCompleteness" v-permission="'salary:calculate'">检查</el-button>
           <el-button
             size="small"
             :type="editMode ? 'danger' : 'primary'"
             :disabled="!hasResults"
             @click="toggleEditMode"
+            v-permission="'salary:edit'"
           >
             {{ editMode ? '退出' : '编辑' }}
           </el-button>
           <template v-if="editMode">
-            <el-button type="success" size="small" :loading="savingEdits" @click="confirmEdits">确认</el-button>
+            <el-button type="success" size="small" :loading="savingEdits" @click="confirmEdits" v-permission="'salary:edit'">确认</el-button>
             <el-button size="small" @click="cancelEdits">取消</el-button>
           </template>
-          <el-button type="danger" size="small" :disabled="!hasResults || isSubmitting" @click="batchSubmitApproval">审核</el-button>
-          <el-button type="info" size="small" :disabled="!hasResults" @click="handleExport">导出</el-button>
-          <el-button type="danger" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">
+          <el-button type="danger" size="small" :disabled="!hasResults || isSubmitting" @click="batchSubmitApproval" v-permission="'approval:submit'">审核</el-button>
+          <el-button type="info" size="small" :disabled="!hasResults" @click="handleExport" v-permission="'salary:export'">导出</el-button>
+          <el-button type="danger" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete" v-permission="'salary:delete'">
             删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
           </el-button>
-          <el-button type="warning" size="small" :disabled="!hasResults" @click="showTaxImport">报税导入</el-button>
-          <el-button type="success" size="small" :disabled="!hasResults" @click="handleExportTaxTemplate">导出报税模板</el-button>
+          <el-button type="warning" size="small" :disabled="!hasResults" @click="showTaxImport" v-permission="'salary:tax'">报税导入</el-button>
+          <el-button type="success" size="small" :disabled="!hasResults" @click="handleExportTaxTemplate" v-permission="'salary:tax'">导出报税模板</el-button>
           <ColumnSetting
             :columns="SALARY_TABLE_COLUMNS"
             :default-visible-keys="SALARY_DEFAULT_VISIBLE"
@@ -110,22 +111,22 @@
                 <span :class="row.record_type === 'contract' ? 'text-orange-600 font-medium' : 'text-blue-600 font-medium'">{{ row[col.key] || '' }}</span>
               </template>
               <template v-else-if="col.type === 'percent'">
-                {{ row[col.key] != null ? (row[col.key] * 100).toFixed(1) + '%' : '' }}
+                {{ formatPercent(row[col.key]) }}
               </template>
               <template v-else-if="col.type === 'money'">
                 <span
-                  v-if="row[col.key] != null"
+                  v-if="!isEmptyValue(row[col.key])"
                   :class="{
                     'font-semibold text-blue-600': col.key === 'gross_salary',
                     'font-semibold text-green-600': col.key === 'net_salary'
                   }"
                 >{{ formatMoney(row[col.key]) }}</span>
               </template>
-              <template v-else-if="col.type === 'number'">
-                {{ formatValue(row[col.key]) }}
+              <template v-else-if="col.type === 'number' || col.type === 'int'">
+                {{ formatNumber(row[col.key]) }}
               </template>
               <template v-else>
-                {{ row[col.key] != null ? row[col.key] : '' }}
+                {{ formatText(row[col.key]) }}
               </template>
             </template>
           </template>
@@ -234,19 +235,7 @@ import { Download, Delete, UploadFilled, Setting } from '@element-plus/icons-vue
 import api from '../../api'
 import { SALARY_COLUMNS, SALARY_EDITABLE_FIELDS, getSalaryFieldLabel } from '../../config/columns'
 import ColumnSetting from '../../components/ColumnSetting.vue'
-
-function formatValue(val, decimals = null) {
-  if (val == null) return ''
-  if (typeof val === 'number' && decimals != null) {
-    return val.toFixed(decimals)
-  }
-  return val
-}
-
-function formatMoney(val) {
-  if (val == null) return ''
-  return Number(val).toFixed(2)
-}
+import { formatMoney, formatNumber, formatPercent, formatText, isEmptyValue } from '../../utils/format'
 
 function getDefaultPeriod() {
   const now = new Date()
@@ -881,25 +870,116 @@ async function doTaxImport() {
 .cell-text :deep(.el-input__wrapper) {
   padding: 0 4px;
 }
-:deep(.row-changed) {
-  background-color: #fef3c7 !important;
+:deep(.el-table__body tr) > td {
+  background-color: transparent !important;
 }
-:deep(.row-contract-company) {
-  background-color: #fff7ed !important;
+:deep(.el-table__body tr.el-table__row--striped) > td {
+  background-color: transparent !important;
 }
-:deep(.row-contract-company:hover) > td {
+:deep(.el-table__fixed .el-table__body tr) > td,
+:deep(.el-table__fixed-right .el-table__body tr) > td {
+  background-color: transparent !important;
+}
+
+:deep(.el-table__body tr.row-contract-company) {
   background-color: #ffedd5 !important;
 }
-:deep(.row-contract-company) td:first-child {
+:deep(.el-table__body tr.row-contract-company) > td {
+  background-color: #ffedd5 !important;
+}
+:deep(.el-table__body tr.row-contract-company.el-table__row--striped) > td {
+  background-color: #ffedd5 !important;
+}
+:deep(.el-table__body tr.row-contract-company:hover) > td {
+  background-color: #fed7aa !important;
+}
+:deep(.el-table__fixed .el-table__body tr.row-contract-company) > td,
+:deep(.el-table__fixed-right .el-table__body tr.row-contract-company) > td {
+  background-color: #ffedd5 !important;
+}
+:deep(.el-table__fixed .el-table__body tr.row-contract-company:hover) > td,
+:deep(.el-table__fixed-right .el-table__body tr.row-contract-company:hover) > td {
+  background-color: #fed7aa !important;
+}
+:deep(.el-table__body tr.row-contract-company) td:first-child {
   border-left: 3px solid #f97316;
 }
-:deep(.row-payroll-company) {
+
+:deep(.el-table__body tr.row-payroll-company) {
   background-color: #ffffff !important;
 }
-:deep(.row-payroll-company:hover) > td {
+:deep(.el-table__body tr.row-payroll-company) > td {
+  background-color: #ffffff !important;
+}
+:deep(.el-table__body tr.row-payroll-company.el-table__row--striped) > td {
+  background-color: #ffffff !important;
+}
+:deep(.el-table__body tr.row-payroll-company:hover) > td {
   background-color: #f5f5f5 !important;
 }
-:deep(.col-summary) {
+:deep(.el-table__fixed .el-table__body tr.row-payroll-company) > td,
+:deep(.el-table__fixed-right .el-table__body tr.row-payroll-company) > td {
+  background-color: #ffffff !important;
+}
+:deep(.el-table__fixed .el-table__body tr.row-payroll-company:hover) > td,
+:deep(.el-table__fixed-right .el-table__body tr.row-payroll-company:hover) > td {
+  background-color: #f5f5f5 !important;
+}
+
+:deep(.el-table__body tr.row-changed) {
+  background-color: #fef3c7 !important;
+}
+:deep(.el-table__body tr.row-changed) > td {
+  background-color: #fef3c7 !important;
+}
+:deep(.el-table__body tr.row-changed.el-table__row--striped) > td {
+  background-color: #fef3c7 !important;
+}
+:deep(.el-table__body tr.row-changed:hover) > td {
+  background-color: #fde68a !important;
+}
+:deep(.el-table__fixed .el-table__body tr.row-changed) > td,
+:deep(.el-table__fixed-right .el-table__body tr.row-changed) > td {
+  background-color: #fef3c7 !important;
+}
+:deep(.el-table__fixed .el-table__body tr.row-changed:hover) > td,
+:deep(.el-table__fixed-right .el-table__body tr.row-changed:hover) > td {
+  background-color: #fde68a !important;
+}
+
+:deep(.el-table__body tr) > td.col-summary {
   background-color: #fef9c3 !important;
+}
+:deep(.el-table__body tr.el-table__row--striped) > td.col-summary {
+  background-color: #fef9c3 !important;
+}
+:deep(.el-table__body tr:hover) > td.col-summary {
+  background-color: #fef08a !important;
+}
+:deep(.el-table__body tr.row-contract-company) > td.col-summary {
+  background-color: #fef9c3 !important;
+}
+:deep(.el-table__body tr.row-contract-company:hover) > td.col-summary {
+  background-color: #fef08a !important;
+}
+:deep(.el-table__body tr.row-payroll-company) > td.col-summary {
+  background-color: #fef9c3 !important;
+}
+:deep(.el-table__body tr.row-payroll-company:hover) > td.col-summary {
+  background-color: #fef08a !important;
+}
+:deep(.el-table__body tr.row-changed) > td.col-summary {
+  background-color: #fef9c3 !important;
+}
+:deep(.el-table__body tr.row-changed:hover) > td.col-summary {
+  background-color: #fef08a !important;
+}
+:deep(.el-table__fixed .el-table__body tr) > td.col-summary,
+:deep(.el-table__fixed-right .el-table__body tr) > td.col-summary {
+  background-color: #fef9c3 !important;
+}
+:deep(.el-table__fixed .el-table__body tr:hover) > td.col-summary,
+:deep(.el-table__fixed-right .el-table__body tr:hover) > td.col-summary {
+  background-color: #fef08a !important;
 }
 </style>

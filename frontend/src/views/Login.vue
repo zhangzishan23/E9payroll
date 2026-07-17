@@ -18,8 +18,9 @@
           </el-button>
         </el-form-item>
       </el-form>
-      <div class="text-center text-xs text-gray-400 mt-4">
-        测试账号：admin / admin123 或 hr001 / 123456
+      <div class="text-center text-sm text-gray-500 mt-4">
+        还没有账号？
+        <el-link type="primary" @click="goRegister">立即注册</el-link>
       </div>
     </div>
   </div>
@@ -37,8 +38,8 @@ const loading = ref(false)
 const formRef = ref(null)
 
 const form = reactive({
-  username: 'admin',
-  password: 'admin123'
+  username: '',
+  password: ''
 })
 
 const rules = {
@@ -56,5 +57,9 @@ async function handleLogin() {
   } finally {
     loading.value = false
   }
+}
+
+function goRegister() {
+  router.push('/register')
 }
 </script>

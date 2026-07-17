@@ -29,8 +29,8 @@
           {{ batchMode ? '批量模板配置向导' : '社保公积金导入模板配置' }}
         </span>
         <div class="flex gap-2" v-if="!batchMode">
-          <el-button type="success" :icon="Upload" size="small" @click="triggerUpload">上传文件自动识别</el-button>
-          <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)">新增模板</el-button>
+          <el-button type="success" :icon="Upload" size="small" @click="triggerUpload" v-permission="'insurance:template'">上传文件自动识别</el-button>
+          <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)" v-permission="'insurance:template'">新增模板</el-button>
         </div>
         <div class="flex gap-2" v-else>
           <el-tag type="info">待配置：{{ batchUnmatchedFiles.length - currentBatchIndex - skippedBatchCount }} 个</el-tag>
@@ -81,8 +81,8 @@
       </el-table-column>
       <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
-          <el-link type="primary" :underline="false" class="mr-2" @click="showDialog(row)">编辑</el-link>
-          <el-link type="danger" :underline="false" @click="handleDelete(row)">删除</el-link>
+          <el-link type="primary" :underline="false" class="mr-2" @click="showDialog(row)" v-permission="'insurance:template'">编辑</el-link>
+          <el-link type="danger" :underline="false" @click="handleDelete(row)" v-permission="'insurance:template'">删除</el-link>
         </template>
       </el-table-column>
     </el-table>
@@ -591,7 +591,6 @@ const fieldGroups = computed(() => {
   return {
     basic: {
       employee_name: labels.employee_name,
-      employee_social_insurance_no: labels.employee_social_insurance_no,
     },
     pension: {
       pension_personal_base: labels.pension_personal_base,

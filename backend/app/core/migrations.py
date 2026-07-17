@@ -383,3 +383,123 @@ def _run_salary_split_migrations():
                 conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uix_salary_period_emp_company ON salary_calculations (period, employee_id, pay_company_id)"))
             except Exception:
                 pass
+
+
+def _init_default_roles_and_permissions():
+    """初始化预置角色和默认权限"""
+    from app.core.database import SessionLocal
+    from app.models.models import SysRole, SysPermission, SysUser, SysUserRole
+
+    db = SessionLocal()
+    try:
+        default_roles = [
+            {
+                "name": "超级管理员",
+                "description": "系统最高权限，拥有所有功能访问权",
+                "is_preset": True,
+                "data_scope": "all",
+                "permissions": []
+            },
+            {
+                "name": "人事专员",
+                "description": "负责人事信息、考勤、绩效、社保数据录入与维护",
+                "is_preset": True,
+                "data_scope": "all",
+                "permissions": [
+                    "dashboard:view",
+                    "employee:view", "employee:create", "employee:edit", "employee:export", "employee:import", "employee:sync",
+                    "attendance:view", "attendance:create", "attendance:edit", "attendance:export", "attendance:import", "attendance:sync", "attendance:writeoff",
+                    "performance:view", "performance:create", "performance:edit", "performance:export", "performance:import",
+                    "insurance:view", "insurance:create", "insurance:edit", "insurance:export", "insurance:import", "insurance:template",
+                    "report:view", "report:export",
+                ]
+            },
+            {
+                "name": "人事主管",
+                "description": "负责人事管理、薪资审核、审批流程处理",
+                "is_preset": True,
+                "data_scope": "all",
+                "permissions": [
+                    "dashboard:view",
+                    "employee:view", "employee:create", "employee:edit", "employee:delete", "employee:export", "employee:import", "employee:sync",
+                    "attendance:view", "attendance:create", "attendance:edit", "attendance:delete", "attendance:export", "attendance:import", "attendance:sync", "attendance:writeoff",
+                    "performance:view", "performance:create", "performance:edit", "performance:export", "performance:import",
+                    "insurance:view", "insurance:create", "insurance:edit", "insurance:delete", "insurance:export", "insurance:import", "insurance:template",
+                    "salary:view", "salary:create", "salary:edit", "salary:calculate", "salary:export",
+                    "approval:view", "approval:approve",
+                    "report:view", "report:export",
+                ]
+            },
+            {
+                "name": "会计",
+                "description": "负责薪资核算、报税、工资发放相关操作",
+                "is_preset": True,
+                "data_scope": "all",
+                "permissions": [
+                    "dashboard:view",
+                    "employee:view", "employee:export",
+                    "attendance:view", "attendance:export",
+                    "performance:view",
+                    "insurance:view",
+                    "salary:view", "salary:edit", "salary:calculate", "salary:tax", "salary:export",
+                    "approval:view",
+                    "report:view", "report:export",
+                ]
+            },
+            {
+                "name": "普通员工",
+                "description": "仅可查看个人相关信息和工资条",
+                "is_preset": True,
+                "data_scope": "self",
+                "permissions": [
+                    "dashboard:view",
+                    "profile:view", "profile:edit",
+                    "report:view_my_slip",
+                ]
+            },
+            {
+                "name": "访客",
+                "description": "新注册用户默认角色，仅可查看工作台",
+                "is_preset": True,
+                "data_scope": "self",
+                "permissions": [
+                    "dashboard:view",
+                ]
+            }
+        ]
+
+        for role_data in default_roles:
+            role = db.query(SysRole).filter(SysRole.name == role_data["name"]).first()
+            if not role:
+                role = SysRole(
+                    name=role_data["name"],
+                    description=role_data["description"],
+                    is_preset=role_data["is_preset"],
+                    data_scope=role_data["data_scope"]
+                )
+                db.add(role)
+                db.flush()
+
+                if role_data["name"] != "超级管理员":
+                    for perm_code in role_data["permissions"]:
+                        module, action = perm_code.split(":", 1)
+                        perm = SysPermission(role_id=role.id, module=module, action=action)
+                        db.add(perm)
+
+        admin_user = db.query(SysUser).filter(SysUser.username == "admin").first()
+        if admin_user and admin_user.is_admin:
+            super_role = db.query(SysRole).filter(SysRole.name == "超级管理员").first()
+            if super_role:
+                existing = db.query(SysUserRole).filter(
+                    SysUserRole.user_id == admin_user.id,
+                    SysUserRole.role_id == super_role.id
+                ).first()
+                if not existing:
+                    db.add(SysUserRole(user_id=admin_user.id, role_id=super_role.id))
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()

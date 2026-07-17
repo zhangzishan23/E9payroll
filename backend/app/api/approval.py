@@ -6,7 +6,7 @@ from typing import Optional, List
 from datetime import datetime
 from app.core.database import get_db
 from app.models.models import SalaryCalculation, ApprovalRecord, SysUser
-from app.api.auth import get_current_user, UserInfo
+from app.api.auth import get_current_user, UserInfo, require_permission
 
 router = APIRouter()
 
@@ -66,7 +66,7 @@ def generate_approval_no(db: Session) -> str:
     return f"{prefix}{seq:04d}"
 
 
-@router.post("/submit", response_model=dict)
+@router.post("/submit", response_model=dict, dependencies=[Depends(require_permission("approval:submit"))])
 def submit_approval(data: ApprovalSubmit, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     calcs = db.query(SalaryCalculation).filter(SalaryCalculation.period == data.period).all()
     if not calcs:
@@ -130,7 +130,7 @@ def submit_approval(data: ApprovalSubmit, db: Session = Depends(get_db), current
     }
 
 
-@router.post("/action", response_model=ApprovalRecordOut)
+@router.post("/action", response_model=ApprovalRecordOut, dependencies=[Depends(require_permission("approval:approve"))])
 def do_approval_action(data: ApprovalAction, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     record = db.query(ApprovalRecord).filter(
         ApprovalRecord.approval_no == data.approval_no,
@@ -179,7 +179,7 @@ def do_approval_action(data: ApprovalAction, db: Session = Depends(get_db), curr
     return approval_record
 
 
-@router.get("/status/{period}", response_model=ApprovalStatusOut)
+@router.get("/status/{period}", response_model=ApprovalStatusOut, dependencies=[Depends(require_permission("approval:view"))])
 def get_approval_status(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     calcs = db.query(SalaryCalculation).filter(SalaryCalculation.period == period).all()
     if not calcs:
@@ -251,7 +251,7 @@ def get_approval_status(period: str, db: Session = Depends(get_db), current_user
     )
 
 
-@router.get("/records/{period}", response_model=List[ApprovalRecordOut])
+@router.get("/records/{period}", response_model=List[ApprovalRecordOut], dependencies=[Depends(require_permission("approval:view"))])
 def get_approval_records(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     records = db.query(ApprovalRecord).filter(
         ApprovalRecord.period == period

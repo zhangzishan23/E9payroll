@@ -133,7 +133,7 @@
         <h3 class="text-lg font-semibold text-gray-700 mb-4">📊 数据概览</h3>
         <div class="grid grid-cols-3 gap-4">
           <div class="text-center p-4 bg-blue-50 rounded-lg">
-            <div class="text-3xl font-bold text-blue-600">{{ stats.total_employees }}</div>
+            <div class="text-3xl font-bold text-blue-600">{{ formatInt(stats.total_employees) }}</div>
             <div class="text-sm text-gray-500 mt-1">在职员工</div>
           </div>
           <div class="text-center p-4 bg-purple-50 rounded-lg">
@@ -141,7 +141,7 @@
             <div class="text-sm text-gray-500 mt-1">人均应发</div>
           </div>
           <div class="text-center p-4 bg-orange-50 rounded-lg">
-            <div class="text-2xl font-bold text-orange-600">{{ stats.attend_rate }}%</div>
+            <div class="text-2xl font-bold text-orange-600">{{ formatPercent(stats.attend_rate / 100) }}</div>
             <div class="text-sm text-gray-500 mt-1">本月出勤率</div>
           </div>
         </div>
@@ -264,6 +264,7 @@ import { Money, Calendar, CreditCard, TrendCharts, Checked, Document, User, Sett
 import api from '../api'
 import { getDefaultPeriod, formatPeriodDisplay } from '../utils/date.js'
 import { useAuthStore } from '../stores/auth'
+import { formatMoney, formatInt, formatPercent } from '../utils/format'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -303,7 +304,7 @@ const hasAnyTodo = computed(() => {
 })
 
 function fmtMoney(val) {
-  if (val == null || val === 0) return '¥0'
+  if (val == null || val === 0) return ''
   return '¥' + Number(val).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
 

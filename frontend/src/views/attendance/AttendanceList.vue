@@ -8,30 +8,30 @@
         <el-option label="员工姓名" value="employee_name" />
       </el-select>
       <el-input v-model="filterValue" placeholder="筛选值" size="small" clearable class="!w-36" @input="fetchData" />
-      <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)">录入</el-button>
-      <el-button :icon="Upload" size="small" @click="showImport">导入</el-button>
-      <el-button type="success" :icon="Download" size="small" @click="handleExport">导出</el-button>
-      <el-button type="warning" size="small" :loading="syncingAttendance" @click="syncAttendance">
+      <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)" v-permission="'attendance:create'">录入</el-button>
+      <el-button :icon="Upload" size="small" @click="showImport" v-permission="'attendance:import'">导入</el-button>
+      <el-button type="success" :icon="Download" size="small" @click="handleExport" v-permission="'attendance:export'">导出</el-button>
+      <el-button type="warning" size="small" :loading="syncingAttendance" @click="syncAttendance" v-permission="'attendance:sync'">
         <el-icon class="mr-1"><Refresh /></el-icon>同步钉钉
       </el-button>
-      <el-button type="success" size="small" :loading="checkingWriteOff" @click="openMissedPunchCheck">
+      <el-button type="success" size="small" :loading="checkingWriteOff" @click="openMissedPunchCheck" v-permission="'attendance:writeoff'">
         <el-icon class="mr-1"><Check /></el-icon>缺卡核销
       </el-button>
-      <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete">
+      <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete" v-permission="'attendance:delete'">
         删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
       </el-button>
       <el-divider direction="vertical" />
       <el-button size="small" type="info" @click="openSalaryCalendar">计薪日历</el-button>
-      <el-button size="small" :type="editMode ? 'warning' : 'default'" @click="toggleEditMode">
+      <el-button size="small" :type="editMode ? 'warning' : 'default'" @click="toggleEditMode" v-permission="'attendance:edit'">
         {{ editMode ? '退出编辑' : '编辑' }}
       </el-button>
       <el-divider direction="vertical" />
       <el-tooltip content="锁定后的数据在同步钉钉或导入时不会被覆盖" placement="top">
-        <el-button size="small" type="warning" :disabled="!selectedRows.length" @click="batchLockRows">
+        <el-button size="small" type="warning" :disabled="!selectedRows.length" @click="batchLockRows" v-permission="'attendance:edit'">
           <el-icon class="mr-1"><Lock /></el-icon>锁定选中{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
         </el-button>
       </el-tooltip>
-      <el-button size="small" :disabled="!selectedRows.length" @click="batchUnlockRows">
+      <el-button size="small" :disabled="!selectedRows.length" @click="batchUnlockRows" v-permission="'attendance:edit'">
         解锁选中{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
       </el-button>
       <ColumnSetting
@@ -41,7 +41,7 @@
         storage-key="attendance_table_columns"
       />
       <template v-if="editMode">
-        <el-button type="primary" size="small" :loading="savingEdits" :disabled="changedSet.size === 0" @click="confirmEdits">
+        <el-button type="primary" size="small" :loading="savingEdits" :disabled="changedSet.size === 0" @click="confirmEdits" v-permission="'attendance:edit'">
           保存{{ changedSet.size ? `(${changedSet.size})` : '' }}
         </el-button>
         <el-button size="small" :disabled="changedSet.size === 0" @click="cancelEdits">取消</el-button>
@@ -94,7 +94,7 @@
             <el-input-number v-model="editCache[row.id].total_work_days" :min="0" :max="31" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'total_work_days') }">{{ formatNum(row.total_work_days) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'total_work_days') }">{{ formatNumber(row.total_work_days, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'total_work_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -102,16 +102,16 @@
       <el-table-column v-if="isColumnVisible('adjusted_salary_days')" prop="adjusted_salary_days" label="应计薪天数" width="95">
         <template #default="{ row }">
           <span :class="{ 'text-red-600 font-bold': isDaysMismatch(row) }">
-            {{ formatNum(row.adjusted_salary_days) }}
+            {{ formatNumber(row.adjusted_salary_days, 2) }}
             <el-icon v-if="isDaysMismatch(row)" class="text-red-500 ml-0.5 text-xs align-middle"><WarningFilled /></el-icon>
           </span>
         </template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('actual_salary_days')" prop="actual_salary_days" label="计薪天数" width="85">
-        <template #default="{ row }">{{ formatNum(row.actual_salary_days) }}</template>
+        <template #default="{ row }">{{ formatNumber(row.actual_salary_days, 2) }}</template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('attendance_rate')" prop="attendance_rate" label="出勤率" width="80">
-        <template #default="{ row }">{{ row.attendance_rate != null ? (row.attendance_rate * 100).toFixed(1) + '%' : '' }}</template>
+        <template #default="{ row }">{{ formatPercent(row.attendance_rate) }}</template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('half_day_missed_punch')" prop="half_day_missed_punch" label="半天缺卡（次数）" width="115">
         <template #default="{ row }">
@@ -119,7 +119,7 @@
             <el-input-number v-model="editCache[row.id].half_day_missed_punch" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'half_day_missed_punch') }">{{ formatInt(row.half_day_missed_punch, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'half_day_missed_punch') }">{{ formatInt(row.half_day_missed_punch) }}</span>
             <el-icon v-if="isFieldLocked(row, 'half_day_missed_punch')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -130,7 +130,7 @@
             <el-input-number v-model="editCache[row.id].absenteeism_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'absenteeism_days') }">{{ formatNum(row.absenteeism_days, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'absenteeism_days') }">{{ formatNumber(row.absenteeism_days, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'absenteeism_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -141,7 +141,7 @@
             <el-input-number v-model="editCache[row.id].late_count" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'late_count') }">{{ formatInt(row.late_count, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'late_count') }">{{ formatInt(row.late_count) }}</span>
             <el-icon v-if="isFieldLocked(row, 'late_count')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -152,7 +152,7 @@
             <el-input-number v-model="editCache[row.id].late_duration" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'late_duration') }">{{ formatInt(row.late_duration, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'late_duration') }">{{ formatInt(row.late_duration) }}</span>
             <el-icon v-if="isFieldLocked(row, 'late_duration')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -163,7 +163,7 @@
             <el-input-number v-model="editCache[row.id].severe_late_count" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'severe_late_count') }">{{ formatInt(row.severe_late_count, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'severe_late_count') }">{{ formatInt(row.severe_late_count) }}</span>
             <el-icon v-if="isFieldLocked(row, 'severe_late_count')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -174,7 +174,7 @@
             <el-input-number v-model="editCache[row.id].severe_late_duration" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'severe_late_duration') }">{{ formatInt(row.severe_late_duration, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'severe_late_duration') }">{{ formatInt(row.severe_late_duration) }}</span>
             <el-icon v-if="isFieldLocked(row, 'severe_late_duration')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -185,7 +185,7 @@
             <el-input-number v-model="editCache[row.id].early_count" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'early_count') }">{{ formatInt(row.early_count, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'early_count') }">{{ formatInt(row.early_count) }}</span>
             <el-icon v-if="isFieldLocked(row, 'early_count')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -196,7 +196,7 @@
             <el-input-number v-model="editCache[row.id].early_duration" :min="0" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'early_duration') }">{{ formatInt(row.early_duration, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'early_duration') }">{{ formatInt(row.early_duration) }}</span>
             <el-icon v-if="isFieldLocked(row, 'early_duration')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -207,13 +207,13 @@
             <el-input-number v-model="editCache[row.id].total_overtime" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'total_overtime') }">{{ formatNum(row.total_overtime, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'total_overtime') }">{{ formatNumber(row.total_overtime, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'total_overtime')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('late_to_personal_leave_days')" prop="late_to_personal_leave_days" label="迟到转事假" width="95">
-        <template #default="{ row }">{{ formatNum(row.late_to_personal_leave_days, true) }}</template>
+        <template #default="{ row }">{{ formatNumber(row.late_to_personal_leave_days, 2) }}</template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('personal_leave_days')" prop="personal_leave_days" label="事假" width="70">
         <template #default="{ row }">
@@ -221,7 +221,7 @@
             <el-input-number v-model="editCache[row.id].personal_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'personal_leave_days') }">{{ formatNum(row.personal_leave_days, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'personal_leave_days') }">{{ formatNumber(row.personal_leave_days, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'personal_leave_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -232,7 +232,7 @@
             <el-input-number v-model="editCache[row.id].full_pay_sick_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'full_pay_sick_days') }">{{ formatNum(row.full_pay_sick_days, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'full_pay_sick_days') }">{{ formatNumber(row.full_pay_sick_days, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'full_pay_sick_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -243,7 +243,7 @@
             <el-input-number v-model="editCache[row.id].reduced_pay_sick_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'reduced_pay_sick_days') }">{{ formatNum(row.reduced_pay_sick_days, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'reduced_pay_sick_days') }">{{ formatNumber(row.reduced_pay_sick_days, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'reduced_pay_sick_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -254,7 +254,7 @@
             <el-input-number v-model="editCache[row.id].statutory_sick_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'statutory_sick_days') }">{{ formatNum(row.statutory_sick_days, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'statutory_sick_days') }">{{ formatNumber(row.statutory_sick_days, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'statutory_sick_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -265,7 +265,7 @@
             <el-input-number v-model="editCache[row.id].compensatory_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'compensatory_leave_days') }">{{ formatNum(row.compensatory_leave_days, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'compensatory_leave_days') }">{{ formatNumber(row.compensatory_leave_days, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'compensatory_leave_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -276,7 +276,7 @@
             <el-input-number v-model="editCache[row.id].annual_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'annual_leave_days') }">{{ formatNum(row.annual_leave_days, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'annual_leave_days') }">{{ formatNumber(row.annual_leave_days, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'annual_leave_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -287,7 +287,7 @@
             <el-input-number v-model="editCache[row.id].prenatal_checkup_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'prenatal_checkup_days') }">{{ formatNum(row.prenatal_checkup_days, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'prenatal_checkup_days') }">{{ formatNumber(row.prenatal_checkup_days, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'prenatal_checkup_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -298,7 +298,7 @@
             <el-input-number v-model="editCache[row.id].maternity_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'maternity_leave_days') }">{{ formatNum(row.maternity_leave_days, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'maternity_leave_days') }">{{ formatNumber(row.maternity_leave_days, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'maternity_leave_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -309,7 +309,7 @@
             <el-input-number v-model="editCache[row.id].paternity_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'paternity_leave_days') }">{{ formatNum(row.paternity_leave_days, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'paternity_leave_days') }">{{ formatNumber(row.paternity_leave_days, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'paternity_leave_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -320,7 +320,7 @@
             <el-input-number v-model="editCache[row.id].marriage_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'marriage_leave_days') }">{{ formatNum(row.marriage_leave_days, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'marriage_leave_days') }">{{ formatNumber(row.marriage_leave_days, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'marriage_leave_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -331,7 +331,7 @@
             <el-input-number v-model="editCache[row.id].funeral_leave_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'funeral_leave_days') }">{{ formatNum(row.funeral_leave_days, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'funeral_leave_days') }">{{ formatNumber(row.funeral_leave_days, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'funeral_leave_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
@@ -342,13 +342,13 @@
             <el-input-number v-model="editCache[row.id].engineering_compensatory_days" :min="0" :precision="2" size="small" controls-position="right" class="cell-number" @change="markChanged(row.id)" />
           </template>
           <template v-else>
-            <span :class="{ 'text-gray-400': isFieldLocked(row, 'engineering_compensatory_days') }">{{ formatNum(row.engineering_compensatory_days, true) }}</span>
+            <span :class="{ 'text-gray-400': isFieldLocked(row, 'engineering_compensatory_days') }">{{ formatNumber(row.engineering_compensatory_days, 2) }}</span>
             <el-icon v-if="isFieldLocked(row, 'engineering_compensatory_days')" class="text-orange-400 ml-0.5 text-xs align-middle"><Lock /></el-icon>
           </template>
         </template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('leave_total_days')" prop="leave_total_days" label="合计" width="70">
-        <template #default="{ row }">{{ formatNum(row.leave_total_days, true) }}</template>
+        <template #default="{ row }">{{ formatNumber(row.leave_total_days, 2) }}</template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('remark')" prop="remark" label="备注" min-width="130" show-overflow-tooltip>
         <template #default="{ row }">
@@ -365,16 +365,16 @@
         <template #default="{ row }">
           <div class="action-cell">
             <template v-if="!editMode">
-              <el-button v-if="row.id" type="primary" link size="small" @click="showDialog(row)">编辑</el-button>
-              <el-button v-else type="success" link size="small" @click="showDialogForEmployee(row)">录入</el-button>
+              <el-button v-if="row.id" type="primary" link size="small" @click="showDialog(row)" v-permission="'attendance:edit'">编辑</el-button>
+              <el-button v-else type="success" link size="small" @click="showDialogForEmployee(row)" v-permission="'attendance:create'">录入</el-button>
               <el-divider direction="vertical" />
               <el-tooltip v-if="row.is_row_locked" content="点击解锁" placement="top">
-                <el-button type="warning" link size="small" @click="toggleRowLock(row, false)">
+                <el-button type="warning" link size="small" @click="toggleRowLock(row, false)" v-permission="'attendance:edit'">
                   <el-icon><Unlock /></el-icon>
                 </el-button>
               </el-tooltip>
               <el-tooltip v-else content="点击锁定整行（同步/导入时不覆盖）" placement="top">
-                <el-button type="info" link size="small" @click="toggleRowLock(row, true)">
+                <el-button type="info" link size="small" @click="toggleRowLock(row, true)" v-permission="'attendance:edit'">
                   <el-icon><Lock /></el-icon>
                 </el-button>
               </el-tooltip>
@@ -798,6 +798,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Download, Upload, Delete, Refresh, MagicStick, RefreshRight, WarningFilled, Lock, Unlock, Check } from '@element-plus/icons-vue'
 import api from '../../api'
 import ColumnSetting from '../../components/ColumnSetting.vue'
+import { formatNumber, formatInt, formatPercent } from '../../utils/format'
 
 function getDefaultPeriod() {
   const now = new Date()
@@ -1060,21 +1061,7 @@ function formatDate(dateStr) {
   return dateStr
 }
 
-function formatNum(val, hideZero = false) {
-  if (val == null || val === '') return ''
-  const n = Number(val)
-  if (isNaN(n)) return ''
-  if (hideZero && n === 0) return ''
-  return n.toFixed(2)
-}
 
-function formatInt(val, hideZero = false) {
-  if (val == null || val === '') return ''
-  const n = Number(val)
-  if (isNaN(n)) return ''
-  if (hideZero && n === 0) return ''
-  return String(n)
-}
 
 function onPeriodChange() { fetchData() }
 

@@ -11,7 +11,7 @@ from app.core.database import get_db
 from app.core.log_helper import write_log
 from app.core.query_utils import filter_active_employees, get_pending_resign_status_id
 from app.models.models import Employee, EmployeeSalary, SalaryCalculation, AttendanceRecord, SysDictBase, ExportTemplate, PerformanceScore, SocialInsurance, SalaryPeriodStep
-from app.api.auth import get_current_user, UserInfo
+from app.api.auth import get_current_user, UserInfo, require_permission
 from sqlalchemy import func
 
 router = APIRouter()
@@ -37,7 +37,7 @@ STEP_DEFINITIONS = [
 ]
 
 
-@router.get("/stats")
+@router.get("/stats", dependencies=[Depends(require_permission("dashboard:view"))])
 def get_stats(
     period: Optional[str] = Query(None),
     db: Session = Depends(get_db),
@@ -239,7 +239,7 @@ class StepConfirmRequest(BaseModel):
     remark: Optional[str] = None
 
 
-@router.post("/steps/confirm")
+@router.post("/steps/confirm", dependencies=[Depends(require_permission("salary:calculate"))])
 def confirm_step(
     data: StepConfirmRequest,
     db: Session = Depends(get_db),
@@ -393,7 +393,7 @@ def confirm_step(
     return {"message": "操作成功", "is_confirmed": data.is_confirmed, "is_force": is_force}
 
 
-@router.get("/roster")
+@router.get("/roster", dependencies=[Depends(require_permission("employee:export"))])
 def export_roster(db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     query = db.query(Employee)
     employees = _filter_active_without_pending_resign(query, db).order_by(Employee.employee_no).all()
@@ -519,7 +519,7 @@ def export_roster(db: Session = Depends(get_db), current_user: UserInfo = Depend
     )
 
 
-@router.get("/salary/{period}")
+@router.get("/salary/{period}", dependencies=[Depends(require_permission("salary:export"))])
 def export_salary(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     query = db.query(Employee)
     active_employees = _filter_active_without_pending_resign(query, db).order_by(Employee.employee_no).all()
@@ -618,7 +618,7 @@ def export_salary(period: str, db: Session = Depends(get_db), current_user: User
     )
 
 
-@router.get("/attendance/{period}")
+@router.get("/attendance/{period}", dependencies=[Depends(require_permission("attendance:export"))])
 def export_attendance(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     # 获取所有在职员工
     query = db.query(Employee)
@@ -873,7 +873,7 @@ class ExportTemplateOut(BaseModel):
         from_attributes = True
 
 
-@router.get("/export/available-fields")
+@router.get("/export/available-fields", dependencies=[Depends(require_permission("report:view"))])
 def get_available_fields(current_user: UserInfo = Depends(get_current_user)):
     """获取可配置的导出字段列表"""
     return {
@@ -884,7 +884,7 @@ def get_available_fields(current_user: UserInfo = Depends(get_current_user)):
     }
 
 
-@router.get("/export/templates", response_model=List[ExportTemplateOut])
+@router.get("/export/templates", response_model=List[ExportTemplateOut], dependencies=[Depends(require_permission("report:view"))])
 def get_export_templates(
     template_type: Optional[str] = Query(None),
     db: Session = Depends(get_db),
@@ -905,7 +905,7 @@ def get_export_templates(
     ]
 
 
-@router.post("/export/templates", response_model=ExportTemplateOut)
+@router.post("/export/templates", response_model=ExportTemplateOut, dependencies=[Depends(require_permission("report:export"))])
 def create_export_template(
     data: ExportTemplateIn,
     db: Session = Depends(get_db),
@@ -939,7 +939,7 @@ def create_export_template(
     )
 
 
-@router.put("/export/templates/{tpl_id}", response_model=ExportTemplateOut)
+@router.put("/export/templates/{tpl_id}", response_model=ExportTemplateOut, dependencies=[Depends(require_permission("report:export"))])
 def update_export_template(
     tpl_id: int,
     data: ExportTemplateIn,
@@ -975,7 +975,7 @@ def update_export_template(
     )
 
 
-@router.delete("/export/templates/{tpl_id}")
+@router.delete("/export/templates/{tpl_id}", dependencies=[Depends(require_permission("report:export"))])
 def delete_export_template(
     tpl_id: int,
     db: Session = Depends(get_db),
@@ -1138,7 +1138,7 @@ def _build_salary_row_data(emp, calc, dict_name_map):
     return row_data
 
 
-@router.get("/salary-by-template/{period}")
+@router.get("/salary-by-template/{period}", dependencies=[Depends(require_permission("salary:export"))])
 def export_salary_by_template(
     period: str,
     template_id: Optional[int] = Query(None, description="模板ID，不传则使用默认模板"),
@@ -1201,7 +1201,7 @@ def export_salary_by_template(
     )
 
 
-@router.get("/contract-expiry-warning")
+@router.get("/contract-expiry-warning", dependencies=[Depends(require_permission("employee:view"))])
 def get_contract_expiry_warning(
     days_ahead: int = Query(30, description="提前预警天数，默认30天"),
     db: Session = Depends(get_db),

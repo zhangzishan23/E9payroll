@@ -22,7 +22,7 @@
         </div>
         <div class="bg-orange-50 rounded-xl p-4">
           <div class="text-sm text-gray-500">参与人数 / 总应发</div>
-          <div class="text-lg font-semibold text-orange-600">{{ status.employee_count }}人 / {{ (status.total_gross / 10000).toFixed(2) }}万</div>
+          <div class="text-lg font-semibold text-orange-600">{{ formatInt(status.employee_count) }}人 / <template v-if="status.total_gross">{{ formatNumber(status.total_gross / 10000, 2) }}万</template></div>
         </div>
       </div>
 
@@ -40,10 +40,10 @@
       </div>
 
       <div v-if="canApprove" class="flex gap-3 mb-4 p-4 bg-gray-50 rounded-xl">
-        <el-button type="success" @click="showApprovalDialog('主管审核', '通过')">主管审核通过</el-button>
-        <el-button type="danger" @click="showApprovalDialog('主管审核', '驳回')">主管审核驳回</el-button>
-        <el-button type="success" @click="showApprovalDialog('经理审核', '通过')">经理审核通过</el-button>
-        <el-button type="danger" @click="showApprovalDialog('经理审核', '驳回')">经理审核驳回</el-button>
+        <el-button type="success" @click="showApprovalDialog('主管审核', '通过')" v-permission="'approval:approve'">主管审核通过</el-button>
+        <el-button type="danger" @click="showApprovalDialog('主管审核', '驳回')" v-permission="'approval:approve'">主管审核驳回</el-button>
+        <el-button type="success" @click="showApprovalDialog('经理审核', '通过')" v-permission="'approval:approve'">经理审核通过</el-button>
+        <el-button type="danger" @click="showApprovalDialog('经理审核', '驳回')" v-permission="'approval:approve'">经理审核驳回</el-button>
       </div>
     </div>
 
@@ -94,6 +94,7 @@
 import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../../api'
+import { formatNumber, formatInt } from '../../utils/format'
 
 const period = ref('202604')
 const loading = ref(false)
