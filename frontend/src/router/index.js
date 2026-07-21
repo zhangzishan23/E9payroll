@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import { MENU_PERMISSION_MAP } from '../utils/permission'
 
 const routes = [
   {
@@ -132,12 +131,38 @@ function findFirstAccessibleRoute(authStore) {
   return '/profile'
 }
 
-router.beforeEach((to, from, next) => {
+let isFetchingUserInfo = false
+let fetchUserInfoPromise = null
+
+async function ensureUserInfoLoaded(authStore) {
+  const token = localStorage.getItem('token')
+  if (!token) return
+
+  if (authStore.permissionsLoaded) return
+
+  if (isFetchingUserInfo) {
+    await fetchUserInfoPromise
+    return
+  }
+
+  isFetchingUserInfo = true
+  fetchUserInfoPromise = authStore.fetchUserInfo().finally(() => {
+    isFetchingUserInfo = false
+    fetchUserInfoPromise = null
+  })
+  await fetchUserInfoPromise
+}
+
+router.beforeEach(async (to, from, next) => {
   const token = localStorage.getItem('token')
 
   if (to.path === '/login' || to.path === '/register') {
     if (token) {
       const authStore = useAuthStore()
+      try {
+        await ensureUserInfoLoaded(authStore)
+      } catch (e) {
+      }
       next(findFirstAccessibleRoute(authStore))
     } else {
       next()
@@ -151,6 +176,14 @@ router.beforeEach((to, from, next) => {
   }
 
   const authStore = useAuthStore()
+
+  try {
+    await ensureUserInfoLoaded(authStore)
+  } catch (error) {
+    next('/login')
+    return
+  }
+
   const requiredPerm = to.meta?.perm
 
   if (to.path === '/' || to.path === '') {

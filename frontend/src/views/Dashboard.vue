@@ -13,8 +13,8 @@
               </h1>
               <span class="px-2 py-0.5 bg-blue-100 text-blue-600 text-xs rounded-full font-medium">{{ viewMode === 'leader' ? '管理视角' : '工作视角' }}</span>
             </div>
-            <p class="text-gray-600 mt-1 text-sm">你好，{{ authStore.user?.display_name || '用户' }} 👋 今天是 {{ today }}</p>
-            <p class="text-blue-600 text-sm mt-0.5 font-medium">{{ currentPeriodDisplay }} {{ viewMode === 'leader' ? '数据概览' : '工资计算进行中' }}</p>
+            <p class="text-gray-600 mt-1 text-sm">你好，{{ authStore.user?.display_name || '用户' }} 👋 欢迎使用<strong class="text-blue-600">工资计算管家</strong>，今天是 {{ today }}</p>
+            <p class="text-blue-600 text-sm mt-0.5 font-medium">{{ currentPeriodDisplay }} {{ viewMode === 'leader' ? '管理视角数据概览' : '工资计算进行中' }}</p>
           </div>
         </div>
         <div class="flex items-center gap-2">
@@ -550,40 +550,40 @@ const monthlyCostOption = computed(() => ({
 const deptCostOption = computed(() => {
   const data = charts.charts.dept_costs
   const colors = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#84cc16', '#f97316']
-  const total = data.reduce((sum, item) => sum + item.value, 0)
-  const legendData = data.map(item => ({
-    name: item.name,
-    value: item.value,
-    percent: total > 0 ? ((item.value / total) * 100).toFixed(1) : '0.0'
-  }))
   return {
     ...chartBaseStyle,
     tooltip: { trigger: 'item', formatter: '{b}: ¥{c} ({d}%)', backgroundColor: 'rgba(255,255,255,0.95)', borderColor: '#e5e7eb', textStyle: { color: '#374151' } },
-    legend: {
-      orient: 'vertical',
-      right: 0,
-      top: 'middle',
-      left: '60%',
-      width: '40%',
-      textStyle: { color: '#6b7280', fontSize: 12 },
-      formatter: (name) => {
-        const item = legendData.find(d => d.name === name)
-        if (item) {
-          return `${name}  ¥${formatMoney(item.value)}  ${item.percent}%`
-        }
-        return name
-      }
-    },
     color: colors,
     series: [{
       type: 'pie',
-      radius: ['45%', '65%'],
-      center: ['30%', '50%'],
+      radius: ['40%', '62%'],
+      center: ['50%', '50%'],
       avoidLabelOverlap: false,
       itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 2 },
-      label: { show: false },
-      emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold' } },
-      data: data.length ? data : [{ name: '暂无数据', value: 1, itemStyle: { color: '#e5e7eb' } }]
+      label: {
+        show: true,
+        position: 'outer',
+        margin: 8,
+        formatter: '{b}\n¥{c} ({d}%)',
+        fontSize: 12,
+        fontWeight: 500,
+        color: '#374151',
+        lineHeight: 18
+      },
+      labelLine: {
+        show: true,
+        length: 10,
+        length2: 8,
+        smooth: false
+      },
+      labelLayout: {
+        hideOverlap: false
+      },
+      emphasis: {
+        label: { show: true, fontSize: 14, fontWeight: 'bold', color: '#111827' },
+        itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0, 0, 0, 0.2)' }
+      },
+      data: data.length ? data : [{ name: '暂无数据', value: 1, itemStyle: { color: '#e5e7eb' }, label: { formatter: '暂无数据' } }]
     }]
   }
 })

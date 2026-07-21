@@ -104,20 +104,60 @@
           </span>
         </template>
       </el-table-column>
-      <el-table-column v-if="isColumnVisible('score_reason')" prop="score_reason" label="评分理由" width="180" show-overflow-tooltip>
+      <el-table-column v-if="isColumnVisible('score_reason')" prop="score_reason" label="评分理由" width="260">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.employee_id]">
-            <el-input v-model="editCache[row.employee_id].score_reason" size="small" placeholder="理由" @change="markChanged(row.employee_id)" />
+            <el-input
+              v-model="editCache[row.employee_id].score_reason"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 4 }"
+              size="small"
+              placeholder="评分理由"
+              @change="markChanged(row.employee_id)"
+              resize="none"
+            />
           </template>
-          <template v-else>{{ row.score_reason || '' }}</template>
+          <template v-else>
+            <el-tooltip
+              v-if="row.score_reason"
+              :content="row.score_reason"
+              placement="bottom"
+              :show-after="300"
+              popper-class="performance-tooltip"
+              :offset="8"
+            >
+              <div class="text-ellipsis-cell">{{ row.score_reason }}</div>
+            </el-tooltip>
+            <span v-else></span>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column v-if="isColumnVisible('review_note')" prop="review_note" label="分管领导审核后调整" width="200" show-overflow-tooltip>
+      <el-table-column v-if="isColumnVisible('review_note')" prop="review_note" label="分管领导审核后调整" width="280">
         <template #default="{ row }">
           <template v-if="editMode && editCache[row.employee_id]">
-            <el-input v-model="editCache[row.employee_id].review_note" size="small" placeholder="调整说明" @change="markChanged(row.employee_id)" />
+            <el-input
+              v-model="editCache[row.employee_id].review_note"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 4 }"
+              size="small"
+              placeholder="调整说明"
+              @change="markChanged(row.employee_id)"
+              resize="none"
+            />
           </template>
-          <template v-else>{{ row.review_note || '' }}</template>
+          <template v-else>
+            <el-tooltip
+              v-if="row.review_note"
+              :content="row.review_note"
+              placement="bottom"
+              :show-after="300"
+              popper-class="performance-tooltip"
+              :offset="8"
+            >
+              <div class="text-ellipsis-cell">{{ row.review_note }}</div>
+            </el-tooltip>
+            <span v-else></span>
+          </template>
         </template>
       </el-table-column>
       <el-table-column v-if="isColumnVisible('action')" label="操作" width="130" fixed="right">
@@ -167,10 +207,10 @@
           <el-input :model-value="(form.final_score - (form.initial_score || 0)).toFixed(2)" disabled />
         </el-form-item>
         <el-form-item label="评分理由">
-          <el-input v-model="form.score_reason" type="textarea" :rows="2" placeholder="请输入评分理由" />
+          <el-input v-model="form.score_reason" type="textarea" :rows="4" placeholder="请输入评分理由" />
         </el-form-item>
         <el-form-item label="分管领导审核后调整">
-          <el-input v-model="form.review_note" type="textarea" :rows="2" placeholder="审核调整说明（可选）" />
+          <el-input v-model="form.review_note" type="textarea" :rows="4" placeholder="审核调整说明（可选）" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -812,5 +852,16 @@ onMounted(() => {
 }
 :deep(.row-changed) {
   background-color: #fef3c7 !important;
+}
+.text-ellipsis-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  width: 100%;
+  display: block;
+}
+:deep(.el-textarea__inner) {
+  line-height: 1.4;
 }
 </style>

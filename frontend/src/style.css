@@ -108,3 +108,21 @@ body {
 .animate-green-blink {
   animation: greenBlink 1s ease-in-out infinite;
 }
+
+.performance-tooltip {
+  max-width: 400px !important;
+  line-height: 1.6 !important;
+  font-size: 13px !important;
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+}
+
+.performance-tooltip .el-popper__arrow::before {
+  background: rgba(50, 50, 50, 0.95) !important;
+}
+
+.performance-tooltip .el-tooltip__content {
+  background: rgba(50, 50, 50, 0.95) !important;
+  padding: 10px 14px !important;
+  border-radius: 8px !important;
+}
