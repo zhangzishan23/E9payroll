@@ -364,7 +364,7 @@ def check_data_completeness(period: str, hide_status_id: Optional[int] = Query(N
     )
 
 
-@router.post("/ensure-records/{period}", dependencies=[Depends(require_permission("salary:create"))])
+@router.post("/ensure-records/{period}", dependencies=[Depends(require_permission("salary:edit", "approval:submit"))])
 def ensure_salary_records(
     period: str,
     hide_status_id: Optional[int] = Query(None),
@@ -578,7 +578,7 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                 allowance_total = None
 
             if att:
-                att_rate = float(att.attendance_rate) if att.attendance_rate else 1.00
+                att_rate = round(float(att.attendance_rate), 3) if att.attendance_rate else 1.00
                 total_work_days = float(att.adjusted_salary_days) if att.adjusted_salary_days else standard_salary_days
                 actual_work_days = float(att.actual_salary_days) if att.actual_salary_days else total_work_days
             else:
@@ -608,7 +608,7 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
 
             perf_coef = float(perf.final_score) if perf and perf.final_score is not None else None
             actual_perf = round(perf_std_prorated * perf_coef, 2) if perf_coef is not None and perf_std_prorated is not None else None
-            effective_performance = round(actual_perf * att_rate, 2) if actual_perf is not None else None
+            effective_performance = round(perf_std_prorated * perf_coef * att_rate, 2) if perf_coef is not None and perf_std_prorated is not None else None
 
             travel_untaxed = travel_reimbs.get(emp.id) if emp.id in travel_reimbs else None
             compensation_tax_val = labor_comps.get(emp.id) if emp.id in labor_comps else None
@@ -622,7 +622,7 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                 else:
                     commission_final = existing_commission_bonus
                 commission_calc = _safe_float(commission_final) or 0
-                gross_salary = round((base_salary_prorated + (allowance_total or 0) + commission_calc) * att_rate + (effective_performance or 0), 2)
+                gross_salary = round((base_salary_prorated + (allowance_total or 0)) * att_rate + commission_calc + (effective_performance or 0), 2)
             else:
                 gross_salary = None
 
@@ -834,13 +834,12 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
                 payroll_special_calc = _safe_float(payroll_special) or 0
 
                 if monthly_standard is not None:
-                    si_hf_deduct = si_hf_total if si_hf_total is not None else 0
-                    payroll_monthly_standard = round(monthly_standard - si_hf_deduct, 2)
+                    payroll_monthly_standard = monthly_standard
                 else:
                     payroll_monthly_standard = None
 
                 if payroll_gross is not None:
-                    payroll_actual_taxable = round(payroll_gross + payroll_pretax_calc + payroll_last_month_calc + payroll_travel_calc + payroll_holiday_red_packet_calc + payroll_comp_calc + payroll_severance_calc + payroll_year_end_calc - payroll_special_calc, 2)
+                    payroll_actual_taxable = round(payroll_gross + payroll_pretax_calc + payroll_last_month_calc + payroll_travel_calc + payroll_holiday_red_packet_calc - payroll_special_calc, 2)
                     payroll_salary_after_si = round(payroll_gross + payroll_pretax_calc - payroll_si, 2)
                     if payroll_tax is not None:
                         payroll_net = round(payroll_gross + payroll_pretax_calc - payroll_si - payroll_tax + payroll_posttax_calc, 2)
@@ -966,7 +965,7 @@ def _perform_gross_calculation(db, period, hide_status_id, current_user=None, ba
 
                 sh = si_hf_total if si_hf_total is not None else 0
                 if gross_salary is not None:
-                    actual_taxable = round(gross_salary + pretax_calc + last_month_calc + travel_calc + holiday_red_packet_calc + compensation_calc + severance_pay_val + year_end_bonus_untaxed_val - special_deduction_val, 2)
+                    actual_taxable = round(gross_salary + pretax_calc + last_month_calc + travel_calc + holiday_red_packet_calc - special_deduction_val, 2)
                     salary_after_si_hf_val = round(gross_salary + pretax_calc - sh, 2)
                     if tax_deduction_val is not None:
                         net_salary = round(gross_salary + pretax_calc - sh - tax_deduction_val + posttax_calc, 2)
@@ -1182,8 +1181,8 @@ def _build_employee_salary_data(
         actual_perf = round(perf_std_prorated * perf_coef, 2)
 
     effective_perf = None
-    if actual_perf is not None and attendance_rate is not None:
-        effective_perf = round(actual_perf * attendance_rate, 2)
+    if perf_coef is not None and perf_std_prorated is not None and attendance_rate is not None:
+        effective_perf = round(perf_std_prorated * perf_coef * attendance_rate, 2)
 
     monthly_standard = None
     if base_salary_prorated is not None or perf_std_prorated is not None or allowance_total is not None:
@@ -1226,7 +1225,7 @@ def _build_employee_salary_data(
         cm = commission or 0
         ar = attendance_rate or 1.0
         ep = effective_perf or 0
-        gross_salary_val = round((bs + al + cm) * ar + ep, 2)
+        gross_salary_val = round((bs + al) * ar + cm + ep, 2)
 
     salary_after_si_hf_val = None
     net_salary_val = None
@@ -1487,7 +1486,10 @@ def update_calculation_result(
     att_rate = _safe_float(calc.attendance_rate)
 
     if record_type != "contract":
-        if actual_perf is not None and att_rate is not None:
+        perf_coef_val = _safe_float(calc.performance_coefficient)
+        if perf_std_used is not None and perf_coef_val is not None and att_rate is not None:
+            calc.effective_performance = round(perf_std_used * perf_coef_val * att_rate, 2)
+        elif actual_perf is not None and att_rate is not None:
             calc.effective_performance = round(actual_perf * att_rate, 2)
         else:
             calc.effective_performance = None
@@ -1527,7 +1529,7 @@ def update_calculation_result(
         if base is not None and allowance is not None and att_rate is not None:
             c = commission if commission is not None else 0
             ep = _safe_float(calc.effective_performance) or 0
-            total_gross = round((base + allowance + c) * att_rate + ep, 2)
+            total_gross = round((base + allowance) * att_rate + c + ep, 2)
             contract_record = db.query(SalaryCalculation).filter(
                 SalaryCalculation.period == calc.period,
                 SalaryCalculation.employee_id == calc.employee_id,
@@ -1539,7 +1541,7 @@ def update_calculation_result(
         if base is not None and allowance is not None and att_rate is not None:
             c = commission if commission is not None else 0
             ep = _safe_float(calc.effective_performance) or 0
-            calc.gross_salary = round((base + allowance + c) * att_rate + ep, 2)
+            calc.gross_salary = round((base + allowance) * att_rate + c + ep, 2)
 
     tax = _safe_float(calc.tax_deduction)
     pretax = _safe_float(calc.pretax_adjustment) or 0
@@ -1566,7 +1568,7 @@ def update_calculation_result(
         else:
             calc.net_salary = round(gross + pretax - sh + posttax, 2)
             calc.calculation_status = "应发已核算"
-        calc.actual_taxable = round(gross + pretax + last_month_untaxed + travel_untaxed + holiday_red_packet_untaxed + compensation_tax + severance_pay + year_end_bonus - special_deduction, 2)
+        calc.actual_taxable = round(gross + pretax + last_month_untaxed + travel_untaxed + holiday_red_packet_untaxed - special_deduction, 2)
 
     net_val = _safe_float(calc.net_salary)
     if net_val is not None and net_val < 0:
@@ -1681,14 +1683,17 @@ def calculate_net_salary(period: str, db: Session = Depends(get_db), current_use
             actual_perf = _safe_float(calc.actual_performance)
             att_rate = _safe_float(calc.attendance_rate)
             commission = _safe_float(calc.commission_bonus) or 0
-            if actual_perf is not None and att_rate is not None:
+            perf_coef_val = _safe_float(calc.performance_coefficient)
+            if perf_std_used is not None and perf_coef_val is not None and att_rate is not None:
+                calc.effective_performance = round(perf_std_used * perf_coef_val * att_rate, 2)
+            elif actual_perf is not None and att_rate is not None:
                 calc.effective_performance = round(actual_perf * att_rate, 2)
             else:
                 calc.effective_performance = None
 
             if base is not None and allowance is not None and att_rate is not None:
                 ep = _safe_float(calc.effective_performance) or 0
-                total_gross_calc = round((base + allowance + commission) * att_rate + ep, 2)
+                total_gross_calc = round((base + allowance) * att_rate + commission + ep, 2)
                 if record_type == "payroll":
                     contract_c = contract_map.get(calc.employee_id)
                     contract_si_hf = _safe_float(contract_c.si_hf_total) if contract_c else 0
@@ -1746,7 +1751,7 @@ def calculate_net_salary(period: str, db: Session = Depends(get_db), current_use
                 tax_imported_count += 1
             else:
                 calc.net_salary = round(gross + pretax - sh + posttax, 2)
-            calc.actual_taxable = round(gross + pretax + last_month_untaxed + travel_untaxed + holiday_red_packet_untaxed + compensation_tax + severance_pay + year_end_bonus - special_deduction, 2)
+            calc.actual_taxable = round(gross + pretax + last_month_untaxed + travel_untaxed + holiday_red_packet_untaxed - special_deduction, 2)
 
         calc.calculation_status = "实发已核算" if tax is not None else "应发已核算"
         if gross is not None:
@@ -2426,7 +2431,7 @@ async def upload_tax_excel(
             ct = _safe_float(target_calc.compensation_tax) or 0
             sp = _safe_float(target_calc.severance_pay) or 0
             yeb = _safe_float(target_calc.year_end_bonus_untaxed) or 0
-            target_calc.actual_taxable = round(gross + pretax + lm + tu + hrp + ct + sp + yeb - special_deduction, 2)
+            target_calc.actual_taxable = round(gross + pretax + lm + tu + hrp - special_deduction, 2)
         updated += 1
     
     db.commit()

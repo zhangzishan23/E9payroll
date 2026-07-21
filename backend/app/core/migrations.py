@@ -25,6 +25,8 @@ def run_migrations():
     _run_dashboard_leader_permission_migration()
     _run_dashboard_work_view_permission_migration()
     _run_salary_calculate_permission_split_migration()
+    _run_remove_salary_create_permission_migration()
+    _run_remove_invalid_permissions_migration()
     _remove_duplicate_contract_warning_schedule()
     _init_default_schedules()
 
@@ -460,7 +462,7 @@ def _init_default_roles_and_permissions():
                     "attendance:view", "attendance:create", "attendance:edit", "attendance:delete", "attendance:export", "attendance:import", "attendance:sync", "attendance:writeoff",
                     "performance:view", "performance:create", "performance:edit", "performance:export", "performance:import",
                     "insurance:view", "insurance:create", "insurance:edit", "insurance:delete", "insurance:export", "insurance:import", "insurance:template",
-                    "salary:view", "salary:create", "salary:edit", "salary:delete", "salary:check", "salary:step_confirm", "salary:export",
+                    "salary:view", "salary:edit", "salary:delete", "salary:check", "salary:step_confirm", "salary:export",
                     "approval:view", "approval:approve",
                     "report:view", "report:export",
                 ]
@@ -476,20 +478,18 @@ def _init_default_roles_and_permissions():
                     "attendance:view", "attendance:export",
                     "performance:view",
                     "insurance:view",
-                    "salary:view", "salary:create", "salary:edit", "salary:delete", "salary:check", "salary:step_confirm", "salary:tax_export", "salary:tax_import", "salary:travel_import", "salary:export",
+                    "salary:view", "salary:edit", "salary:delete", "salary:check", "salary:step_confirm", "salary:tax_export", "salary:tax_import", "salary:travel_import", "salary:export",
                     "approval:view",
                     "report:view", "report:export",
                 ]
             },
             {
                 "name": "普通员工",
-                "description": "仅可查看个人相关信息和工资条",
+                "description": "仅可查看个人相关信息",
                 "is_preset": True,
                 "data_scope": "self",
                 "permissions": [
                     "dashboard:view", "dashboard:work_view",
-                    "profile:view", "profile:edit",
-                    "report:view_my_slip",
                 ]
             },
             {
@@ -784,7 +784,7 @@ def _remove_duplicate_contract_warning_schedule():
 
 def _run_salary_calculate_permission_split_migration():
     """将旧的 salary:calculate 权限拆分为 salary:check（数据检查）和 salary:step_confirm（步骤确认），
-    同时为会计角色补充 salary:create 和 salary:delete 权限"""
+    同时为会计角色补充 salary:delete 权限"""
     from app.core.database import SessionLocal
     from app.models.models import SysPermission, SysRole
 
@@ -815,20 +815,66 @@ def _run_salary_calculate_permission_split_migration():
 
         accountant_role = db.query(SysRole).filter(SysRole.name == "会计").first()
         if accountant_role:
-            for action in ["create", "delete"]:
-                existing = db.query(SysPermission).filter(
-                    SysPermission.role_id == accountant_role.id,
-                    SysPermission.module == "salary",
-                    SysPermission.action == action
-                ).first()
-                if not existing:
-                    db.add(SysPermission(
-                        role_id=accountant_role.id,
-                        module="salary",
-                        action=action
-                    ))
+            existing = db.query(SysPermission).filter(
+                SysPermission.role_id == accountant_role.id,
+                SysPermission.module == "salary",
+                SysPermission.action == "delete"
+            ).first()
+            if not existing:
+                db.add(SysPermission(
+                    role_id=accountant_role.id,
+                    module="salary",
+                    action="delete"
+                ))
 
         db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _run_remove_salary_create_permission_migration():
+    """移除不再使用的 salary:create 权限（薪资记录由系统自动批量创建，无手动新增入口）"""
+    from app.core.database import SessionLocal
+    from app.models.models import SysPermission
+
+    db = SessionLocal()
+    try:
+        deleted = db.query(SysPermission).filter(
+            SysPermission.module == "salary",
+            SysPermission.action == "create"
+        ).delete(synchronize_session=False)
+        if deleted > 0:
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _run_remove_invalid_permissions_migration():
+    """移除不再使用的无效权限：report:view_my_slip, system:view, profile:view, profile:edit"""
+    from app.core.database import SessionLocal
+    from app.models.models import SysPermission
+
+    db = SessionLocal()
+    try:
+        invalid_perms = [
+            ("report", "view_my_slip"),
+            ("system", "view"),
+            ("profile", "view"),
+            ("profile", "edit"),
+        ]
+        total_deleted = 0
+        for module, action in invalid_perms:
+            deleted = db.query(SysPermission).filter(
+                SysPermission.module == module,
+                SysPermission.action == action
+            ).delete(synchronize_session=False)
+            total_deleted += deleted
+        if total_deleted > 0:
+            db.commit()
     except Exception:
         db.rollback()
     finally:

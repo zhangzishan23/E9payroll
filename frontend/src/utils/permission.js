@@ -6,11 +6,10 @@ export const MODULE_PERMISSIONS = {
   attendance: ['view', 'create', 'edit', 'delete', 'export', 'import', 'sync', 'writeoff'],
   performance: ['view', 'create', 'edit', 'delete', 'export', 'import'],
   insurance: ['view', 'create', 'edit', 'delete', 'export', 'import', 'template'],
-  salary: ['view', 'create', 'edit', 'delete', 'calculate', 'tax_export', 'tax_import', 'travel_import', 'export'],
+  salary: ['view', 'edit', 'delete', 'check', 'step_confirm', 'tax_export', 'tax_import', 'travel_import', 'export'],
   approval: ['view', 'submit', 'approve'],
-  report: ['view', 'export', 'view_my_slip'],
-  system: ['view', 'user', 'role', 'dict', 'log', 'backup'],
-  profile: ['view', 'edit'],
+  report: ['view', 'export', 'contract_warning_view', 'contract_warning_export'],
+  system: ['user', 'role', 'dict', 'log', 'backup'],
 }
 
 export const MENU_PERMISSION_MAP = {

@@ -89,7 +89,6 @@ PERMISSION_MODULES = [
         "label": "薪资计算",
         "actions": [
             {"key": "view", "label": "查看薪资"},
-            {"key": "create", "label": "新增记录"},
             {"key": "edit", "label": "编辑薪资"},
             {"key": "delete", "label": "删除薪资"},
             {"key": "check", "label": "数据检查"},
@@ -115,27 +114,19 @@ PERMISSION_MODULES = [
         "actions": [
             {"key": "view", "label": "查看报表"},
             {"key": "export", "label": "导出报表"},
-            {"key": "view_my_slip", "label": "查看个人工资条"},
+            {"key": "contract_warning_view", "label": "查看合同到期预警"},
+            {"key": "contract_warning_export", "label": "导出合同到期预警"},
         ]
     },
     {
         "key": "system",
         "label": "系统管理",
         "actions": [
-            {"key": "view", "label": "查看系统设置"},
             {"key": "user", "label": "用户管理"},
             {"key": "role", "label": "角色权限"},
             {"key": "dict", "label": "数据字典"},
             {"key": "log", "label": "操作日志"},
             {"key": "backup", "label": "数据备份"},
-        ]
-    },
-    {
-        "key": "profile",
-        "label": "个人中心",
-        "actions": [
-            {"key": "view", "label": "查看个人信息"},
-            {"key": "edit", "label": "修改个人信息"},
         ]
     },
 ]

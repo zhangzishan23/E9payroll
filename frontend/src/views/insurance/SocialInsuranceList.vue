@@ -7,7 +7,6 @@
         <el-option label="员工姓名" value="employee_name" />
       </el-select>
       <el-input v-model="filterValue" placeholder="筛选值" size="small" clearable class="!w-36" @input="fetchData" />
-      <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)" v-permission="'insurance:create'">录入</el-button>
       <el-button :icon="Upload" size="small" @click="showImportOld" v-permission="'insurance:import'">单文件导入</el-button>
       <el-button type="primary" :icon="Upload" size="small" @click="showSmartImport" v-permission="'insurance:import'">智能导入</el-button>
       <el-button type="success" :icon="Download" size="small" @click="handleExport" v-permission="'insurance:export'">导出</el-button>
@@ -782,7 +781,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
-import { Plus, Download, Upload, Delete, InfoFilled, UploadFilled, WarningFilled, CopyDocument, Setting, FolderAdd } from '@element-plus/icons-vue'
+import { Download, Upload, Delete, InfoFilled, UploadFilled, WarningFilled, CopyDocument, Setting, FolderAdd } from '@element-plus/icons-vue'
 import api from '../../api'
 import ColumnSetting from '../../components/ColumnSetting.vue'
 import { formatMoney, formatPercent } from '../../utils/format'

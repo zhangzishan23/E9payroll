@@ -393,7 +393,7 @@ def confirm_step(
     return {"message": "操作成功", "is_confirmed": data.is_confirmed, "is_force": is_force}
 
 
-@router.get("/roster", dependencies=[Depends(require_permission("employee:export"))])
+@router.get("/roster", dependencies=[Depends(require_permission("report:export")), Depends(require_permission("employee:export"))])
 def export_roster(db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     query = db.query(Employee)
     employees = _filter_active_without_pending_resign(query, db).order_by(Employee.employee_no).all()
@@ -618,7 +618,7 @@ def export_salary(period: str, db: Session = Depends(get_db), current_user: User
     )
 
 
-@router.get("/attendance/{period}", dependencies=[Depends(require_permission("attendance:export"))])
+@router.get("/attendance/{period}", dependencies=[Depends(require_permission("report:export")), Depends(require_permission("attendance:export"))])
 def export_attendance(period: str, db: Session = Depends(get_db), current_user: UserInfo = Depends(get_current_user)):
     # 获取所有在职员工
     query = db.query(Employee)
@@ -1138,7 +1138,7 @@ def _build_salary_row_data(emp, calc, dict_name_map):
     return row_data
 
 
-@router.get("/salary-by-template/{period}", dependencies=[Depends(require_permission("salary:export"))])
+@router.get("/salary-by-template/{period}", dependencies=[Depends(require_permission("report:export")), Depends(require_permission("salary:export"))])
 def export_salary_by_template(
     period: str,
     template_id: Optional[int] = Query(None, description="模板ID，不传则使用默认模板"),
@@ -1201,7 +1201,7 @@ def export_salary_by_template(
     )
 
 
-@router.get("/contract-expiry-warning", dependencies=[Depends(require_permission("employee:view"))])
+@router.get("/contract-expiry-warning", dependencies=[Depends(require_permission("report:contract_warning_view"))])
 def get_contract_expiry_warning(
     days_ahead: int = Query(30, description="提前预警天数，默认30天"),
     db: Session = Depends(get_db),
@@ -1247,3 +1247,68 @@ def get_contract_expiry_warning(
         "expired_count": sum(1 for w in warning_list if w["is_expired"]),
         "list": warning_list
     }
+
+
+@router.get("/social-insurance/{period}", dependencies=[Depends(require_permission("report:export")), Depends(require_permission("insurance:export"))])
+def export_social_insurance_report(
+    period: str,
+    db: Session = Depends(get_db),
+    current_user: UserInfo = Depends(get_current_user)
+):
+    """报表中心专用：社保公积金导出（需同时拥有报表导出和社保导出权限）"""
+    query = db.query(Employee)
+    employees = _filter_active_without_pending_resign(query, db).order_by(Employee.employee_no).all()
+    si_map = {}
+    records = db.query(SocialInsurance).filter(SocialInsurance.period == period).all()
+    for r in records:
+        si_map[r.employee_id] = r
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"社保公积金_{period}"
+    headers = [
+        "员工编号", "姓名",
+        "养老保险基数(个人)", "养老保险基数(单位)", "养老保险个人", "养老保险公司",
+        "失业保险基数(个人)", "失业保险基数(单位)", "失业保险个人", "失业保险公司",
+        "医疗保险基数(个人)", "医疗保险基数(单位)", "医疗保险个人", "医疗保险公司",
+        "工伤保险基数(单位)", "工伤保险公司",
+        "社保个人合计", "社保公司合计",
+        "公积金基数", "公积金个人", "公积金公司",
+    ]
+    ws.append(headers)
+
+    for emp in employees:
+        si = si_map.get(emp.id)
+        ws.append([
+            emp.employee_no, emp.name,
+            float(si.pension_personal_base or 0) if si else "",
+            float(si.pension_company_base or 0) if si else "",
+            float(si.pension_personal or 0) if si else "",
+            float(si.pension_company or 0) if si else "",
+            float(si.unemployment_personal_base or 0) if si else "",
+            float(si.unemployment_company_base or 0) if si else "",
+            float(si.unemployment_personal or 0) if si else "",
+            float(si.unemployment_company or 0) if si else "",
+            float(si.medical_personal_base or 0) if si else "",
+            float(si.medical_company_base or 0) if si else "",
+            float(si.medical_personal or 0) if si else "",
+            float(si.medical_company or 0) if si else "",
+            float(si.injury_company_base or 0) if si else "",
+            float(si.injury_company or 0) if si else "",
+            float(si.si_personal) if si else "",
+            float(si.si_company) if si else "",
+            float(si.hf_base) if si else "",
+            float(si.hf_personal) if si else "",
+            float(si.hf_company) if si else "",
+        ])
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    filename = f"社保公积金_{period}.xlsx"
+    encoded_filename = quote(filename)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"}
+    )

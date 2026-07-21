@@ -161,7 +161,7 @@ const presetTemplates = {
     'attendance:view', 'attendance:create', 'attendance:edit', 'attendance:export', 'attendance:import', 'attendance:sync', 'attendance:writeoff',
     'performance:view', 'performance:create', 'performance:edit', 'performance:export', 'performance:import',
     'insurance:view', 'insurance:create', 'insurance:edit', 'insurance:export', 'insurance:import', 'insurance:template',
-    'report:view', 'report:export',
+    'report:view', 'report:export', 'report:contract_warning_view', 'report:contract_warning_export'
   ],
   hr_supervisor: [
     'dashboard:view', 'dashboard:work_view', 'dashboard:leader_view',
@@ -169,9 +169,9 @@ const presetTemplates = {
     'attendance:view', 'attendance:create', 'attendance:edit', 'attendance:delete', 'attendance:export', 'attendance:import', 'attendance:sync', 'attendance:writeoff',
     'performance:view', 'performance:create', 'performance:edit', 'performance:export', 'performance:import',
     'insurance:view', 'insurance:create', 'insurance:edit', 'insurance:delete', 'insurance:export', 'insurance:import', 'insurance:template',
-    'salary:view', 'salary:create', 'salary:edit', 'salary:delete', 'salary:check', 'salary:step_confirm', 'salary:export',
+    'salary:view', 'salary:edit', 'salary:delete', 'salary:check', 'salary:step_confirm', 'salary:export',
     'approval:view', 'approval:approve',
-    'report:view', 'report:export',
+    'report:view', 'report:export', 'report:contract_warning_view', 'report:contract_warning_export'
   ],
   accountant: [
     'dashboard:view', 'dashboard:work_view', 'dashboard:leader_view',
@@ -179,14 +179,12 @@ const presetTemplates = {
     'attendance:view', 'attendance:export',
     'performance:view',
     'insurance:view',
-    'salary:view', 'salary:create', 'salary:edit', 'salary:delete', 'salary:check', 'salary:step_confirm', 'salary:tax_export', 'salary:tax_import', 'salary:travel_import', 'salary:export',
+    'salary:view', 'salary:edit', 'salary:delete', 'salary:check', 'salary:step_confirm', 'salary:tax_export', 'salary:tax_import', 'salary:travel_import', 'salary:export',
     'approval:view',
-    'report:view', 'report:export',
+    'report:view', 'report:export', 'report:contract_warning_view', 'report:contract_warning_export'
   ],
   employee: [
-    'dashboard:view', 'dashboard:work_view',
-    'profile:view', 'profile:edit',
-    'report:view_my_slip',
+    'dashboard:view', 'dashboard:work_view'
   ]
 }
 
@@ -250,7 +248,7 @@ async function fetchPermModules() {
         { key: 'template', label: '管理导入模板' }
       ]},
       { key: 'salary', label: '薪资计算', actions: [
-        { key: 'view', label: '查看薪资' }, { key: 'create', label: '新增记录' }, { key: 'edit', label: '编辑薪资' },
+        { key: 'view', label: '查看薪资' }, { key: 'edit', label: '编辑薪资' },
         { key: 'delete', label: '删除薪资' }, { key: 'check', label: '数据检查' }, { key: 'step_confirm', label: '步骤确认' },
         { key: 'tax_export', label: '导出报税模板' }, { key: 'tax_import', label: '导入个税申报结果' },
         { key: 'travel_import', label: '导入临时性差旅补贴' }, { key: 'export', label: '导出薪资' }
@@ -259,15 +257,12 @@ async function fetchPermModules() {
         { key: 'view', label: '查看审批' }, { key: 'submit', label: '提交审批' }, { key: 'approve', label: '审核操作' }
       ]},
       { key: 'report', label: '报表导出', actions: [
-        { key: 'view', label: '查看报表' }, { key: 'export', label: '导出报表' }, { key: 'view_my_slip', label: '查看个人工资条' }
+        { key: 'view', label: '查看报表' }, { key: 'export', label: '导出报表' }
       ]},
       { key: 'system', label: '系统管理', actions: [
-        { key: 'view', label: '查看系统设置' }, { key: 'user', label: '用户管理' }, { key: 'role', label: '角色权限' },
+        { key: 'user', label: '用户管理' }, { key: 'role', label: '角色权限' },
         { key: 'dict', label: '数据字典' }, { key: 'log', label: '操作日志' }, { key: 'backup', label: '数据备份' }
-      ]},
-      { key: 'profile', label: '个人中心', actions: [
-        { key: 'view', label: '查看个人信息' }, { key: 'edit', label: '修改个人信息' }
-      ]},
+      ]}
     ]
   }
 }

@@ -69,7 +69,7 @@
           <el-icon><Checked /></el-icon>
           <span>审批流程</span>
         </el-menu-item>
-        <el-menu-item index="/reports" v-if="authStore.hasAnyPermission('report:view', 'report:view_my_slip')">
+        <el-menu-item index="/reports" v-if="authStore.hasPermission('report:view')">
           <el-icon><Document /></el-icon>
           <span>报表导出</span>
         </el-menu-item>

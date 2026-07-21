@@ -8,7 +8,6 @@
         <el-option label="员工姓名" value="employee_name" />
       </el-select>
       <el-input v-model="filterValue" placeholder="筛选值" size="small" clearable class="!w-36" @input="fetchData" />
-      <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)" v-permission="'attendance:create'">录入</el-button>
       <el-button :icon="Upload" size="small" @click="showImport" v-permission="'attendance:import'">导入</el-button>
       <el-button type="success" :icon="Download" size="small" @click="handleExport" v-permission="'attendance:export'">导出</el-button>
       <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete" v-permission="'attendance:delete'">
@@ -797,7 +796,7 @@
 <script setup>
 import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Download, Upload, Delete, Refresh, MagicStick, RefreshRight, WarningFilled, Lock, Unlock, Check } from '@element-plus/icons-vue'
+import { Download, Upload, Delete, Refresh, MagicStick, RefreshRight, WarningFilled, Lock, Unlock, Check } from '@element-plus/icons-vue'
 import api from '../../api'
 import ColumnSetting from '../../components/ColumnSetting.vue'
 import { formatNumber, formatInt, formatPercent } from '../../utils/format'

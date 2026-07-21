@@ -498,7 +498,7 @@ const hasAnyTaxPermission = computed(() => {
 
 const hasSalaryPermission = computed(() => {
   return authStore.hasAnyPermission(
-    'salary:view', 'salary:create', 'salary:edit', 'salary:delete', 'salary:check', 'salary:step_confirm', 'salary:export',
+    'salary:view', 'salary:edit', 'salary:delete', 'salary:check', 'salary:step_confirm', 'salary:export',
     'salary:tax_export', 'salary:tax_import', 'salary:travel_import'
   )
 })

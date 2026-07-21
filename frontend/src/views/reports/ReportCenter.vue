@@ -1,6 +1,6 @@
 <template>
   <div class="space-y-6">
-    <div class="apple-card p-6">
+    <div class="apple-card p-6" v-if="canViewContractWarning">
       <div class="flex items-center justify-between mb-6">
         <h3 class="text-lg font-semibold text-gray-700">合同到期预警</h3>
         <div class="flex items-center gap-2">
@@ -12,7 +12,7 @@
         <div class="mb-3 flex items-center gap-2">
           <el-tag type="warning" size="small">共 {{ contractWarning.total_count }} 人合同即将到期</el-tag>
           <el-tag v-if="contractWarning.expired_count > 0" type="danger" size="small">{{ contractWarning.expired_count }} 人已过期</el-tag>
-          <el-button type="primary" size="small" text @click="exportContractWarning" v-permission="'report:export'">导出预警名单</el-button>
+          <el-button type="primary" size="small" text @click="exportContractWarning" v-if="canExportContractWarning">导出预警名单</el-button>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           <div
@@ -67,10 +67,10 @@
         </div>
       </div>
 
-      <div>
+      <div v-if="hasExportPermission">
         <div class="flex items-center justify-between mb-4">
           <h4 class="text-base font-medium text-gray-700">常用导出</h4>
-          <el-button type="primary" link size="small" @click="showAddCommonDialog">
+          <el-button type="primary" link size="small" @click="showAddCommonDialog" v-permission="'report:export'">
             <el-icon><Plus /></el-icon>
             添加常用
           </el-button>
@@ -95,6 +95,9 @@
         <div v-else class="text-center py-6 text-gray-400 text-sm">
           暂无常用导出模板，点击右上角「添加常用」选择需要的模板
         </div>
+      </div>
+      <div v-else class="text-center py-6 text-gray-400 text-sm">
+        您没有报表导出权限，请联系管理员分配
       </div>
     </div>
 
@@ -369,6 +372,10 @@ import { useAuthStore } from '../../stores/auth'
 
 const authStore = useAuthStore()
 
+const hasExportPermission = computed(() => authStore.isAdmin || authStore.hasPermission('report:export'))
+const canViewContractWarning = computed(() => authStore.isAdmin || authStore.hasPermission('report:contract_warning_view'))
+const canExportContractWarning = computed(() => authStore.isAdmin || authStore.hasPermission('report:contract_warning_export'))
+
 const TAB_TYPE_MAP = {
   salary: ['salary_finance', 'salary_slip', 'custom'],
   roster: ['roster'],
@@ -525,6 +532,10 @@ function removeCommonTemplate(tplId) {
 }
 
 async function exportByTemplate(tpl) {
+  if (!hasExportPermission.value) {
+    ElMessage.error('您没有报表导出权限，请联系管理员分配')
+    return
+  }
   try {
     let url = ''
     let filename = ''
@@ -538,7 +549,7 @@ async function exportByTemplate(tpl) {
       url = `/reports/attendance/${period}`
       filename = `${tpl.name}_${period}.xlsx`
     } else if (tpl.template_type === 'social_insurance') {
-      url = `/social-insurance/export/${period}`
+      url = `/reports/social-insurance/${period}`
       filename = `${tpl.name}_${period}.xlsx`
     } else {
       url = `/reports/salary-by-template/${period}`
@@ -559,6 +570,7 @@ async function exportByTemplate(tpl) {
 }
 
 async function fetchContractWarning() {
+  if (!canViewContractWarning.value) return
   try {
     const res = await api.get('/reports/contract-expiry-warning', { params: { days_ahead: warningDays.value } })
     const d = res.data
@@ -790,6 +802,10 @@ async function deleteTemplate(row) {
 }
 
 async function exportSalaryByTemplate() {
+  if (!hasExportPermission.value) {
+    ElMessage.error('您没有报表导出权限，请联系管理员分配')
+    return
+  }
   try {
     const params = {}
     if (selectedTemplate.value) {
@@ -808,6 +824,10 @@ async function exportSalaryByTemplate() {
 }
 
 function exportContractWarning() {
+  if (!canExportContractWarning.value) {
+    ElMessage.error('您没有合同到期预警导出权限，请联系管理员分配')
+    return
+  }
   const headers = ['员工姓名', '部门', '合同到期日', '剩余天数', '状态']
   let csvContent = headers.join(',') + '\n'
   contractWarning.list.forEach(item => {

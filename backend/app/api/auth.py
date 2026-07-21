@@ -215,7 +215,7 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     if not guest_role:
         guest_role = SysRole(
             name="访客",
-            description="新注册用户默认角色，可查看工作台和个人中心",
+            description="新注册用户默认角色，仅可查看工作台",
             is_preset=True,
             data_scope="self"
         )
