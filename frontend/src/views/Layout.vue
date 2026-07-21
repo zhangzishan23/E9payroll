@@ -82,6 +82,7 @@
           <el-menu-item index="/system/users" v-if="authStore.hasPermission('system:user')">用户管理</el-menu-item>
           <el-menu-item index="/system/roles" v-if="authStore.hasPermission('system:role')">角色管理</el-menu-item>
           <el-menu-item index="/system/dict" v-if="authStore.hasPermission('system:dict')">数据字典</el-menu-item>
+          <el-menu-item index="/system/schedules" v-if="authStore.hasPermission('system:dict')">日程管理</el-menu-item>
           <el-menu-item index="/system/logs" v-if="authStore.hasPermission('system:log')">操作日志</el-menu-item>
           <el-menu-item index="/system/backup" v-if="authStore.hasPermission('system:backup')">数据备份</el-menu-item>
         </el-sub-menu>
@@ -144,7 +145,15 @@ onMounted(() => {
 
 const activeMenu = computed(() => {
   const path = route.path
-  if (path.startsWith('/system')) return '/system/users'
+  if (path.startsWith('/system')) {
+    if (path === '/system/users') return '/system/users'
+    if (path === '/system/roles') return '/system/roles'
+    if (path === '/system/dict') return '/system/dict'
+    if (path === '/system/schedules') return '/system/schedules'
+    if (path === '/system/logs') return '/system/logs'
+    if (path === '/system/backup') return '/system/backup'
+    return '/system/users'
+  }
   return path
 })
 

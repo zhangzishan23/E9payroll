@@ -75,8 +75,10 @@ export const SALARY_COLUMNS = [
     tooltip: '上月未报税金额，累计到本月工资报税' },
   { key: 'travel_untaxed', label: '临时性差旅补贴未报税费用', width: 100, type: 'money', editable: true,
     tooltip: '临时性差旅补贴未报税费用，来源于差旅报销表，计入本月工资报税' },
+  { key: 'holiday_red_packet_untaxed', label: '节假日红包未报税', width: 100, type: 'money', editable: true,
+    tooltip: '节假日红包未报税金额，需计入本月工资报税' },
   { key: 'actual_taxable', label: '本月实际工资报税金额', width: 120, type: 'money', summary: true,
-    tooltip: '= 总应发工资 + 税前调整 + 上月未报税 + 差旅补贴未报税（不含年终奖和补偿金，需单独报税）' },
+    tooltip: '= 总应发工资 + 税前调整 + 上月未报税 + 差旅补贴未报税 + 节假日红包未报税（不含年终奖和补偿金，需单独报税）' },
   { key: 'severance_pay', label: '实发离职补偿金', width: 100, type: 'money', editable: true,
     tooltip: '实发离职补偿金（已扣税或免税部分），不影响当月工资个税' },
   { key: 'compensation_tax', label: '未报税补偿金', width: 100, type: 'money', editable: true,
@@ -92,7 +94,7 @@ export const SALARY_EDITABLE_FIELDS = [
   'commission_bonus', 'pretax_adjustment', 'pretax_adjustment_reason',
   'posttax_adjustment', 'posttax_adjustment_reason',
   'severance_pay', 'year_end_bonus_untaxed', 'year_end_bonus_net',
-  'last_month_untaxed', 'travel_untaxed', 'compensation_tax',
+  'last_month_untaxed', 'travel_untaxed', 'holiday_red_packet_untaxed', 'compensation_tax',
   'tax_deduction', 'remark'
 ]
 

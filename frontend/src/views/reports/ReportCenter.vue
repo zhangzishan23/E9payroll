@@ -1,51 +1,6 @@
 <template>
   <div class="space-y-6">
     <div class="apple-card p-6">
-      <div class="flex items-center gap-2 mb-4">
-        <h3 class="text-lg font-semibold text-gray-700 shrink-0">数据统计中心</h3>
-        <el-date-picker v-model="statsPeriod" type="month" placeholder="选择月份" size="small" class="!w-40" value-format="YYYYMM" @change="fetchStats" />
-      </div>
-
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <div class="apple-card p-4 text-center">
-          <div class="text-3xl font-bold text-blue-600">{{ stats.total_employees }}</div>
-          <div class="text-sm text-gray-500 mt-1">在职员工总数</div>
-        </div>
-        <div class="apple-card p-4 text-center">
-          <div class="text-3xl font-bold text-green-600">{{ stats.salary_completed }}/{{ stats.salary_total }}</div>
-          <div class="text-sm text-gray-500 mt-1">薪资核算完成</div>
-        </div>
-        <div class="apple-card p-4 text-center">
-          <div class="text-3xl font-bold text-orange-600">{{ stats.review_passed }}/{{ stats.review_rejected }}</div>
-          <div class="text-sm text-gray-500 mt-1">审核通过/驳回</div>
-        </div>
-        <div class="apple-card p-4 text-center">
-          <div class="text-3xl font-bold text-purple-600">{{ stats.attend_rate }}%</div>
-          <div class="text-sm text-gray-500 mt-1">考勤出勤率</div>
-        </div>
-      </div>
-
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div class="apple-card p-4 text-center">
-          <div class="text-xl font-semibold text-blue-600">{{ fmtMoney(stats.avg_gross) }}</div>
-          <div class="text-xs text-gray-400 mt-1">人均应发工资</div>
-        </div>
-        <div class="apple-card p-4 text-center">
-          <div class="text-xl font-semibold text-green-600">{{ fmtMoney(stats.avg_net) }}</div>
-          <div class="text-xs text-gray-400 mt-1">人均实发工资</div>
-        </div>
-        <div class="apple-card p-4 text-center">
-          <div class="text-xl font-semibold text-red-600">{{ stats.total_late }}</div>
-          <div class="text-xs text-gray-400 mt-1">迟到总次数</div>
-        </div>
-        <div class="apple-card p-4 text-center">
-          <div class="text-xl font-semibold text-gray-600">{{ stats.total_leave.toFixed(1) }}</div>
-          <div class="text-xs text-gray-400 mt-1">请假总天数</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="apple-card p-6">
       <div class="flex items-center justify-between mb-6">
         <h3 class="text-lg font-semibold text-gray-700">合同到期预警</h3>
         <div class="flex items-center gap-2">
@@ -82,43 +37,63 @@
     </div>
 
     <div class="apple-card p-6">
-      <div class="flex items-center justify-between mb-6">
-        <h3 class="text-lg font-semibold text-gray-700">报表导出中心</h3>
-        <el-button type="primary" @click="showConfigDialog" v-permission="'report:export'">
-          <el-icon><Setting /></el-icon>
+      <div class="flex items-center gap-4 mb-6">
+        <el-button type="primary" class="!text-base !px-6 !py-5 !rounded-lg" @click="showConfigDialog" v-permission="'report:export'">
+          <el-icon class="!text-xl mr-1"><Setting /></el-icon>
           导出表配置
         </el-button>
+        <h3 class="text-lg font-semibold text-gray-700">报表导出中心</h3>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div class="apple-card p-6 text-center cursor-pointer hover:shadow-lg transition-shadow border-2 border-dashed border-blue-200 hover:border-blue-400" @click="exportReport('roster')">
-          <el-icon class="text-5xl text-blue-500 mb-4"><Document /></el-icon>
-          <div class="font-semibold text-lg">员工花名册</div>
-          <div class="text-sm text-gray-500 mt-2">导出全量员工基本信息</div>
-          <el-button type="primary" class="mt-4" size="default" @click.stop="exportReport('roster')" v-permission="'report:export'">立即导出</el-button>
+      <div class="mb-6">
+        <h4 class="text-base font-medium text-gray-700 mb-4">薪资表导出</h4>
+        <div class="apple-card p-6">
+          <div class="flex flex-wrap items-center gap-4">
+            <div class="flex items-center gap-2">
+              <span class="text-sm text-gray-600">月份：</span>
+              <el-date-picker v-model="salaryPeriod" type="month" placeholder="选择月份" size="default" class="!w-40" value-format="YYYYMM" />
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-sm text-gray-600">模板：</span>
+              <el-select v-model="selectedTemplate" placeholder="选择模板" size="default" class="!w-48" clearable>
+                <el-option v-for="tpl in salaryTemplates" :key="tpl.id" :label="tpl.name + (tpl.is_default ? ' (默认)' : '')" :value="tpl.id" />
+              </el-select>
+            </div>
+            <el-button type="primary" size="default" @click="exportSalaryByTemplate" v-permission="'report:export'">
+              <el-icon><Download /></el-icon>
+              导出Excel
+            </el-button>
+          </div>
         </div>
+      </div>
 
-        <div class="apple-card p-6 text-center border-2 border-dashed border-green-200 hover:border-green-400 hover:shadow-lg transition-shadow">
-          <div class="flex items-center gap-2 justify-center mb-3">
-            <el-date-picker v-model="salaryPeriod" type="month" placeholder="选择月份" size="small" class="!w-40" value-format="YYYYMM" />
-          </div>
-          <div class="flex items-center gap-2 justify-center">
-            <el-select v-model="selectedTemplate" placeholder="选择模板" size="small" class="!w-32" clearable>
-              <el-option v-for="tpl in salaryTemplates" :key="tpl.id" :label="tpl.name + (tpl.is_default ? ' (默认)' : '')" :value="tpl.id" />
-            </el-select>
-            <el-button type="primary" size="small" @click="exportSalaryByTemplate" v-permission="'report:export'">导出Excel</el-button>
+      <div>
+        <div class="flex items-center justify-between mb-4">
+          <h4 class="text-base font-medium text-gray-700">常用导出</h4>
+          <el-button type="primary" link size="small" @click="showAddCommonDialog">
+            <el-icon><Plus /></el-icon>
+            添加常用
+          </el-button>
+        </div>
+        <div v-if="commonTemplateList.length > 0" class="flex flex-wrap items-center gap-3">
+          <div
+            v-for="tpl in commonTemplateList"
+            :key="tpl.id"
+            class="group relative inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-50 border border-blue-200 text-blue-700 cursor-pointer hover:bg-blue-100 hover:border-blue-300 hover:shadow-sm transition-all text-sm font-medium"
+            @click="exportByTemplate(tpl)"
+          >
+            <el-icon :class="getTemplateIconColor(tpl.template_type)" class="text-base">
+              <component :is="getTemplateIcon(tpl.template_type)" />
+            </el-icon>
+            <span>{{ tpl.name }}</span>
+            <el-icon
+              class="ml-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+              @click.stop="removeCommonTemplate(tpl.id)"
+            ><Close /></el-icon>
           </div>
         </div>
-
-        <div class="apple-card p-6 text-center border-2 border-dashed border-orange-200 hover:border-orange-400 hover:shadow-lg transition-shadow">
-          <div class="flex items-center gap-2 justify-center mb-4">
-            <el-icon class="text-4xl text-orange-500"><Calendar /></el-icon>
-            <span class="font-semibold text-lg">考勤统计表</span>
-          </div>
-          <div class="flex items-center gap-2 justify-center mb-4">
-            <el-date-picker v-model="attPeriod" type="month" placeholder="选择月份" size="small" class="!w-40" value-format="YYYYMM" />
-            <el-button type="primary" size="small" @click="exportReport('attendance')" v-permission="'report:export'">导出Excel</el-button>
-          </div>
+        <div v-else class="text-center py-6 text-gray-400 text-sm">
+          暂无常用导出模板，点击右上角「添加常用」选择需要的模板
         </div>
       </div>
     </div>
@@ -260,6 +235,33 @@
       </el-tabs>
     </el-dialog>
 
+    <el-dialog v-model="addCommonVisible" title="添加常用导出模板" width="500px" append-to-body>
+      <div class="text-sm text-gray-500 mb-3">选择要添加到常用导出的模板：</div>
+      <div v-if="availableToAdd.length > 0" class="space-y-2 max-h-80 overflow-y-auto">
+        <div
+          v-for="tpl in availableToAdd"
+          :key="tpl.id"
+          class="flex items-center justify-between p-3 border rounded-lg hover:bg-blue-50 hover:border-blue-300 cursor-pointer"
+          @click="addCommonTemplate(tpl)"
+        >
+          <div class="flex items-center gap-3">
+            <el-icon :class="getTemplateIconColor(tpl.template_type)">
+              <component :is="getTemplateIcon(tpl.template_type)" />
+            </el-icon>
+            <div>
+              <div class="font-medium text-sm">{{ tpl.name }}</div>
+              <div class="text-xs text-gray-500">{{ getTypeLabel(tpl.template_type) }}{{ tpl.description ? ' · ' + tpl.description : '' }}</div>
+            </div>
+          </div>
+          <el-icon class="text-green-500"><Plus /></el-icon>
+        </div>
+      </div>
+      <div v-else class="text-center py-8 text-gray-400">
+        <el-icon class="text-3xl mb-2"><CircleCheck /></el-icon>
+        <div>所有已启用的模板都已添加到常用</div>
+      </div>
+    </el-dialog>
+
     <el-dialog v-model="editVisible" :title="editingTemplate.id ? '编辑模板' : '新建模板'" width="800px" append-to-body>
       <el-form :model="editingTemplate" label-width="100px" size="small">
         <el-form-item label="模板名称" required>
@@ -358,11 +360,14 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { Document, Calendar, Setting, Plus, Close, Rank, CircleCheck, Top, Bottom } from '@element-plus/icons-vue'
+import { Document, Calendar, Setting, Plus, Close, Rank, CircleCheck, Top, Bottom, Download, Money, OfficeBuilding, User, Wallet } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../../api'
 import { getDefaultPeriod } from '../../utils/date.js'
 import { ALL_EXPORT_FIELDS } from '../../config/columns'
+import { useAuthStore } from '../../stores/auth'
+
+const authStore = useAuthStore()
 
 const TAB_TYPE_MAP = {
   salary: ['salary_finance', 'salary_slip', 'custom'],
@@ -371,25 +376,31 @@ const TAB_TYPE_MAP = {
   social_insurance: ['social_insurance']
 }
 
+const TEMPLATE_ICONS = {
+  salary_finance: Money,
+  salary_slip: Wallet,
+  roster: User,
+  attendance: Calendar,
+  social_insurance: OfficeBuilding,
+  custom: Document
+}
+
+const TEMPLATE_ICON_COLORS = {
+  salary_finance: 'text-blue-500',
+  salary_slip: 'text-green-500',
+  roster: 'text-orange-500',
+  attendance: 'text-purple-500',
+  social_insurance: 'text-cyan-500',
+  custom: 'text-gray-500'
+}
+
 const defaultPeriod = getDefaultPeriod()
 const salaryPeriod = ref(defaultPeriod)
-const attPeriod = ref(defaultPeriod)
-const statsPeriod = ref(defaultPeriod)
 const selectedTemplate = ref(null)
 const warningDays = ref(30)
 
-const stats = reactive({
-  total_employees: 0,
-  salary_total: 0,
-  salary_completed: 0,
-  review_passed: 0,
-  review_rejected: 0,
-  attend_rate: 0,
-  avg_gross: 0,
-  avg_net: 0,
-  total_late: 0,
-  total_leave: 0
-})
+const commonTemplateIds = ref([])
+const addCommonVisible = ref(false)
 
 const contractWarning = reactive({
   total_count: 0,
@@ -422,17 +433,24 @@ const filteredTemplates = computed(() => templates.value.filter(t => TAB_TYPE_MA
 
 const salaryTemplates = computed(() => templates.value.filter(t => t.is_enabled && ['salary_finance', 'salary_slip', 'custom'].includes(t.template_type)))
 
+const enabledTemplates = computed(() => templates.value.filter(t => t.is_enabled))
+
+const commonTemplateList = computed(() => {
+  return commonTemplateIds.value
+    .map(id => enabledTemplates.value.find(t => t.id === id))
+    .filter(Boolean)
+})
+
+const availableToAdd = computed(() => {
+  return enabledTemplates.value.filter(t => !commonTemplateIds.value.includes(t.id))
+})
+
 const selectedFields = computed({
   get: () => editingTemplate.fields,
   set: (val) => { editingTemplate.fields = val }
 })
 
 const selectedFieldKeys = computed(() => selectedFields.value.map(f => f.key))
-
-function fmtMoney(val) {
-  if (val == null || val === 0) return '¥0'
-  return '¥' + Number(val).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-}
 
 function getTypeLabel(type) {
   const map = { salary_finance: '财务薪资表', salary_slip: '工资条表', tax: '报税表', roster: '花名册', attendance: '考勤表', social_insurance: '社保表', custom: '自定义' }
@@ -444,26 +462,99 @@ function getTypeTagType(type) {
   return map[type] || ''
 }
 
-async function fetchStats() {
+function getTemplateIcon(type) {
+  return TEMPLATE_ICONS[type] || Document
+}
+
+function getTemplateIconColor(type) {
+  return TEMPLATE_ICON_COLORS[type] || 'text-gray-500'
+}
+
+function getCommonStorageKey() {
+  const userId = authStore.user?.id || 'default'
+  return `e9_common_export_templates_${userId}`
+}
+
+function loadCommonTemplates() {
   try {
-    const res = await api.get('/reports/stats', { params: { period: statsPeriod.value } })
-    const d = res.data
-    stats.total_employees = d.total_employees || 0
-    if (d.salary_stats) {
-      stats.salary_total = d.salary_stats.total || 0
-      stats.salary_completed = d.salary_stats.completed || 0
-      stats.review_passed = d.salary_stats.review_passed || 0
-      stats.review_rejected = d.salary_stats.review_rejected || 0
-      stats.avg_gross = d.salary_stats.avg_gross_salary || 0
-      stats.avg_net = d.salary_stats.avg_net_salary || 0
-    }
-    if (d.attendance_stats) {
-      stats.attend_rate = d.attendance_stats.avg_rate || 0
-      stats.total_late = d.attendance_stats.total_late || 0
-      stats.total_leave = d.attendance_stats.total_leave || 0
+    const stored = localStorage.getItem(getCommonStorageKey())
+    if (stored) {
+      commonTemplateIds.value = JSON.parse(stored)
+    } else {
+      const defaultSalaryTpl = templates.value.find(t => t.template_type === 'salary_finance' && t.is_default && t.is_enabled)
+        || templates.value.find(t => t.template_type === 'salary_finance' && t.is_enabled)
+      const defaultSlipTpl = templates.value.find(t => t.template_type === 'salary_slip' && t.is_default && t.is_enabled)
+        || templates.value.find(t => t.template_type === 'salary_slip' && t.is_enabled)
+      const defaults = []
+      if (defaultSlipTpl) defaults.push(defaultSlipTpl.id)
+      if (defaultSalaryTpl) defaults.push(defaultSalaryTpl.id)
+      commonTemplateIds.value = defaults
     }
   } catch {
-    ElMessage.error('加载统计数据失败')
+    commonTemplateIds.value = []
+  }
+}
+
+function saveCommonTemplates() {
+  localStorage.setItem(getCommonStorageKey(), JSON.stringify(commonTemplateIds.value))
+}
+
+function showAddCommonDialog() {
+  addCommonVisible.value = true
+}
+
+function addCommonTemplate(tpl) {
+  if (!commonTemplateIds.value.includes(tpl.id)) {
+    commonTemplateIds.value.push(tpl.id)
+    saveCommonTemplates()
+    ElMessage.success(`已添加「${tpl.name}」到常用导出`)
+  }
+  if (availableToAdd.value.length === 0) {
+    addCommonVisible.value = false
+  }
+}
+
+function removeCommonTemplate(tplId) {
+  const idx = commonTemplateIds.value.indexOf(tplId)
+  if (idx >= 0) {
+    const tpl = templates.value.find(t => t.id === tplId)
+    commonTemplateIds.value.splice(idx, 1)
+    saveCommonTemplates()
+    ElMessage.success(`已从常用导出移除「${tpl?.name || '模板'}」`)
+  }
+}
+
+async function exportByTemplate(tpl) {
+  try {
+    let url = ''
+    let filename = ''
+    let params = {}
+    const period = salaryPeriod.value
+
+    if (tpl.template_type === 'roster') {
+      url = '/reports/roster'
+      filename = `${tpl.name}.xlsx`
+    } else if (tpl.template_type === 'attendance') {
+      url = `/reports/attendance/${period}`
+      filename = `${tpl.name}_${period}.xlsx`
+    } else if (tpl.template_type === 'social_insurance') {
+      url = `/social-insurance/export/${period}`
+      filename = `${tpl.name}_${period}.xlsx`
+    } else {
+      url = `/reports/salary-by-template/${period}`
+      params.template_id = tpl.id
+      filename = `${tpl.name}_${period}.xlsx`
+    }
+
+    const res = await api.get(url, { params, responseType: 'blob' })
+    const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = filename
+    link.click()
+    ElMessage.success('导出成功')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '导出失败')
   }
 }
 
@@ -698,33 +789,6 @@ async function deleteTemplate(row) {
   }
 }
 
-async function exportReport(type) {
-  try {
-    let url = ''
-    let filename = ''
-    if (type === 'roster') {
-      url = '/reports/roster'
-      filename = '花名册.xlsx'
-    } else if (type === 'salary') {
-      url = `/reports/salary/${salaryPeriod.value}`
-      filename = `薪资核算表_${salaryPeriod.value}.xlsx`
-    } else if (type === 'attendance') {
-      url = `/reports/attendance/${attPeriod.value}`
-      filename = `考勤表_${attPeriod.value}.xlsx`
-    }
-
-    const res = await api.get(url, { responseType: 'blob' })
-    const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = filename
-    link.click()
-    ElMessage.success('导出成功')
-  } catch (e) {
-    ElMessage.error('导出失败')
-  }
-}
-
 async function exportSalaryByTemplate() {
   try {
     const params = {}
@@ -757,10 +821,10 @@ function exportContractWarning() {
   ElMessage.success('导出成功')
 }
 
-onMounted(() => {
-  fetchStats()
+onMounted(async () => {
   fetchContractWarning()
-  fetchTemplates()
+  await fetchTemplates()
+  loadCommonTemplates()
   fetchAvailableFields()
 })
 </script>

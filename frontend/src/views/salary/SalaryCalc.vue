@@ -11,7 +11,7 @@
           <el-input v-model="filterValue" placeholder="筛选" clearable class="!w-24 shrink-0" size="small" @input="fetchResults" />
         </div>
         <div class="flex items-center gap-1">
-          <el-button type="primary" size="small" :loading="checking" @click="checkCompleteness" v-permission="'salary:calculate'">检查</el-button>
+          <el-button type="primary" size="small" :loading="checking" @click="checkCompleteness" v-permission="'salary:check'">检查</el-button>
           <el-button
             size="small"
             :type="editMode ? 'danger' : 'primary'"
@@ -225,13 +225,57 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="checkResultVisible" title="数据完整性检查" width="650px" append-to-body>
+      <div v-if="completeness" class="space-y-4">
+        <div class="flex items-center gap-4 text-sm">
+          <el-tag :type="completeness.missing_count === 0 ? 'success' : 'warning'" effect="dark" size="large">
+            {{ completeness.missing_count === 0 ? '✓ 数据完整' : `⚠ ${completeness.missing_count} 人数据缺失` }}
+          </el-tag>
+          <span class="text-gray-500">共 {{ completeness.total_employees }} 名在职员工，{{ completeness.complete_count }} 人数据完整</span>
+        </div>
+        <div class="space-y-2">
+          <div v-for="src in completeness.sources" :key="src.source_key" class="p-3 rounded-lg" :class="getSourceBgClass(src.status)">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <el-icon :size="16" :class="getSourceIconClass(src.status)">
+                  <CircleCheckFilled v-if="src.status === '完整'" />
+                  <WarningFilled v-else-if="src.status === '部分缺失'" />
+                  <InfoFilled v-else />
+                </el-icon>
+                <span class="font-medium text-sm">{{ src.source_name }}</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="text-sm text-gray-500">{{ src.count }}/{{ completeness.total_employees }}</span>
+                <el-tag :type="getSourceTagType(src.status)" size="small">{{ src.status }}</el-tag>
+              </div>
+            </div>
+            <div v-if="src.description" class="mt-1 ml-6 text-xs text-gray-500">
+              {{ src.description }}
+            </div>
+          </div>
+        </div>
+        <div v-if="hasMissingEmployees" class="mt-4">
+          <div class="text-sm font-medium text-gray-700 mb-2">缺失数据人员名单：</div>
+          <div class="max-h-40 overflow-y-auto bg-gray-50 rounded-lg p-3">
+            <div v-for="src in completeness.sources.filter(s => s.missing_employees && s.missing_employees.length > 0)" :key="src.source_key" class="mb-2 last:mb-0">
+              <span class="text-xs text-red-500 font-medium">{{ src.source_name }}缺失：</span>
+              <span class="text-xs text-gray-600">{{ src.missing_employees.join('、') }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="checkResultVisible = false">知道了</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
-import { Download, Delete, UploadFilled, Setting } from '@element-plus/icons-vue'
+import { Download, Delete, UploadFilled, Setting, CircleCheckFilled, WarningFilled, InfoFilled } from '@element-plus/icons-vue'
 import api from '../../api'
 import { SALARY_COLUMNS, SALARY_EDITABLE_FIELDS, getSalaryFieldLabel } from '../../config/columns'
 import ColumnSetting from '../../components/ColumnSetting.vue'
@@ -274,10 +318,34 @@ const savingEdits = ref(false)
 const loading = ref(false)
 const isSubmitting = ref(false)
 const completeness = ref(null)
+const checkResultVisible = ref(false)
 const results = ref([])
 const selectedRows = ref([])
 const formulaVisible = ref(false)
 const tableMaxHeight = ref(500)
+
+const hasMissingEmployees = computed(() => {
+  if (!completeness.value) return false
+  return completeness.value.sources.some(s => s.missing_employees && s.missing_employees.length > 0)
+})
+
+function getSourceBgClass(status) {
+  if (status === '完整') return 'bg-green-50'
+  if (status === '部分缺失') return 'bg-amber-50'
+  return 'bg-blue-50'
+}
+
+function getSourceIconClass(status) {
+  if (status === '完整') return 'text-green-500'
+  if (status === '部分缺失') return 'text-amber-500'
+  return 'text-blue-500'
+}
+
+function getSourceTagType(status) {
+  if (status === '完整') return 'success'
+  if (status === '部分缺失') return 'warning'
+  return 'info'
+}
 
 function updateTableHeight() {
   tableMaxHeight.value = Math.max(400, window.innerHeight - 260)
@@ -538,6 +606,9 @@ async function checkCompleteness() {
     }
     const res = await api.get(`/salary/check-completeness/${periodDate.value}`, { params })
     completeness.value = res.data
+    checkResultVisible.value = true
+  } catch (e) {
+    ElMessage.error('检查失败：' + (e.response?.data?.detail || e.message))
   } finally {
     checking.value = false
   }

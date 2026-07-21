@@ -20,7 +20,13 @@ def run_migrations():
     _run_salary_export_migrations()
     _run_attendance_lock_migrations()
     _run_salary_split_migrations()
+    _run_salary_additional_fields_migration()
     _run_permission_split_migration()
+    _run_dashboard_leader_permission_migration()
+    _run_dashboard_work_view_permission_migration()
+    _run_salary_calculate_permission_split_migration()
+    _remove_duplicate_contract_warning_schedule()
+    _init_default_schedules()
 
 
 def _run_pg_migrations():
@@ -386,6 +392,34 @@ def _run_salary_split_migrations():
                 pass
 
 
+def _run_salary_additional_fields_migration():
+    """为薪资表添加补充字段：compensation_tax, posttax_adjustment_reason, holiday_red_packet_untaxed, data_completeness, missing_fields, social_insurance_personal"""
+    is_sqlite = "sqlite" in DATABASE_URL
+    additional_columns = [
+        ("posttax_adjustment_reason", "VARCHAR(200)"),
+        ("compensation_tax", "DECIMAL(10, 2)"),
+        ("holiday_red_packet_untaxed", "DECIMAL(10, 2)"),
+        ("data_completeness", "VARCHAR(20) DEFAULT '待完善'"),
+        ("missing_fields", "JSON"),
+        ("social_insurance_personal", "DECIMAL(10, 2)"),
+    ]
+
+    with engine.begin() as conn:
+        if is_sqlite:
+            result = conn.execute(text("PRAGMA table_info(salary_calculations)"))
+            existing_cols = {row[1] for row in result.fetchall()}
+            for col_name, col_def in additional_columns:
+                if col_name not in existing_cols:
+                    conn.execute(text(
+                        f"ALTER TABLE salary_calculations ADD COLUMN {col_name} {col_def}"
+                    ))
+        else:
+            for col_name, col_def in additional_columns:
+                conn.execute(text(
+                    f"ALTER TABLE salary_calculations ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
+                ))
+
+
 def _init_default_roles_and_permissions():
     """初始化预置角色和默认权限"""
     from app.core.database import SessionLocal
@@ -407,7 +441,7 @@ def _init_default_roles_and_permissions():
                 "is_preset": True,
                 "data_scope": "all",
                 "permissions": [
-                    "dashboard:view",
+                    "dashboard:view", "dashboard:work_view",
                     "employee:view", "employee:create", "employee:edit", "employee:export", "employee:import", "employee:sync",
                     "attendance:view", "attendance:create", "attendance:edit", "attendance:export", "attendance:import", "attendance:sync", "attendance:writeoff",
                     "performance:view", "performance:create", "performance:edit", "performance:export", "performance:import",
@@ -421,12 +455,12 @@ def _init_default_roles_and_permissions():
                 "is_preset": True,
                 "data_scope": "all",
                 "permissions": [
-                    "dashboard:view",
+                    "dashboard:view", "dashboard:work_view", "dashboard:leader_view",
                     "employee:view", "employee:create", "employee:edit", "employee:delete", "employee:export", "employee:import", "employee:sync",
                     "attendance:view", "attendance:create", "attendance:edit", "attendance:delete", "attendance:export", "attendance:import", "attendance:sync", "attendance:writeoff",
                     "performance:view", "performance:create", "performance:edit", "performance:export", "performance:import",
                     "insurance:view", "insurance:create", "insurance:edit", "insurance:delete", "insurance:export", "insurance:import", "insurance:template",
-                    "salary:view", "salary:create", "salary:edit", "salary:calculate", "salary:export",
+                    "salary:view", "salary:create", "salary:edit", "salary:delete", "salary:check", "salary:step_confirm", "salary:export",
                     "approval:view", "approval:approve",
                     "report:view", "report:export",
                 ]
@@ -437,12 +471,12 @@ def _init_default_roles_and_permissions():
                 "is_preset": True,
                 "data_scope": "all",
                 "permissions": [
-                    "dashboard:view",
+                    "dashboard:view", "dashboard:work_view", "dashboard:leader_view",
                     "employee:view", "employee:export",
                     "attendance:view", "attendance:export",
                     "performance:view",
                     "insurance:view",
-                    "salary:view", "salary:edit", "salary:calculate", "salary:tax_export", "salary:tax_import", "salary:travel_import", "salary:export",
+                    "salary:view", "salary:create", "salary:edit", "salary:delete", "salary:check", "salary:step_confirm", "salary:tax_export", "salary:tax_import", "salary:travel_import", "salary:export",
                     "approval:view",
                     "report:view", "report:export",
                 ]
@@ -453,7 +487,7 @@ def _init_default_roles_and_permissions():
                 "is_preset": True,
                 "data_scope": "self",
                 "permissions": [
-                    "dashboard:view",
+                    "dashboard:view", "dashboard:work_view",
                     "profile:view", "profile:edit",
                     "report:view_my_slip",
                 ]
@@ -464,7 +498,7 @@ def _init_default_roles_and_permissions():
                 "is_preset": True,
                 "data_scope": "self",
                 "permissions": [
-                    "dashboard:view",
+                    "dashboard:view", "dashboard:work_view",
                 ]
             }
         ]
@@ -536,6 +570,263 @@ def _run_permission_split_migration():
                     db.add(new_perm)
 
             db.delete(old_perm)
+
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _run_dashboard_leader_permission_migration():
+    """为已存在的人事主管和会计角色添加 dashboard:leader_view 权限"""
+    from app.core.database import SessionLocal
+    from app.models.models import SysRole, SysPermission
+
+    db = SessionLocal()
+    try:
+        leader_roles = ["人事主管", "会计"]
+        for role_name in leader_roles:
+            role = db.query(SysRole).filter(SysRole.name == role_name).first()
+            if not role:
+                continue
+            existing = db.query(SysPermission).filter(
+                SysPermission.role_id == role.id,
+                SysPermission.module == "dashboard",
+                SysPermission.action == "leader_view"
+            ).first()
+            if not existing:
+                perm = SysPermission(
+                    role_id=role.id,
+                    module="dashboard",
+                    action="leader_view"
+                )
+                db.add(perm)
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _init_default_schedules():
+    """初始化默认算薪日程配置"""
+    from app.core.database import SessionLocal
+    from app.models.models import SysSchedule
+
+    db = SessionLocal()
+    try:
+        existing_count = db.query(SysSchedule).count()
+        if existing_count > 0:
+            return
+
+        default_schedules = [
+            {
+                "name": "员工档案确认",
+                "day_of_month": 1,
+                "step_key": "employee",
+                "route": "/employees",
+                "icon": "User",
+                "color": "indigo",
+                "description": "确认当月在职员工信息",
+                "is_warning": False,
+                "warning_days": 2,
+                "sort_order": 1
+            },
+            {
+                "name": "考勤数据同步",
+                "day_of_month": 2,
+                "step_key": "attendance",
+                "route": "/attendance",
+                "icon": "Calendar",
+                "color": "green",
+                "description": "同步并确认上月考勤数据",
+                "is_warning": False,
+                "warning_days": 2,
+                "sort_order": 2
+            },
+            {
+                "name": "绩效评分录入",
+                "day_of_month": 3,
+                "step_key": "performance",
+                "route": "/performance",
+                "icon": "TrendCharts",
+                "color": "purple",
+                "description": "录入上月员工绩效系数",
+                "is_warning": False,
+                "warning_days": 2,
+                "sort_order": 3
+            },
+            {
+                "name": "社保公积金导入",
+                "day_of_month": 4,
+                "step_key": "insurance",
+                "route": "/insurance",
+                "icon": "CreditCard",
+                "color": "orange",
+                "description": "导入并确认社保公积金数据",
+                "is_warning": False,
+                "warning_days": 2,
+                "sort_order": 4
+            },
+            {
+                "name": "个税申报",
+                "day_of_month": 6,
+                "step_key": "tax",
+                "route": "/salary",
+                "icon": "Document",
+                "color": "amber",
+                "description": "导出报税模板并导入申报结果",
+                "is_warning": False,
+                "warning_days": 3,
+                "sort_order": 5
+            },
+            {
+                "name": "薪资计算",
+                "day_of_month": 8,
+                "step_key": "salary",
+                "route": "/salary",
+                "icon": "Money",
+                "color": "blue",
+                "description": "核算应发与实发工资",
+                "is_warning": False,
+                "warning_days": 2,
+                "sort_order": 6
+            },
+            {
+                "name": "两级审批",
+                "day_of_month": 10,
+                "step_key": "approval",
+                "route": "/approval",
+                "icon": "Checked",
+                "color": "cyan",
+                "description": "主管和经理两级审批",
+                "is_warning": False,
+                "warning_days": 2,
+                "sort_order": 7
+            },
+            {
+                "name": "工资发放",
+                "day_of_month": 15,
+                "step_key": "payment",
+                "route": "/reports",
+                "icon": "Wallet",
+                "color": "red",
+                "description": "导出报表完成工资发放",
+                "is_warning": False,
+                "warning_days": 3,
+                "sort_order": 8
+            }
+        ]
+
+        for sched_data in default_schedules:
+            sched = SysSchedule(**sched_data, is_enabled=True)
+            db.add(sched)
+
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _run_dashboard_work_view_permission_migration():
+    """为已存在的所有预设角色添加 dashboard:work_view 权限"""
+    from app.core.database import SessionLocal
+    from app.models.models import SysRole, SysPermission
+
+    db = SessionLocal()
+    try:
+        work_view_roles = ["人事专员", "人事主管", "会计", "普通员工", "访客"]
+        for role_name in work_view_roles:
+            role = db.query(SysRole).filter(SysRole.name == role_name).first()
+            if not role:
+                continue
+            existing = db.query(SysPermission).filter(
+                SysPermission.role_id == role.id,
+                SysPermission.module == "dashboard",
+                SysPermission.action == "work_view"
+            ).first()
+            if not existing:
+                perm = SysPermission(
+                    role_id=role.id,
+                    module="dashboard",
+                    action="work_view"
+                )
+                db.add(perm)
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _remove_duplicate_contract_warning_schedule():
+    """清理日程表：删除合同到期预警日程项，将所有日程的is_warning重置为False（预警为系统内置功能，日程只管理定期待办）"""
+    from app.core.database import SessionLocal
+    from app.models.models import SysSchedule
+
+    db = SessionLocal()
+    try:
+        scheds = db.query(SysSchedule).filter(SysSchedule.name == "合同到期预警").all()
+        for sched in scheds:
+            db.delete(sched)
+
+        updated = db.query(SysSchedule).filter(SysSchedule.is_warning == True).update({"is_warning": False})
+
+        if scheds or updated > 0:
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _run_salary_calculate_permission_split_migration():
+    """将旧的 salary:calculate 权限拆分为 salary:check（数据检查）和 salary:step_confirm（步骤确认），
+    同时为会计角色补充 salary:create 和 salary:delete 权限"""
+    from app.core.database import SessionLocal
+    from app.models.models import SysPermission, SysRole
+
+    db = SessionLocal()
+    try:
+        old_perms = db.query(SysPermission).filter(
+            SysPermission.module == "salary",
+            SysPermission.action == "calculate"
+        ).all()
+
+        new_actions = ["check", "step_confirm"]
+
+        for old_perm in old_perms:
+            for action in new_actions:
+                existing = db.query(SysPermission).filter(
+                    SysPermission.role_id == old_perm.role_id,
+                    SysPermission.module == "salary",
+                    SysPermission.action == action
+                ).first()
+                if not existing:
+                    new_perm = SysPermission(
+                        role_id=old_perm.role_id,
+                        module="salary",
+                        action=action
+                    )
+                    db.add(new_perm)
+            db.delete(old_perm)
+
+        accountant_role = db.query(SysRole).filter(SysRole.name == "会计").first()
+        if accountant_role:
+            for action in ["create", "delete"]:
+                existing = db.query(SysPermission).filter(
+                    SysPermission.role_id == accountant_role.id,
+                    SysPermission.module == "salary",
+                    SysPermission.action == action
+                ).first()
+                if not existing:
+                    db.add(SysPermission(
+                        role_id=accountant_role.id,
+                        module="salary",
+                        action=action
+                    ))
 
         db.commit()
     except Exception:

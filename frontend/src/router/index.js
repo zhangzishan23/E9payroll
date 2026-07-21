@@ -109,6 +109,12 @@ const routes = [
         name: 'SystemBackup',
         component: () => import('../views/system/BackupManagement.vue'),
         meta: { title: '数据备份', perm: 'system:backup' }
+      },
+      {
+        path: 'system/schedules',
+        name: 'SystemSchedules',
+        component: () => import('../views/system/ScheduleManagement.vue'),
+        meta: { title: '日程管理', perm: 'system:dict' }
       }
     ]
   }

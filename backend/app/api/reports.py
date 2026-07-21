@@ -239,7 +239,7 @@ class StepConfirmRequest(BaseModel):
     remark: Optional[str] = None
 
 
-@router.post("/steps/confirm", dependencies=[Depends(require_permission("salary:calculate"))])
+@router.post("/steps/confirm", dependencies=[Depends(require_permission("salary:step_confirm"))])
 def confirm_step(
     data: StepConfirmRequest,
     db: Session = Depends(get_db),

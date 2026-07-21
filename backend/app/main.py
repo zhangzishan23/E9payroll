@@ -7,7 +7,7 @@ from app.core.scheduler import start_scheduler, stop_scheduler
 from app.core.migrations import run_migrations
 from app.core.log_helper import set_current_request_ip
 from app.models import models
-from app.api import auth, employees, attendance, salary, approval, reports, system, performance, social_insurance, dingtalk
+from app.api import auth, employees, attendance, salary, approval, reports, system, performance, social_insurance, dingtalk, dashboard
 
 
 @asynccontextmanager
@@ -60,6 +60,7 @@ app.include_router(reports.router, prefix="/e9salary/api/reports", tags=["报表
 app.include_router(performance.router, prefix="/e9salary/api/performance", tags=["绩效管理"])
 app.include_router(social_insurance.router, prefix="/e9salary/api/social-insurance", tags=["社保公积金"])
 app.include_router(dingtalk.router, prefix="/e9salary/api/dingtalk", tags=["钉钉同步"])
+app.include_router(dashboard.router, prefix="/e9salary/api/dashboard", tags=["工作台"])
 app.include_router(system.router, prefix="/e9salary/api/system", tags=["系统管理"])
 
 

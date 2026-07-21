@@ -222,7 +222,7 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
         db.add(guest_role)
         db.flush()
 
-    required_perms = [("dashboard", "view")]
+    required_perms = [("dashboard", "view"), ("dashboard", "work_view")]
     for module, action in required_perms:
         existing = db.query(SysPermission).filter(
             SysPermission.role_id == guest_role.id,

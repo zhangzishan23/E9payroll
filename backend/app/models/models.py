@@ -528,6 +528,7 @@ class SalaryCalculation(Base):
     severance_pay = Column(DECIMAL(10, 2), nullable=True, comment="实发离职补偿金")
     year_end_bonus_untaxed = Column(DECIMAL(10, 2), nullable=True, comment="未报税年终奖")
     year_end_bonus_net = Column(DECIMAL(10, 2), nullable=True, comment="实发年终奖（扣税后）")
+    holiday_red_packet_untaxed = Column(DECIMAL(10, 2), nullable=True, comment="节假日红包未报税")
     actual_taxable = Column(DECIMAL(10, 2), nullable=True)
     special_deduction = Column(DECIMAL(10, 2), nullable=True)
     review_status = Column(String(20), default="待审核")
@@ -700,3 +701,57 @@ class SalaryPeriodStep(Base):
     __table_args__ = (
         {"comment": "月度算薪步骤确认状态"}
     )
+
+
+class SysSchedule(Base):
+    """系统日程配置表 — 预设每月算薪日程节点"""
+    __tablename__ = "sys_schedules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, comment="日程名称")
+    day_of_month = Column(Integer, nullable=False, comment="每月几号执行（1-31）")
+    step_key = Column(String(50), nullable=True, comment="关联步骤标识: employee/attendance/performance/insurance/tax/salary/approval/payment")
+    route = Column(String(200), nullable=True, comment="跳转路由")
+    icon = Column(String(50), nullable=True, comment="图标名称")
+    color = Column(String(20), nullable=True, default="blue", comment="主题颜色: blue/green/orange/red/purple")
+    description = Column(String(200), nullable=True, comment="描述说明")
+    is_warning = Column(Boolean, default=False, comment="是否为预警事项")
+    warning_days = Column(Integer, default=3, comment="提前多少天预警")
+    sort_order = Column(Integer, default=0, comment="排序序号")
+    is_enabled = Column(Boolean, default=True, comment="是否启用")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class SysUserFavorite(Base):
+    """用户常用功能表"""
+    __tablename__ = "sys_user_favorites"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("sys_users.id"), nullable=False, index=True)
+    module_key = Column(String(50), nullable=False, comment="模块标识")
+    name = Column(String(100), nullable=False, comment="功能名称")
+    route = Column(String(200), nullable=False, comment="路由路径")
+    icon = Column(String(50), nullable=True, comment="图标")
+    color = Column(String(20), nullable=True, comment="颜色")
+    sort_order = Column(Integer, default=0, comment="排序")
+    click_count = Column(Integer, default=0, comment="点击次数（用于自动推荐）")
+    is_auto = Column(Boolean, default=False, comment="是否自动添加（根据使用习惯）")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'route', name='uix_user_fav_route'),
+    )
+
+
+class SysUserPreference(Base):
+    """用户偏好设置表"""
+    __tablename__ = "sys_user_preferences"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("sys_users.id"), nullable=False, unique=True, index=True)
+    dashboard_view = Column(String(20), default="auto", comment="工作台视角: auto/employee/leader")
+    extra = Column(JSON, nullable=True, comment="其他偏好设置JSON")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

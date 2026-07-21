@@ -475,14 +475,14 @@ def download_import_template(
     ws.title = "员工档案导入模板"
 
     headers = [
-        "姓名*", "身份证号*", "费用负责人",
+        "姓名*", "费用负责人",
         "基本工资", "绩效标准", "餐补", "交通补贴", "通讯补贴", "电脑补贴", "住房补贴", "薪资生效日期"
     ]
 
     ws.append(headers)
 
     examples = [
-        "张三", "111111111111111111", "研发中心",
+        "张三", "研发中心",
         "8000", "2000", "300", "200", "100", "100", "500", "2024-01-15"
     ]
     ws.append(examples)
@@ -506,20 +506,26 @@ def download_import_template(
 
     note_start_row = 4
     notes = [
+        "⚠️ 填写说明（导入前请将此区域所有说明行删除）：",
+        "",
         "填写说明：",
         "1. 本模板仅用于补充钉钉同步不到的信息，员工必须先从钉钉同步后再导入",
-        "2. 带 * 号的为必填项：姓名、身份证号用于匹配已有员工",
+        "2. 带 * 号的为必填项：姓名用于匹配已有员工",
         "3. 姓名、性别、手机号、部门、职位、入职时间、家庭住址、银行卡等所有基本信息",
         "   均会在「同步钉钉」时自动获取，无需在此模板填写",
-        "4. 「费用负责人」用于费用分摊归属，请按实际情况填写",
-        "5. 工资金额请填写数字，不要包含货币符号或千分位",
-        "6. 填写了薪资数据时，「薪资生效日期」为必填；仅填费用负责人则无需填写",
-        "7. 日期格式统一为 YYYY-MM-DD，如 2024-01-15",
-        "8. 系统根据身份证号匹配已有员工，不会创建新员工"
+        "4. 工资金额请填写数字，不要包含货币符号或千分位",
+        "5. 填写了薪资数据时，「薪资生效日期」为必填；仅填费用负责人则无需填写",
+        "6. 日期格式统一为 YYYY-MM-DD，如 2024-01-15",
+        "7. 系统根据姓名匹配已有员工，不会创建新员工"
     ]
+    from openpyxl.styles import Font as StFont
+    warning_font = StFont(color="FF0000", bold=True, size=12)
     for i, note in enumerate(notes):
         cell = ws.cell(row=note_start_row + i, column=1, value=note)
-        cell.font = note_font
+        if i == 0:
+            cell.font = warning_font
+        else:
+            cell.font = note_font
 
     output = BytesIO()
     wb.save(output)
@@ -559,8 +565,6 @@ async def import_employees(
     for i, h in enumerate(headers):
         if "姓名" in h:
             header_map["name"] = i
-        elif "身份证" in h or "证件号" in h:
-            header_map["id_card"] = i
         elif "成本" in h or "费用负责人" in h:
             header_map["cost_owner"] = i
         elif "基本工资" in h:
@@ -580,10 +584,10 @@ async def import_employees(
         elif "薪资生效" in h or "生效日期" in h:
             header_map["salary_effective_date"] = i
 
-    required = ["name", "id_card"]
+    required = ["name"]
     missing = [k for k in required if k not in header_map]
     if missing:
-        name_map = {"name": "姓名", "id_card": "身份证号"}
+        name_map = {"name": "姓名"}
         missing_names = [name_map.get(k, k) for k in missing]
         raise HTTPException(status_code=400, detail=f"Excel 表头缺少必要列：{', '.join(missing_names)}")
 
@@ -602,10 +606,9 @@ async def import_employees(
     for row_idx, row in enumerate(rows[1:], start=2):
         try:
             name = str(row[header_map["name"]]).strip() if row[header_map["name"]] else ""
-            id_card = str(row[header_map["id_card"]]).strip() if row[header_map["id_card"]] else ""
             
-            if not name or not id_card:
-                errors.append(f"第{row_idx}行：姓名、身份证号不能为空")
+            if not name:
+                errors.append(f"第{row_idx}行：姓名不能为空")
                 continue
 
             cost_owner = None
@@ -637,9 +640,9 @@ async def import_employees(
                     errors.append(f"第{row_idx}行：薪资生效日期格式错误「{salary_effective_str}」，应为 YYYY-MM-DD")
                     continue
 
-            existing = db.query(Employee).filter(Employee.id_card == id_card).first()
+            existing = db.query(Employee).filter(Employee.name == name).first()
             if not existing:
-                errors.append(f"第{row_idx}行：身份证号「{id_card}」（{name}）在系统中不存在，请先从钉钉同步员工后再导入")
+                errors.append(f"第{row_idx}行：员工「{name}」在系统中不存在，请先从钉钉同步员工后再导入")
                 continue
 
             if cost_owner:

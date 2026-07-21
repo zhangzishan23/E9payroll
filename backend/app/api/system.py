@@ -27,7 +27,9 @@ PERMISSION_MODULES = [
         "key": "dashboard",
         "label": "工作台",
         "actions": [
-            {"key": "view", "label": "查看工作台"}
+            {"key": "view", "label": "查看工作台"},
+            {"key": "work_view", "label": "工作视角/智能工作台"},
+            {"key": "leader_view", "label": "管理视角/数据看板"}
         ]
     },
     {
@@ -87,10 +89,11 @@ PERMISSION_MODULES = [
         "label": "薪资计算",
         "actions": [
             {"key": "view", "label": "查看薪资"},
-            {"key": "create", "label": "生成记录"},
+            {"key": "create", "label": "新增记录"},
             {"key": "edit", "label": "编辑薪资"},
-            {"key": "delete", "label": "删除记录"},
-            {"key": "calculate", "label": "执行计算"},
+            {"key": "delete", "label": "删除薪资"},
+            {"key": "check", "label": "数据检查"},
+            {"key": "step_confirm", "label": "步骤确认"},
             {"key": "tax_export", "label": "导出报税模板"},
             {"key": "tax_import", "label": "导入个税申报结果"},
             {"key": "travel_import", "label": "导入临时性差旅补贴"},

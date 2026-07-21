@@ -11,12 +11,6 @@
       <el-button type="primary" :icon="Plus" size="small" @click="showDialog(null)" v-permission="'attendance:create'">录入</el-button>
       <el-button :icon="Upload" size="small" @click="showImport" v-permission="'attendance:import'">导入</el-button>
       <el-button type="success" :icon="Download" size="small" @click="handleExport" v-permission="'attendance:export'">导出</el-button>
-      <el-button type="warning" size="small" :loading="syncingAttendance" @click="syncAttendance" v-permission="'attendance:sync'">
-        <el-icon class="mr-1"><Refresh /></el-icon>同步钉钉
-      </el-button>
-      <el-button type="success" size="small" :loading="checkingWriteOff" @click="openMissedPunchCheck" v-permission="'attendance:writeoff'">
-        <el-icon class="mr-1"><Check /></el-icon>缺卡核销
-      </el-button>
       <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete" v-permission="'attendance:delete'">
         删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
       </el-button>
@@ -46,6 +40,14 @@
         </el-button>
         <el-button size="small" :disabled="changedSet.size === 0" @click="cancelEdits">取消</el-button>
       </template>
+      <div class="ml-auto flex items-center gap-2">
+        <el-button type="success" size="small" :loading="checkingWriteOff" @click="openMissedPunchCheck" v-permission="'attendance:writeoff'">
+          <el-icon class="mr-1"><Check /></el-icon>缺卡核销
+        </el-button>
+        <el-button type="success" class="!text-base !px-5 !py-4 !rounded-lg" :loading="syncingAttendance" @click="syncAttendance" v-permission="'attendance:sync'">
+          <el-icon class="!text-lg mr-1"><Refresh /></el-icon>同步钉钉
+        </el-button>
+      </div>
     </div>
 
     <el-alert

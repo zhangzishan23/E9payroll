@@ -10,6 +10,8 @@ import time
 import logging
 import calendar
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from typing import Optional
 import httpx
@@ -32,13 +34,15 @@ _token_cache: dict = {
     "access_token": None,
     "expires_at": 0,  # Unix timestamp
 }
+_token_lock = threading.Lock()
 
 
 def _get_access_token() -> str:
-    """获取旧版 access_token（用于考勤/用户详情等旧版API），带缓存"""
+    """获取旧版 access_token（用于考勤/用户详情等旧版API），带缓存（线程安全）"""
     now = time.time()
-    if _token_cache["access_token"] and _token_cache["expires_at"] > now + 60:
-        return _token_cache["access_token"]
+    with _token_lock:
+        if _token_cache["access_token"] and _token_cache["expires_at"] > now + 60:
+            return _token_cache["access_token"]
 
     url = "https://oapi.dingtalk.com/gettoken"
     params = {"appkey": DINGTALK_CLIENT_ID, "appsecret": DINGTALK_CLIENT_SECRET}
@@ -48,10 +52,70 @@ def _get_access_token() -> str:
     if data.get("errcode") != 0:
         raise Exception(f"获取钉钉access_token失败: {data.get('errmsg', '未知错误')}")
 
-    _token_cache["access_token"] = data["access_token"]
-    _token_cache["expires_at"] = now + data.get("expires_in", 7200)
+    with _token_lock:
+        _token_cache["access_token"] = data["access_token"]
+        _token_cache["expires_at"] = now + data.get("expires_in", 7200)
     logger.info("钉钉 access_token 已刷新，有效期至 %s", datetime.fromtimestamp(_token_cache["expires_at"]))
     return _token_cache["access_token"]
+
+
+# ========== 后台同步任务状态管理 ==========
+_sync_tasks: dict = {}
+_sync_tasks_lock = threading.Lock()
+
+
+def _create_sync_task(task_type: str, period: str = None) -> str:
+    """创建同步任务，返回task_id"""
+    import uuid
+    task_id = str(uuid.uuid4())[:8]
+    with _sync_tasks_lock:
+        _sync_tasks[task_id] = {
+            "task_id": task_id,
+            "type": task_type,
+            "period": period,
+            "status": "running",
+            "progress": 0,
+            "total": 0,
+            "message": "正在初始化...",
+            "result": None,
+            "errors": [],
+            "started_at": datetime.now(),
+            "finished_at": None,
+        }
+    return task_id
+
+
+def _update_sync_task(task_id: str, **kwargs):
+    """更新同步任务状态"""
+    with _sync_tasks_lock:
+        if task_id in _sync_tasks:
+            _sync_tasks[task_id].update(kwargs)
+
+
+def get_sync_task_status(task_id: str) -> Optional[dict]:
+    """查询同步任务状态"""
+    with _sync_tasks_lock:
+        task = _sync_tasks.get(task_id)
+        if task:
+            return dict(task)
+    return None
+
+
+def _finish_sync_task(task_id: str, status: str, result: dict = None, errors: list = None):
+    """标记同步任务完成"""
+    with _sync_tasks_lock:
+        if task_id in _sync_tasks:
+            _sync_tasks[task_id]["status"] = status
+            _sync_tasks[task_id]["progress"] = _sync_tasks[task_id]["total"]
+            _sync_tasks[task_id]["result"] = result
+            _sync_tasks[task_id]["errors"] = errors or []
+            _sync_tasks[task_id]["finished_at"] = datetime.now()
+            if status == "success":
+                _sync_tasks[task_id]["message"] = "同步完成"
+            elif status == "partial":
+                _sync_tasks[task_id]["message"] = f"同步完成，但有{len(errors or [])}个错误"
+            else:
+                _sync_tasks[task_id]["message"] = "同步失败"
 
 
 # ========== 同步日志 ==========

@@ -15,11 +15,6 @@
         <el-button :icon="Upload" size="small" @click="showImport" v-permission="'employee:import'">导入</el-button>
         <el-button type="info" :icon="Download" size="small" @click="downloadTemplate" v-permission="'employee:import'">下载模板</el-button>
         <el-button type="success" :icon="Download" size="small" @click="handleExport" v-permission="'employee:export'">导出</el-button>
-        <el-tooltip content="一键从钉钉同步部门和员工信息（已禁用的部门不同步）" placement="bottom">
-          <el-button type="warning" size="small" :loading="syncingRoster" @click="syncRoster" v-permission="'employee:sync'">
-            <el-icon class="mr-1"><Refresh /></el-icon>同步钉钉
-          </el-button>
-        </el-tooltip>
         <el-button type="danger" :icon="Delete" size="small" :disabled="!selectedRows.length" @click="handleBatchDelete" v-permission="'employee:delete'">
           删除{{ selectedRows.length ? `(${selectedRows.length})` : '' }}
         </el-button>
@@ -51,6 +46,13 @@
           </el-button>
           <el-button size="small" :disabled="changedSet.size === 0" @click="cancelEdits">取消</el-button>
         </template>
+        <div class="ml-auto">
+          <el-tooltip content="一键从钉钉同步部门和员工信息（已禁用的部门不同步）" placement="bottom">
+            <el-button type="success" class="!text-base !px-5 !py-4 !rounded-lg" :loading="syncingRoster" @click="syncRoster" v-permission="'employee:sync'">
+              <el-icon class="!text-lg mr-1"><Refresh /></el-icon>同步钉钉
+            </el-button>
+          </el-tooltip>
+        </div>
       </div>
 
       <el-table :data="employees" border stripe v-loading="loading" class="w-full" :max-height="tableMaxHeight" @selection-change="handleSelectionChange">
@@ -515,7 +517,7 @@
         <div class="text-sm text-gray-500">
           <p class="mb-1">请先下载导入模板，按模板格式填写数据后再导入。</p>
           <p class="text-orange-600 font-medium">注意：本模板仅用于补充钉钉同步不到的信息（费用负责人、薪资数据），员工必须先从钉钉同步后再导入。</p>
-          <p>必填项：姓名*、身份证号*；填写薪资数据时需同时填写「薪资生效日期」</p>
+          <p>必填项：姓名*；填写薪资数据时需同时填写「薪资生效日期」</p>
         </div>
         <div v-if="importResult" class="mt-3">
           <el-alert
