@@ -29,8 +29,6 @@ services:
     container_name: e9-salary-backend
     env_file:
       - .env
-    environment:
-      - ROUTE_PREFIX=${ROUTE_PREFIX}
     volumes:
       - ./data/app:${DATA_DIR}
       - ./backups:${BACKUP_DIR}
