@@ -257,7 +257,9 @@ async function fetchPermModules() {
         { key: 'view', label: '查看审批' }, { key: 'submit', label: '提交审批' }, { key: 'approve', label: '审核操作' }
       ]},
       { key: 'report', label: '报表导出', actions: [
-        { key: 'view', label: '查看报表' }, { key: 'export', label: '导出报表' }
+        { key: 'view', label: '查看报表' }, { key: 'export', label: '导出报表' },
+        { key: 'contract_warning_view', label: '查看合同到期预警' },
+        { key: 'contract_warning_export', label: '导出合同到期预警' }
       ]},
       { key: 'system', label: '系统管理', actions: [
         { key: 'user', label: '用户管理' }, { key: 'role', label: '角色权限' },

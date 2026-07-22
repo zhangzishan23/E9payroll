@@ -27,6 +27,8 @@ def run_migrations():
     _run_salary_calculate_permission_split_migration()
     _run_remove_salary_create_permission_migration()
     _run_remove_invalid_permissions_migration()
+    _run_permission_action_length_migration()
+    _add_contract_warning_permissions_to_presets()
     _remove_duplicate_contract_warning_schedule()
     _init_default_schedules()
 
@@ -448,7 +450,7 @@ def _init_default_roles_and_permissions():
                     "attendance:view", "attendance:create", "attendance:edit", "attendance:export", "attendance:import", "attendance:sync", "attendance:writeoff",
                     "performance:view", "performance:create", "performance:edit", "performance:export", "performance:import",
                     "insurance:view", "insurance:create", "insurance:edit", "insurance:export", "insurance:import", "insurance:template",
-                    "report:view", "report:export",
+                    "report:view", "report:export", "report:contract_warning_view", "report:contract_warning_export",
                 ]
             },
             {
@@ -464,7 +466,7 @@ def _init_default_roles_and_permissions():
                     "insurance:view", "insurance:create", "insurance:edit", "insurance:delete", "insurance:export", "insurance:import", "insurance:template",
                     "salary:view", "salary:edit", "salary:delete", "salary:check", "salary:step_confirm", "salary:export",
                     "approval:view", "approval:approve",
-                    "report:view", "report:export",
+                    "report:view", "report:export", "report:contract_warning_view", "report:contract_warning_export",
                 ]
             },
             {
@@ -480,7 +482,7 @@ def _init_default_roles_and_permissions():
                     "insurance:view",
                     "salary:view", "salary:edit", "salary:delete", "salary:check", "salary:step_confirm", "salary:tax_export", "salary:tax_import", "salary:travel_import", "salary:export",
                     "approval:view",
-                    "report:view", "report:export",
+                    "report:view", "report:export", "report:contract_warning_view", "report:contract_warning_export",
                 ]
             },
             {
@@ -875,6 +877,54 @@ def _run_remove_invalid_permissions_migration():
             total_deleted += deleted
         if total_deleted > 0:
             db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _run_permission_action_length_migration():
+    """扩展 sys_permissions.action 字段长度从 20 到 50，支持更长的权限标识"""
+    is_sqlite = "sqlite" in DATABASE_URL
+    with engine.begin() as conn:
+        if is_sqlite:
+            pass
+        else:
+            conn.execute(text(
+                "ALTER TABLE sys_permissions ALTER COLUMN action TYPE VARCHAR(50)"
+            ))
+
+
+def _add_contract_warning_permissions_to_presets():
+    """为人事主管和会计角色补充合同到期预警相关权限"""
+    from app.core.database import SessionLocal
+    from app.models.models import SysRole, SysPermission
+
+    db = SessionLocal()
+    try:
+        preset_roles = ["人事专员", "人事主管", "会计"]
+        new_perms = [
+            ("report", "contract_warning_view"),
+            ("report", "contract_warning_export"),
+        ]
+        for role_name in preset_roles:
+            role = db.query(SysRole).filter(SysRole.name == role_name).first()
+            if not role:
+                continue
+            for module, action in new_perms:
+                existing = db.query(SysPermission).filter(
+                    SysPermission.role_id == role.id,
+                    SysPermission.module == module,
+                    SysPermission.action == action
+                ).first()
+                if not existing:
+                    perm = SysPermission(
+                        role_id=role.id,
+                        module=module,
+                        action=action
+                    )
+                    db.add(perm)
+        db.commit()
     except Exception:
         db.rollback()
     finally:

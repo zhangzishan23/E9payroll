@@ -623,6 +623,10 @@ def update_role(role_id: int, role: RoleUpdate, db: Session = Depends(get_db), c
     if not db_role:
         raise HTTPException(status_code=404, detail="角色不存在")
     update_data = role.model_dump(exclude_unset=True)
+    if "name" in update_data and update_data["name"] != db_role.name:
+        existing = db.query(SysRole).filter(SysRole.name == update_data["name"], SysRole.id != role_id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"角色 [{update_data['name']}] 已存在")
     for key, value in update_data.items():
         setattr(db_role, key, value)
     db.commit()
@@ -684,8 +688,17 @@ def assign_permissions(role_id: int, data: PermissionAssign, db: Session = Depen
     if not db_role:
         raise HTTPException(status_code=404, detail="角色不存在")
     db.query(SysPermission).filter(SysPermission.role_id == role_id).delete()
+    seen = set()
     for perm in data.permissions:
-        db.add(SysPermission(role_id=role_id, module=perm["module"], action=perm["action"]))
+        module = perm.get("module", "").strip()
+        action = perm.get("action", "").strip()
+        if not module or not action:
+            continue
+        perm_key = f"{module}:{action}"
+        if perm_key in seen:
+            continue
+        seen.add(perm_key)
+        db.add(SysPermission(role_id=role_id, module=module, action=action))
     db.commit()
     write_log(db, "data_change", current_user.id, current_user.username, "system", "edit", f"配置角色权限: {db_role.name}")
     return {"message": "权限配置成功"}

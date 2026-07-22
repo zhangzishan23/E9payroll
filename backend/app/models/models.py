@@ -44,7 +44,7 @@ class SysPermission(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     role_id = Column(Integer, ForeignKey("sys_roles.id"), nullable=False)
     module = Column(String(50), nullable=False)
-    action = Column(String(20), nullable=False)
+    action = Column(String(50), nullable=False)
 
 
 class SysDictBase(Base):
