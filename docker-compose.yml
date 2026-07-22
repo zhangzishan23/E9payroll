@@ -29,6 +29,8 @@ services:
     container_name: e9-salary-backend
     env_file:
       - .env
+    environment:
+      - ROUTE_PREFIX=${ROUTE_PREFIX}
     volumes:
       - ./data/app:${DATA_DIR}
       - ./backups:${BACKUP_DIR}
@@ -49,6 +51,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - VITE_ROUTE_PREFIX=${ROUTE_PREFIX}
     container_name: e9-salary-frontend
     ports:
       - "${FRONTEND_DOCKER_PORT}:${FRONTEND_INTERNAL_PORT}"

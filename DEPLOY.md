@@ -41,12 +41,14 @@ docker-compose up -d --build
 
 ### 3. 访问系统
 
-| 服务 | 地址 |
-|------|------|
-| 前端页面 | http://localhost:8080/e9salary/ |
-| 后端 API | http://localhost:8001 |
-| API 文档 | http://localhost:8001/e9salary/docs |
-| 数据库（外部） | localhost:5433 |
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| 前端页面 | http://localhost:8080/e9salary/ | 带项目前缀，多项目共存不冲突 |
+| API 文档（通过前端Nginx） | http://localhost:8080/e9salary/docs | 推荐，带前缀 |
+| API 文档（直连后端） | http://localhost:8001/docs | 仅内部调试用 |
+| 数据库（外部） | localhost:5433 | |
+
+> **注意**：所有外部访问请通过前端 Nginx（8080端口）并使用 `/e9salary/` 前缀，这样服务器上多个项目可以共存不冲突。
 
 默认登录账号：
 - 用户名：`admin`
@@ -201,3 +203,68 @@ docker-compose exec backend python init_admin.py
 ```
 
 此命令会检测 admin 用户是否存在，不存在则创建，存在则跳过。
+
+## 服务器多项目部署（外层Nginx反向代理）
+
+如果服务器上部署多个项目，需要用外层 Nginx 统一监听 80/443 端口，按域名或路径分发。
+
+### 方式一：按域名区分（推荐）
+
+每个项目一个域名，Nginx 配置示例：
+
+```nginx
+server {
+    listen 80;
+    server_name salary.yourdomain.com;
+
+    client_max_body_size 50m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+> 注意：按域名区分时，容器内仍使用 `/e9salary/` 前缀，访问地址为 `http://salary.yourdomain.com/e9salary/`。如果希望域名直接访问不带前缀，可以把 `.env` 中 `ROUTE_PREFIX` 改为空，并重新构建镜像。
+
+### 方式二：按路径区分
+
+多个项目共用一个域名，用路径区分：
+
+```nginx
+server {
+    listen 80;
+    server_name yourserver.com;
+
+    client_max_body_size 50m;
+
+    location /e9salary/ {
+        proxy_pass http://127.0.0.1:8080/e9salary/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Prefix /e9salary;
+    }
+}
+```
+
+访问地址：`http://yourserver.com/e9salary/`
+
+## 前缀配置说明
+
+| 场景 | ROUTE_PREFIX | 访问地址 |
+|------|-------------|---------|
+| 本地开发（start.bat） | 自动设为空 | http://localhost:5180/ |
+| Docker 部署（单项目/端口访问） | `/e9salary` | http://server:8080/e9salary/ |
+| Docker 部署（域名直接访问，不想带前缀） | 留空 | http://salary.domain.com/ |
+
+修改前缀后需要重新构建镜像：
+
+```bash
+docker-compose up -d --build
+```

@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from app.core.config import CORS_ORIGINS
+from app.core.config import CORS_ORIGINS, ROUTE_PREFIX
 from app.core.database import engine, Base
 from app.core.scheduler import start_scheduler, stop_scheduler
 from app.core.migrations import run_migrations
@@ -27,6 +27,7 @@ app = FastAPI(
     docs_url="/docs",
     openapi_url="/openapi.json",
     redoc_url="/redoc",
+    root_path=ROUTE_PREFIX,
 )
 
 app.add_middleware(

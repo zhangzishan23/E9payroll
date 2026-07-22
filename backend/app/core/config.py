@@ -16,7 +16,7 @@ for _env_path in _env_paths:
         load_dotenv(_env_path)
         break
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./e9_salary.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://e9salary:e9salary2024@localhost:5432/e9_salary")
 SECRET_KEY = os.getenv("SECRET_KEY", "e9-salary-dev-secret-key-change-in-production")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
@@ -35,6 +35,13 @@ DINGTALK_CLIENT_ID = os.getenv("DINGTALK_CLIENT_ID", "")
 DINGTALK_CLIENT_SECRET = os.getenv("DINGTALK_CLIENT_SECRET", "")
 DINGTALK_AGENT_ID = os.getenv("DINGTALK_AGENT_ID", "")
 DINGTALK_ROBOT_CODE = os.getenv("DINGTALK_ROBOT_CODE", "")
+
+# 路由前缀（服务器多项目部署时使用，如 /e9salary；本地开发留空）
+ROUTE_PREFIX = os.getenv("ROUTE_PREFIX", "").strip()
+if ROUTE_PREFIX and not ROUTE_PREFIX.startswith("/"):
+    ROUTE_PREFIX = "/" + ROUTE_PREFIX
+if ROUTE_PREFIX.endswith("/"):
+    ROUTE_PREFIX = ROUTE_PREFIX[:-1]
 
 # 时区
 TZ = os.getenv("TZ", "Asia/Shanghai")

@@ -1,8 +1,11 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { withPrefix } from '../utils/route'
+
+const API_BASE_URL = withPrefix('/api')
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE_URL,
   timeout: 120000
 })
 
@@ -38,11 +41,12 @@ api.interceptors.response.use(
       ElMessage({ message: msg, type: 'error', duration: 6000 })
     }
     if (error.response?.status === 401) {
-      const isLoginPage = window.location.pathname === '/login'
+      const loginPath = withPrefix('/login')
+      const isLoginPage = window.location.pathname === loginPath
       if (!isLoginPage) {
         localStorage.removeItem('token')
         localStorage.removeItem('user')
-        window.location.href = '/login'
+        window.location.href = loginPath
       }
     }
     return Promise.reject(error)
