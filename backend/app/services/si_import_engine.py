@@ -20,12 +20,12 @@ from sqlalchemy.orm import Session
 from app.models.models import (
     SocialInsurance, Employee, SiImportTemplate, SiImportLog
 )
+from app.core.config import TEMP_DIR as CONFIG_TEMP_DIR
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-TEMP_DIR = PROJECT_ROOT / "temp" / "si_import"
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
+SI_TEMP_DIR = CONFIG_TEMP_DIR / "si_import"
+SI_TEMP_DIR.mkdir(parents=True, exist_ok=True)
 BATCH_EXPIRE_SECONDS = 3600
 
 # ── 所有可映射字段及其中文标签 ──────────────────────────────────────────
@@ -2264,9 +2264,9 @@ class BatchFileInfo:
 def _cleanup_expired_batches():
     """清理过期的临时批次文件"""
     now = time.time()
-    if not TEMP_DIR.exists():
+    if not SI_TEMP_DIR.exists():
         return
-    for batch_dir in TEMP_DIR.iterdir():
+    for batch_dir in SI_TEMP_DIR.iterdir():
         if not batch_dir.is_dir():
             continue
         try:
@@ -2294,7 +2294,7 @@ def save_batch_files(period: str, files: List, file_paths: Optional[List[str]] =
     _cleanup_expired_batches()
 
     batch_id = str(uuid.uuid4())
-    batch_dir = TEMP_DIR / batch_id
+    batch_dir = SI_TEMP_DIR / batch_id
     batch_dir.mkdir(parents=True, exist_ok=True)
 
     file_infos = []
@@ -2342,7 +2342,7 @@ def precheck_batch(db: Session, batch_id: str) -> Dict:
     返回: {batch_id, matched_files: [...], unmatched_files: [...], all_files: [...]}
     unmatched_files 中的每个条目可能包含 sheet_name 字段，标识需要配置模板的具体工作表
     """
-    batch_dir = TEMP_DIR / batch_id
+    batch_dir = SI_TEMP_DIR / batch_id
     meta_path = batch_dir / "meta.json"
     if not meta_path.exists():
         raise ValueError(f"批次 {batch_id} 不存在或已过期")
@@ -2514,7 +2514,7 @@ def auto_detect_from_batch(
         file_index: 文件索引
         sheet_name: Excel工作表名称，None则使用默认工作表
     """
-    batch_dir = TEMP_DIR / batch_id
+    batch_dir = SI_TEMP_DIR / batch_id
     meta_path = batch_dir / "meta.json"
     if not meta_path.exists():
         raise ValueError(f"批次 {batch_id} 不存在或已过期")
@@ -2549,7 +2549,7 @@ def run_smart_import_from_batch(
     username: str,
 ) -> ImportResult:
     """从临时批次目录读取文件并执行智能导入"""
-    batch_dir = TEMP_DIR / batch_id
+    batch_dir = SI_TEMP_DIR / batch_id
     meta_path = batch_dir / "meta.json"
     if not meta_path.exists():
         raise ValueError(f"批次 {batch_id} 不存在或已过期")
@@ -2599,7 +2599,7 @@ def run_smart_import_from_batch(
 
 def cleanup_batch(batch_id: str):
     """清理批次临时文件"""
-    batch_dir = TEMP_DIR / batch_id
+    batch_dir = SI_TEMP_DIR / batch_id
     if batch_dir.exists():
         shutil.rmtree(batch_dir, ignore_errors=True)
 
@@ -2611,7 +2611,7 @@ def create_batch_from_unmatched(original_batch_id: str, failed_filenames: List[s
     """
     _cleanup_expired_batches()
 
-    src_dir = TEMP_DIR / original_batch_id
+    src_dir = SI_TEMP_DIR / original_batch_id
     src_meta_path = src_dir / "meta.json"
     if not src_meta_path.exists():
         raise ValueError(f"原批次 {original_batch_id} 不存在或已过期")
@@ -2623,7 +2623,7 @@ def create_batch_from_unmatched(original_batch_id: str, failed_filenames: List[s
     failed_set = set(failed_filenames)
 
     new_batch_id = str(uuid.uuid4())
-    new_dir = TEMP_DIR / new_batch_id
+    new_dir = SI_TEMP_DIR / new_batch_id
     new_dir.mkdir(parents=True, exist_ok=True)
 
     new_file_infos = []

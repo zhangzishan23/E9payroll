@@ -37,7 +37,7 @@
       <span>提示：不同城市的社保公积金基数、比例不同（北京/广州/邯郸/上海），请按各公司实际情况填写。</span>
     </div>
 
-    <el-table :data="filteredRecords" border stripe v-loading="loading" :max-height="tableMaxHeight" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
+    <el-table :data="filteredRecords" border stripe v-loading="loading" :max-height="tableMaxHeight" table-layout="fixed" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
       <el-table-column v-if="isSiColumnVisible('selection')" type="selection" width="55" :selectable="row => row.id != null" />
       <el-table-column v-if="isSiColumnVisible('index')" type="index" label="序号" width="50" fixed="left" />
       <el-table-column v-if="isSiColumnVisible('employee_name')" prop="employee_name" label="员工姓名" width="80" fixed="left" />

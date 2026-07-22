@@ -70,7 +70,7 @@
           {{ formulaVisible ? '收起公式' : '查看计算公式' }}
         </el-button>
       </div>
-      <el-table :data="results" border stripe :max-height="tableMaxHeight" v-loading="loading" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
+      <el-table :data="results" border stripe :max-height="tableMaxHeight" v-loading="loading" table-layout="fixed" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
         <el-table-column v-if="isSalaryColumnVisible('__selection')" type="selection" width="55" />
         <el-table-column v-if="isSalaryColumnVisible('__index')" type="index" label="序号" width="50" fixed="left" />
         <el-table-column

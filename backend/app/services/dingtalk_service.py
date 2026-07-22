@@ -16,7 +16,7 @@ from datetime import datetime, date, timedelta
 from typing import Optional
 import httpx
 
-from app.core.config import DINGTALK_CLIENT_ID, DINGTALK_CLIENT_SECRET, DINGTALK_AGENT_ID, DINGTALK_SYNC_DEPT_NAMES
+from app.core.config import DINGTALK_CLIENT_ID, DINGTALK_CLIENT_SECRET, DINGTALK_AGENT_ID
 from app.models.models import SysDictBase
 from app.services import work_calendar as work_cal
 

@@ -120,7 +120,7 @@ const routes = [
 ]
 
 const router = createRouter({
-  history: createWebHistory('/e9salary/'),
+  history: createWebHistory('/'),
   routes
 })
 

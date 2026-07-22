@@ -50,7 +50,7 @@
     <div class="mb-3">
       <h4 class="text-md font-semibold text-gray-700">审批记录</h4>
     </div>
-    <el-table :data="records" border stripe v-loading="loading" @selection-change="handleSelectionChange">
+    <el-table :data="records" border stripe v-loading="loading" table-layout="fixed" @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="55" />
       <el-table-column prop="approval_no" label="审批流水号" width="180" />
       <el-table-column prop="submitter_name" label="提交人" width="100" />

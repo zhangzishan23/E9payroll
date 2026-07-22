@@ -12,7 +12,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from app.core.database import get_db
 from app.core.log_helper import write_log
-from app.core.config import DATABASE_URL
+from app.core.config import DATABASE_URL, BACKUP_DIR
 from app.core.security import get_password_hash
 from app.models.models import (
     SysUser, SysRole, SysUserRole, SysPermission, SysDictBase, SysLog, Employee,
@@ -855,8 +855,8 @@ def _parse_db_url() -> dict:
 
 
 def _get_backup_dir() -> Path:
-    """获取备份目录路径"""
-    return Path(__file__).parent.parent.parent.parent / "backups"
+    """获取备份目录路径（统一从配置读取）"""
+    return BACKUP_DIR
 
 
 @router.get("/backups")

@@ -2,7 +2,7 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
 const api = axios.create({
-  baseURL: '/e9salary/api',
+  baseURL: '/api',
   timeout: 120000
 })
 
@@ -38,11 +38,11 @@ api.interceptors.response.use(
       ElMessage({ message: msg, type: 'error', duration: 6000 })
     }
     if (error.response?.status === 401) {
-      const isLoginPage = window.location.pathname === '/e9salary/login' || window.location.pathname === '/login'
+      const isLoginPage = window.location.pathname === '/login'
       if (!isLoginPage) {
         localStorage.removeItem('token')
         localStorage.removeItem('user')
-        window.location.href = '/e9salary/login'
+        window.location.href = '/login'
       }
     }
     return Promise.reject(error)

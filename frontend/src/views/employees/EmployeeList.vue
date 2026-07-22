@@ -55,7 +55,7 @@
         </div>
       </div>
 
-      <el-table :data="employees" border stripe v-loading="loading" class="w-full" :max-height="tableMaxHeight" @selection-change="handleSelectionChange">
+      <el-table :data="employees" border stripe v-loading="loading" class="w-full" :max-height="tableMaxHeight" table-layout="fixed" @selection-change="handleSelectionChange">
         <el-table-column v-if="isColumnVisible('selection')" type="selection" width="55" />
         <el-table-column v-if="isColumnVisible('employee_no')" prop="employee_no" label="员工编号" width="100" fixed />
         <el-table-column v-if="isColumnVisible('name')" prop="name" label="姓名" width="100" fixed />

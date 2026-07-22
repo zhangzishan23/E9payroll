@@ -30,7 +30,7 @@
       </template>
     </div>
 
-    <el-table :data="filteredRecords" border stripe v-loading="loading" max-height="600" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
+    <el-table :data="filteredRecords" border stripe v-loading="loading" max-height="600" table-layout="fixed" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
       <el-table-column v-if="isColumnVisible('selection')" type="selection" width="55" fixed="left" />
       <el-table-column v-if="isColumnVisible('index')" type="index" label="序号" width="50" fixed="left" />
       <el-table-column v-if="isColumnVisible('employee_name')" prop="employee_name" label="姓名" width="80" fixed="left" />

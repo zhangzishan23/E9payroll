@@ -5,8 +5,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from sqlalchemy import text
-from app.core.database import SessionLocal, engine
+from app.core.database import SessionLocal, engine, Base
 from app.core.security import get_password_hash
+from app.models import models
 from app.models.models import SysUser, SysRole, SysUserRole
 
 
@@ -75,6 +76,8 @@ def init_admin():
 
 if __name__ == "__main__":
     if wait_for_db():
+        print("正在创建数据库表...")
+        Base.metadata.create_all(bind=engine)
         init_admin()
     else:
         print("警告: 数据库未就绪，跳过管理员账号初始化")
